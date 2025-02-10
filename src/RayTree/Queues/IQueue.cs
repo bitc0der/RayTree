@@ -1,4 +1,7 @@
-﻿namespace RayTree.Queues;
+﻿using System.Threading;
+using System.Threading.Tasks;
+
+namespace RayTree.Queues;
 
 public interface IQueue
 {
@@ -12,4 +15,8 @@ public interface IQueue
 	void Subscribe(HandleMessage handleMessage);
 
 	void Unsubscribe(HandleMessage handleMessage);
+
+	public void Start(CancellationToken cancellationToken);
+
+	public Task StopAsync();
 }
