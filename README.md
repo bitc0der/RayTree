@@ -20,7 +20,6 @@ class TestMessage
 ```
 
 Create system and reise message:
-
 ```csharp
 var system = NodeSystem.Create();
 
@@ -32,7 +31,6 @@ Raised message will be distributed to handlers via queue system.
 ## Handle message
 
 Create test message handler:
-
 ```csharp
 class TestMessageHandler : IMessageHandler<TestMessage>
 {
@@ -46,7 +44,6 @@ class TestMessageHandler : IMessageHandler<TestMessage>
 ```
 
 Register handler to process messages:
-
 ```csharp
 var system = NodeSystem.Create();
 
@@ -55,4 +52,4 @@ var handler = new TestMessageHandler();
 system.Register(handler);
 ```
 
-Now handler ready to process message of type `TestMessage``.
+Now handler ready to process message of type `TestMessage`.
