@@ -12,7 +12,7 @@ internal sealed class MessagePipe
 	public MessagePipe(string id, QueueManager queueManager)
 	{
 		Id = id;
-		_outputQueue = queueManager.GetOrCreate(id);
+		_outputQueue = queueManager.GetOrCreate(queueName: id); // TODO: build queue name with node and pipe Ids
 	}
 
 	public void Send(object message)

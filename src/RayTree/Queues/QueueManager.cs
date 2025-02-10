@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Threading.Tasks;
 
 namespace RayTree.Queues;
 
@@ -22,4 +23,20 @@ internal sealed class QueueManager
 	}
 
 	private IQueue Create(string queueName) => _provider.Create(queueName);
+
+	public void Start()
+	{
+		foreach (var queue in _queues.Values)
+		{
+			queue.Start();
+		}
+	}
+
+	public async Task Stop()
+	{
+		foreach (var queue in _queues.Values)
+		{
+			await queue.StopAsync();
+		}
+	}
 }

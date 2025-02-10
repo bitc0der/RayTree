@@ -16,7 +16,7 @@ public interface IQueue
 
 	void Unsubscribe(HandleMessage handleMessage);
 
-	public void Start(CancellationToken cancellationToken);
+	public void Start();
 
 	public Task StopAsync();
 }

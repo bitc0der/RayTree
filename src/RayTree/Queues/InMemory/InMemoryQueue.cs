@@ -36,7 +36,7 @@ internal sealed class InMemoryQueue : IQueue
 		_handlers -= handleMessage ?? throw new ArgumentNullException( nameof(handleMessage));
 	}
 
-	public void Start(CancellationToken cancellationToken) => _job.Start(DoRoutineAsync);
+	public void Start() => _job.Start(DoRoutineAsync);
 
 	private async Task DoRoutineAsync(CancellationToken cancellationToken)
 	{
