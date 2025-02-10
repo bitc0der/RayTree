@@ -3,8 +3,9 @@ using System.Threading.Tasks;
 
 namespace RayTree.Handlers;
 
-public interface IMessageHandler<TMessage>
-	where TMessage : class
+public interface IMessageHandler
 {
-	Task HandleAsync(TMessage message, CancellationToken cancellationToken);
+	string Id { get; }
+
+	Task HandleAsync(object message, CancellationToken cancellationToken);
 }

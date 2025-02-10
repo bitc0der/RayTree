@@ -1,16 +1,18 @@
 ﻿using System;
+using RayTree.Routing;
 
 namespace RayTree.Local;
 
 internal sealed class LocalNode : INode
 {
-	private readonly LocalNodeRouter _router = new();
+	private readonly MessageRouter _messageRouter;
 
 	public string Id { get; }
 
-	public LocalNode(string id)
+	public LocalNode(string id, MessageRouter messageRouter)
 	{
 		Id = id ?? throw new ArgumentNullException(nameof(id));
+		_messageRouter = messageRouter ?? throw new ArgumentNullException(nameof(messageRouter));
 	}
 
 	public void Raise<TMessage>(TMessage message)
@@ -18,6 +20,6 @@ internal sealed class LocalNode : INode
 	{
 		ArgumentNullException.ThrowIfNull(message);
 
-		_router.Route(message);
+		_messageRouter.Route(source: this, message);
 	}
 }

@@ -35,15 +35,20 @@ public class NodeSystemTests
 		}
 	}
 
-	private sealed class TestHandler : IMessageHandler<TestMessage>
+	private sealed class TestHandler : IMessageHandler
 	{
 		private readonly HashSet<int> _receivedValues = [];
 
-		public Task HandleAsync(TestMessage message, CancellationToken cancellationToken)
+		public string Id => nameof(TestHandler);
+
+		public Task HandleAsync(object message, CancellationToken cancellationToken)
 		{
 			ArgumentNullException.ThrowIfNull(message);
 
-			_receivedValues.Add(message.Value);
+			if (message is TestMessage testMessage)
+			{
+				_receivedValues.Add(testMessage.Value);
+			}
 
 			return Task.CompletedTask;
 		}
