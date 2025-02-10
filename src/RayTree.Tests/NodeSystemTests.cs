@@ -7,16 +7,18 @@ using RayTree.Handlers;
 namespace RayTree.Tests;
 
 [TestFixture]
-public class NodeSystemTests
+public sealed class NodeSystemTests
 {
 	[Test]
-	public void Test()
+	public async Task Test()
 	{
 		// Arrange
-		var system = NodeSystem.Create();
+		await using var system = NodeSystem.Create();
 
 		var handler = new TestHandler();
 		system.Register(handler);
+
+		system.Start();
 
 		// Act
 		system.Raise(pipeName: "TestPipe", new TestMessage(value: 1));

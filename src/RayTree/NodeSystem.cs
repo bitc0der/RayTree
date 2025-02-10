@@ -4,10 +4,11 @@ using RayTree.Handlers;
 using RayTree.Queues;
 using RayTree.Routing;
 using RayTree.Queues.InMemory;
+using System.Threading.Tasks;
 
 namespace RayTree;
 
-public sealed class NodeSystem
+public sealed class NodeSystem : IAsyncDisposable
 {
 	private readonly LocalNode _local;
 	private readonly MessageRouter _router;
@@ -43,12 +44,12 @@ public sealed class NodeSystem
 
 	public void Start()
 	{
-
+		_queueManager.Start();
 	}
 
-	public void Stop()
+	public async Task StopAsync()
 	{
-
+		await _queueManager.StopAsync();
 	}
 
 	public void Raise<TMessage>(string pipeName, TMessage message)
@@ -58,5 +59,15 @@ public sealed class NodeSystem
 		ArgumentNullException.ThrowIfNull(message);
 
 		_local.Raise(pipeName, message);
+	}
+
+	public async ValueTask DisposeAsync()
+	{
+		await DisposeAsyncCore().ConfigureAwait(false);
+	}
+
+	private async ValueTask DisposeAsyncCore()
+	{
+		await _queueManager.DisposeAsync();
 	}
 }

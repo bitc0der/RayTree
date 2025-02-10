@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 
 namespace RayTree.Queues;
 
-internal sealed class QueueManager
+internal sealed class QueueManager : IAsyncDisposable
 {
 	private readonly IQueueProvider _provider;
 
@@ -32,11 +32,26 @@ internal sealed class QueueManager
 		}
 	}
 
-	public async Task Stop()
+	public async Task StopAsync()
 	{
 		foreach (var queue in _queues.Values)
 		{
 			await queue.StopAsync();
+		}
+	}
+
+	public async ValueTask DisposeAsync()
+	{
+		foreach(var queue in _queues.Values)
+		{
+			if (queue is IAsyncDisposable asyncDisposale)
+			{
+				await asyncDisposale.DisposeAsync();
+			}
+			else if (queue is IDisposable disposable)
+			{
+				disposable.Dispose();
+			}
 		}
 	}
 }
