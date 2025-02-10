@@ -1,10 +1,10 @@
 ﻿using System;
+using System.Threading.Tasks;
 using RayTree.Local;
 using RayTree.Handlers;
 using RayTree.Queues;
 using RayTree.Routing;
 using RayTree.Queues.InMemory;
-using System.Threading.Tasks;
 
 namespace RayTree;
 
