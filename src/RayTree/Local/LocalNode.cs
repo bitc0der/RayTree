@@ -15,11 +15,12 @@ internal sealed class LocalNode : INode
 		_messageRouter = messageRouter ?? throw new ArgumentNullException(nameof(messageRouter));
 	}
 
-	public void Raise<TMessage>(TMessage message)
+	public void Raise<TMessage>(string pipeName, TMessage message)
 		where TMessage : class
 	{
+		ArgumentNullException.ThrowIfNull(pipeName);
 		ArgumentNullException.ThrowIfNull(message);
 
-		_messageRouter.Route(source: this, message);
+		_messageRouter.Route(source: this, pipeName, message);
 	}
 }

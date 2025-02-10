@@ -41,11 +41,22 @@ public sealed class NodeSystem
 		_router.Register(handler);
 	}
 
-	public void Raise<TMessage>(TMessage message)
+	public void Start()
+	{
+
+	}
+
+	public void Stop()
+	{
+
+	}
+
+	public void Raise<TMessage>(string pipeName, TMessage message)
 		where TMessage : class
 	{
+		ArgumentNullException.ThrowIfNull(pipeName);
 		ArgumentNullException.ThrowIfNull(message);
 
-		_local.Raise(message);
+		_local.Raise(pipeName, message);
 	}
 }

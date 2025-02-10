@@ -10,6 +10,7 @@ internal sealed class MessageRouter
 	private readonly QueueManager _queueManager;
 
 	private readonly ConcurrentBag<MessageHandlerWrapper> _handlers = [];
+	private readonly ConcurrentDictionary<string, MessagePipe> _pipes = [];
 
 	public MessageRouter(QueueManager queueManager)
 	{
@@ -29,12 +30,18 @@ internal sealed class MessageRouter
 		_handlers.Add(wrapper);
 	}
 
-	public void Route<TMessage>(INode source, TMessage message)
+	public void Route<TMessage>(INode source, string pipeName, TMessage message)
 		where TMessage : class
 	{
 		ArgumentNullException.ThrowIfNull(source);
 		ArgumentNullException.ThrowIfNull(message);
 
-		throw new NotImplementedException();
+		var pipe = _pipes.GetOrAdd(pipeName, CreatePipe);
+
+		pipe.Send(message);
 	}
+
+	private MessagePipe CreatePipe(string id) => id is null
+		? throw new ArgumentNullException(nameof(id))
+		: new MessagePipe(id, _queueManager);
 }
