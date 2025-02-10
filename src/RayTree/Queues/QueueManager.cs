@@ -14,12 +14,12 @@ internal sealed class QueueManager
 		_provider = provider ?? throw new ArgumentNullException(nameof(provider));
 	}
 
-	public IQueue GetOrCreate(string id)
+	public IQueue GetOrCreate(string queueName)
 	{
-		return id is null
-			? throw new ArgumentNullException(nameof(id))
-			: _queues.GetOrAdd(id, Create);
+		return queueName is null
+			? throw new ArgumentNullException(nameof(queueName))
+			: _queues.GetOrAdd(queueName, Create);
 	}
 
-	private IQueue Create(string id) => _provider.Create();
+	private IQueue Create(string queueName) => _provider.Create(queueName);
 }

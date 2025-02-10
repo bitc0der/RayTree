@@ -2,5 +2,5 @@
 
 public interface IQueueProvider
 {
-	IQueue Create();
+	IQueue Create(string queueName);
 }

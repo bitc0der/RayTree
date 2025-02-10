@@ -4,6 +4,8 @@ public interface IQueue
 {
 	delegate void HandleMessage(object message);
 
+	string Name { get; }
+
 	void Send<TMessage>(TMessage message)
 		where TMessage : class;
 

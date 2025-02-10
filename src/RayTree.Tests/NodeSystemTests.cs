@@ -19,7 +19,7 @@ public class NodeSystemTests
 		system.Register(handler);
 
 		// Act
-		system.Raise(new TestMessage(value: 1));
+		system.Raise(pipeName: "TestPipe", new TestMessage(value: 1));
 
 		// Assert
 		Assert.That(handler.CheckReceived(value: 1), Is.True);

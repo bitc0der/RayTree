@@ -2,5 +2,5 @@
 
 public sealed class InMemoryQueueProvider : IQueueProvider
 {
-	public IQueue Create() => throw new System.NotImplementedException();
+	public IQueue Create(string queueName) => new InMemoryQueue(queueName);
 }
