@@ -3,6 +3,7 @@ using RayTree.Local;
 using RayTree.Handlers;
 using RayTree.Queues;
 using RayTree.Routing;
+using RayTree.Queues.InMemory;
 
 namespace RayTree;
 
