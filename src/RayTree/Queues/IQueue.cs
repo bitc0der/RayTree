@@ -12,8 +12,4 @@ public interface IQueue
 	void Subscribe(HandleMessage handleMessage);
 
 	void Unsubscribe(HandleMessage handleMessage);
-
-	void Start();
-
-	void Stop();
 }
