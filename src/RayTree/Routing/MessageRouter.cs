@@ -25,6 +25,8 @@ internal sealed class MessageRouter
 
 		var queue = _queueManager.GetOrCreate(id);
 
+		// TODO: configure message routing
+
 		var wrapper = new MessageHandlerWrapper(inputQueue: queue, handler: handler);
 
 		_handlers.Add(wrapper);
