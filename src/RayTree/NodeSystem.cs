@@ -1,64 +1,72 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
-using RayTree.Local;
 using RayTree.Handlers;
+using RayTree.Local;
 using RayTree.Queues;
-using RayTree.Routing;
 using RayTree.Queues.InMemory;
+using System.Threading;
 
 namespace RayTree;
 
 public sealed class NodeSystem : IAsyncDisposable
 {
-	private readonly LocalNode _local;
-	private readonly MessageRouter _router;
 	private readonly QueueManager _queueManager;
 
-	private NodeSystem(
-		MessageRouter router,
-		QueueManager queueManager,
-		LocalNode local)
+	private readonly Dictionary<string, LocalNode> _nodes = new();
+	private readonly SystemMessageHandler _systemMessageHandler;
+	public string Id { get; }
+	public INode SystemNode { get; }
+
+	public NodeSystem(string? id = null, IQueueProvider? queueProvider = null)
 	{
-		_router = router ?? throw new ArgumentNullException(nameof(router));
-		_local = local ?? throw new ArgumentNullException(nameof(local));
-		_queueManager = queueManager ?? throw new ArgumentNullException(nameof(queueManager));
-	}
+		Id = id ?? Guid.NewGuid().ToString();
 
-	public static NodeSystem Create(string? id = null, IQueueProvider? queueProvider = null)
-	{
-		var localNodeId = id ?? Guid.NewGuid().ToString();
+		_queueManager = new QueueManager(queueProvider ?? new InMemoryQueueProvider());
+		_systemMessageHandler = new (this);
 
-		var queueManager = new QueueManager(queueProvider ?? new InMemoryQueueProvider());
-		var router = new MessageRouter(queueManager);
-		var local = new LocalNode(id: localNodeId, router);
-
-		return new NodeSystem(router, queueManager, local);
-	}
-
-	public void Register(IMessageHandler handler)
-	{
-		ArgumentNullException.ThrowIfNull(handler);
-
-		_router.Register(handler);
+		SystemNode = CreateNode(
+			nodeId: Id,
+			messageHandler: _systemMessageHandler,
+			config: builder =>
+			{
+				// do nothing
+			}
+		);
 	}
 
 	public void Start()
 	{
 		_queueManager.Start();
+
+		foreach (var node in _nodes.Values)
+		{
+			node.Start();
+		}
 	}
 
 	public async Task StopAsync()
 	{
+		foreach (var node in _nodes.Values)
+		{
+			await node.StopAsync();
+		}
+
 		await _queueManager.StopAsync();
 	}
 
-	public void Raise<TMessage>(string pipeName, TMessage message)
-		where TMessage : class
+	public INode CreateNode(IMessageHandler messageHandler, Action<NodeBuilder> config, string? nodeId = null)
 	{
-		ArgumentNullException.ThrowIfNull(pipeName);
-		ArgumentNullException.ThrowIfNull(message);
+		ArgumentNullException.ThrowIfNull(messageHandler);
+		ArgumentNullException.ThrowIfNull(config);
 
-		_local.Raise(pipeName, message);
+		nodeId ??= Guid.NewGuid().ToString();
+
+		var builder = new NodeBuilder(nodeId, messageHandler);
+
+		config(builder);
+
+		return builder.Build(_queueManager);
 	}
 
 	public async ValueTask DisposeAsync()
@@ -69,5 +77,22 @@ public sealed class NodeSystem : IAsyncDisposable
 	private async ValueTask DisposeAsyncCore()
 	{
 		await _queueManager.DisposeAsync();
+	}
+
+	private sealed class SystemMessageHandler : IMessageHandler
+	{
+		private readonly NodeSystem _nodeSystem;
+
+		public SystemMessageHandler(NodeSystem nodeSystem)
+		{
+			_nodeSystem = nodeSystem ?? throw new ArgumentNullException(nameof(nodeSystem));
+		}
+
+		public ValueTask HandleAsync(object message, CancellationToken cancellationToken)
+		{
+			// FFU
+
+			return ValueTask.CompletedTask;
+		}
 	}
 }

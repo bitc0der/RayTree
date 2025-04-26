@@ -13,15 +13,16 @@ public sealed class NodeSystemTests
 	public async Task Test()
 	{
 		// Arrange
-		await using var system = NodeSystem.Create();
+		await using var system = new NodeSystem();
 
 		var handler = new TestHandler();
-		system.Register(handler);
+
+		var node = system.CreateNode(handler, config: b => b.Handle<TestMessage>());
 
 		system.Start();
 
 		// Act
-		system.Raise(pipeName: "TestPipe", new TestMessage(value: 1));
+		await system.SystemNode.ProcessAsync(new TestMessage(value: 1));
 
 		// Assert
 		Assert.That(handler.CheckReceived(value: 1), Is.True);
@@ -43,7 +44,7 @@ public sealed class NodeSystemTests
 
 		public string Id => nameof(TestHandler);
 
-		public Task HandleAsync(object message, CancellationToken cancellationToken)
+		public ValueTask HandleAsync(object message, CancellationToken cancellationToken)
 		{
 			ArgumentNullException.ThrowIfNull(message);
 
@@ -52,7 +53,7 @@ public sealed class NodeSystemTests
 				_receivedValues.Add(testMessage.Value);
 			}
 
-			return Task.CompletedTask;
+			return ValueTask.CompletedTask;
 		}
 
 		public bool CheckReceived(int value) => _receivedValues.Contains(value);

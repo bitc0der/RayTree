@@ -7,9 +7,6 @@ namespace RayTree.Queues.InMemory;
 internal sealed class InMemoryQueue : IQueue
 {
 	private readonly AwaitableQueue<object> _queue = new();
-	private readonly BackgroudJob _job = new();
-
-	private IQueue.HandleMessage? _handlers;
 
 	public string Name { get; }
 
@@ -18,40 +15,22 @@ internal sealed class InMemoryQueue : IQueue
 		Name = name ?? throw new ArgumentNullException(nameof(name));
 	}
 
-	public void Send<TMessage>(TMessage message)
+	public Task SendAsync<TMessage>(TMessage message, CancellationToken cancellationToken)
 		where TMessage : class
 	{
 		ArgumentNullException.ThrowIfNull(message);
 
 		_queue.Add(message);
+
+		return Task.CompletedTask;
 	}
 
-	public void Subscribe(IQueue.HandleMessage handleMessage)
+	public void Start() { }
+
+	public Task StopAsync() => Task.CompletedTask;
+
+	public Task<object> ReadMessageAsync(CancellationToken cancellationToken)
 	{
-		_handlers += handleMessage ?? throw new ArgumentNullException(nameof(handleMessage));
+		return _queue.GetAsync(cancellationToken);
 	}
-
-	public void Unsubscribe(IQueue.HandleMessage handleMessage)
-	{
-		_handlers -= handleMessage ?? throw new ArgumentNullException( nameof(handleMessage));
-	}
-
-	public void Start() => _job.Start(DoRoutineAsync);
-
-	private async Task DoRoutineAsync(CancellationToken cancellationToken)
-	{
-		while (!cancellationToken.IsCancellationRequested)
-		{
-			var message = await _queue.GetAsync(cancellationToken);
-
-			var handlers = _handlers;
-
-			if (handlers is null)
-				continue;
-
-			handlers(message);
-		}
-	}
-
-	public Task StopAsync() => _job.StopAsync();
 }

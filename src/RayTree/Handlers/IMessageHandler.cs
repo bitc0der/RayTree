@@ -5,7 +5,5 @@ namespace RayTree.Handlers;
 
 public interface IMessageHandler
 {
-	string Id { get; }
-
-	Task HandleAsync(object message, CancellationToken cancellationToken);
+	ValueTask HandleAsync(object message, CancellationToken cancellationToken);
 }

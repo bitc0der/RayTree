@@ -5,16 +5,12 @@ namespace RayTree.Queues;
 
 public interface IQueue
 {
-	delegate void HandleMessage(object message);
-
 	string Name { get; }
 
-	void Send<TMessage>(TMessage message)
+	Task SendAsync<TMessage>(TMessage message, CancellationToken cancellationToken)
 		where TMessage : class;
 
-	void Subscribe(HandleMessage handleMessage);
-
-	void Unsubscribe(HandleMessage handleMessage);
+	Task<object> ReadMessageAsync(CancellationToken cancellationToken);
 
 	public void Start();
 
