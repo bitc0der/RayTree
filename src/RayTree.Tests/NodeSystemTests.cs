@@ -17,12 +17,12 @@ public sealed class NodeSystemTests
 
 		var handler = new TestHandler();
 
-		var node = system.CreateNode(handler, config: b => b.Handle<TestMessage>());
+		var node = system.CreateNode(handler, config: b => b.Handle<TestMessage>(system.Location));
 
 		system.Start();
 
 		// Act
-		await system.SystemNode.ProcessAsync(new TestMessage(value: 1));
+		await system.ProcessAsync(new TestMessage(value: 1));
 
 		// Assert
 		Assert.That(handler.CheckReceived(value: 1), Is.True);

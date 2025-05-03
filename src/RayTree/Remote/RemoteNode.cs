@@ -1,4 +1,5 @@
-﻿using System;
+﻿using RayTree.Location;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -6,17 +7,17 @@ namespace RayTree.Remote;
 
 internal sealed class RemoteNode : INode
 {
-	public string Id { get; }
+	public NodeLocation Location { get; }
 
-	public RemoteNode(string id)
+	public RemoteNode(NodeLocation location)
 	{
-		Id = id ?? throw new ArgumentNullException(nameof(id));
+		Location = location ?? throw new ArgumentNullException(nameof(location));
 	}
 
 	public void Raise<TMessage>(TMessage message)
 		where TMessage : class
 	{
-		throw new System.NotImplementedException();
+		throw new NotImplementedException();
 	}
 
 	public ValueTask ProcessAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)

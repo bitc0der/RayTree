@@ -2,6 +2,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using RayTree.Handlers;
+using RayTree.Location;
 using RayTree.Queues;
 
 namespace RayTree.Local;
@@ -9,19 +10,15 @@ namespace RayTree.Local;
 internal sealed class LocalNode : INode
 {
 	private readonly IQueue _inputQueue;
-	private readonly IQueue _outputQueue;
 	private readonly IMessageHandler _messageHandler;
 
 	private readonly BackgroudJob _backgroudJob = new ();
 
-	public string Id { get; }
+	public NodeLocation Location { get; }
 
-	public LocalNode(string id, IQueue inputQueue, IMessageHandler messageHandler)
+	public LocalNode(NodeLocation location, IQueue inputQueue, IMessageHandler messageHandler)
 	{
-		if (string.IsNullOrWhiteSpace(id))
-			throw new ArgumentException($"'{nameof(id)}' cannot be null or whitespace.", nameof(id));
-
-		Id = id;
+		Location = location;
 		_inputQueue = inputQueue ?? throw new ArgumentNullException(nameof(inputQueue));
 		_messageHandler = messageHandler ?? throw new ArgumentNullException(nameof(messageHandler));
 	}
@@ -45,7 +42,7 @@ internal sealed class LocalNode : INode
 	{
 		var message = await _inputQueue.ReadMessageAsync(cancellationToken);
 
-		var context = new NodeContext(outputQueue: _outputQueue);
+		var context = new NodeContext();
 
 		NodeContext.Set(context);
 		try

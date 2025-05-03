@@ -6,27 +6,33 @@ using RayTree.Local;
 using RayTree.Queues;
 using RayTree.Queues.InMemory;
 using System.Threading;
+using RayTree.Location;
 
 namespace RayTree;
 
 public sealed class NodeSystem : IAsyncDisposable
 {
-	private readonly QueueManager _queueManager;
-
 	private readonly Dictionary<string, LocalNode> _nodes = new();
 	private readonly SystemMessageHandler _systemMessageHandler;
-	public string Id { get; }
-	public INode SystemNode { get; }
+
+	internal QueueManager QueueManager { get; }
+
+	public SystemLocation Location { get; }
+
+	private readonly INode _systemNode;
 
 	public NodeSystem(string? id = null, IQueueProvider? queueProvider = null)
 	{
-		Id = id ?? Guid.NewGuid().ToString();
+		id ??= Guid.NewGuid().ToString();
+		queueProvider ??= new InMemoryQueueProvider();
 
-		_queueManager = new QueueManager(queueProvider ?? new InMemoryQueueProvider());
+		Location = SystemLocation.Create(systemId: id, queueType: queueProvider.QueueType);
+
+		QueueManager = new QueueManager(queueProvider);
 		_systemMessageHandler = new (this);
 
-		SystemNode = CreateNode(
-			nodeId: Id,
+		_systemNode = CreateNode(
+			nodeId: id,
 			messageHandler: _systemMessageHandler,
 			config: builder =>
 			{
@@ -37,7 +43,7 @@ public sealed class NodeSystem : IAsyncDisposable
 
 	public void Start()
 	{
-		_queueManager.Start();
+		QueueManager.Start();
 
 		foreach (var node in _nodes.Values)
 		{
@@ -52,7 +58,7 @@ public sealed class NodeSystem : IAsyncDisposable
 			await node.StopAsync();
 		}
 
-		await _queueManager.StopAsync();
+		await QueueManager.StopAsync();
 	}
 
 	public INode CreateNode(IMessageHandler messageHandler, Action<NodeBuilder> config, string? nodeId = null)
@@ -62,11 +68,19 @@ public sealed class NodeSystem : IAsyncDisposable
 
 		nodeId ??= Guid.NewGuid().ToString();
 
-		var builder = new NodeBuilder(nodeId, messageHandler);
+		var builder = new NodeBuilder(system: this, id: nodeId, messageHandler);
 
 		config(builder);
 
-		return builder.Build(_queueManager);
+		return builder.Build();
+	}
+
+	public ValueTask ProcessAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)
+		where TMessage : class
+	{
+		ArgumentNullException.ThrowIfNull(message);
+
+		return _systemNode.ProcessAsync(message, cancellationToken);
 	}
 
 	public async ValueTask DisposeAsync()
@@ -76,7 +90,7 @@ public sealed class NodeSystem : IAsyncDisposable
 
 	private async ValueTask DisposeAsyncCore()
 	{
-		await _queueManager.DisposeAsync();
+		await QueueManager.DisposeAsync();
 	}
 
 	private sealed class SystemMessageHandler : IMessageHandler

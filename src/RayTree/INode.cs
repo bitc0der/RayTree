@@ -1,11 +1,12 @@
-﻿using System.Threading;
+﻿using RayTree.Location;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace RayTree;
 
 public interface INode
 {
-	string Id { get; }
+	NodeLocation Location { get; }
 
 	ValueTask ProcessAsync<TMessage>(TMessage message, CancellationToken cancellationToken = default)
 		where TMessage : class;
