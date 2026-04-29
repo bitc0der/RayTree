@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Core abstractions and engine for entity change tracking with outbox pattern</Description>
+    <PackageTags>change-tracking;outbox;event-sourcing</PackageTags>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>In-memory repository, outbox, and queue plugins for testing and development</Description>
+    <PackageTags>in-memory;testing;change-tracking</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Brotli compressor plugin for entity change messages using System.IO.Compression</Description>
+    <PackageTags>brotli;compression;change-tracking</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj" />
+  </ItemGroup>
+</Project>

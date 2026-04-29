@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Subscriber engine for consuming entity change messages with per-entity handlers</Description>
+    <PackageTags>subscriber;message-handling;change-tracking</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj" />
+  </ItemGroup>
+</Project>

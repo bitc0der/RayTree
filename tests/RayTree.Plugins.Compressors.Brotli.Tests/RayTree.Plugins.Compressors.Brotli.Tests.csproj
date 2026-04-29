@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\RayTree.Plugins.Compressors.Brotli\RayTree.Plugins.Compressors.Brotli.csproj" />
+  </ItemGroup>
+</Project>

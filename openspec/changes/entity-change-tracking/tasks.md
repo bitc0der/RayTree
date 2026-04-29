@@ -1,13 +1,13 @@
 ## 1. Project Setup
 
-- [ ] 1.1 Create `Directory.Build.props` with common MSBuild settings (target framework, nullable, implicit usings, warning level, treat warnings as errors)
-- [ ] 1.2 Create `Directory.Packages.props` with centralized package version management (CentralPackageManagement enabled)
-- [ ] 1.3 Create solution structure with projects: RayTree.Core, RayTree.EntityFrameworkCore, RayTree.Hosting, RayTree.Subscriber, RayTree.Plugins.PostgreSQL, RayTree.Plugins.RabbitMQ, RayTree.Plugins.Kafka, RayTree.Plugins.InMemory, RayTree.Plugins.Serializers.Json, RayTree.Plugins.Serializers.Protobuf, RayTree.Plugins.Serializers.MessagePack, RayTree.Plugins.Compressors.Gzip, RayTree.Plugins.Compressors.Brotli, RayTree.Plugins.Compressors.Lz4
-- [ ] 1.4 Define all package versions in `Directory.Packages.props` (Microsoft.EntityFrameworkCore, Npgsql, RabbitMQ.Client, Confluent.Kafka, protobuf-net, MessagePack, lz4net, System.Text.Json, System.IO.Compression)
-- [ ] 1.5 Set up project references and solution file
-- [ ] 1.6 Configure per-project .csproj files with package references using `VersionOverride` only when needed, otherwise inheriting from central management
-- [ ] 1.7 Add NUnit test packages to `Directory.Packages.props` (NUnit, NUnit.Analyzers, NUnit3TestAdapter, Microsoft.NET.Test.Sdk)
-- [ ] 1.8 Configure test project templates with NUnit + Moq + Testcontainers
+- [x] 1.1 Create `Directory.Build.props` with common MSBuild settings (target framework, nullable, implicit usings, warning level, treat warnings as errors)
+- [x] 1.2 Create `Directory.Packages.props` with centralized package version management (CentralPackageManagement enabled)
+- [x] 1.3 Create solution structure with projects: RayTree.Core, RayTree.EntityFrameworkCore, RayTree.Hosting, RayTree.Subscriber, RayTree.Plugins.PostgreSQL, RayTree.Plugins.RabbitMQ, RayTree.Plugins.Kafka, RayTree.Plugins.InMemory, RayTree.Plugins.Serializers.Json, RayTree.Plugins.Serializers.Protobuf, RayTree.Plugins.Serializers.MessagePack, RayTree.Plugins.Compressors.Gzip, RayTree.Plugins.Compressors.Brotli, RayTree.Plugins.Compressors.Lz4
+- [x] 1.4 Define all package versions in `Directory.Packages.props` (Microsoft.EntityFrameworkCore, Npgsql, RabbitMQ.Client, Confluent.Kafka, protobuf-net, MessagePack, lz4net, System.Text.Json, System.IO.Compression)
+- [x] 1.5 Set up project references and solution file
+- [x] 1.6 Configure per-project .csproj files with package references using `VersionOverride` only when needed, otherwise inheriting from central management
+- [x] 1.7 Add NUnit test packages to `Directory.Packages.props` (NUnit, NUnit.Analyzers, NUnit3TestAdapter, Microsoft.NET.Test.Sdk)
+- [x] 1.8 Configure test project templates with NUnit + Moq + Testcontainers
 
 ## 2. Core Abstractions
 

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>MessagePack serializer plugin for entity change messages using MessagePack-CSharp</Description>
+    <PackageTags>messagepack;serialization;change-tracking</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj" />
+    <PackageReference Include="MessagePack" />
+  </ItemGroup>
+</Project>

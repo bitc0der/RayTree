@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Protobuf serializer plugin for entity change messages using protobuf-net</Description>
+    <PackageTags>protobuf;serialization;change-tracking</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj" />
+    <PackageReference Include="protobuf-net" />
+  </ItemGroup>
+</Project>
