@@ -182,27 +182,23 @@
 
 - [x] 15.1 Add unit tests for core abstractions and EntityChangeTracker
 - [x] 15.2 Add unit tests for serialization/compression pipeline
-- [x] 15.15 Add tests for concurrent change detection
-- [x] 15.13 Add tests for standalone configuration and builder API
-- [x] 15.14 Add tests for outbox cleanup service
-- [ ] 15.3 Add unit tests for EF Core interceptor with in-memory provider
-- [x] 15.16 Add tests for separate assembly loading (Serializers.Json, Serializers.Protobuf, Serializers.MessagePack, Compressors.Gzip, Compressors.Brotli, Compressors.Lz4, InMemory)
-- [ ] 15.4 Add integration tests for PostgreSQL repository and outbox plugins
-- [ ] 15.5 Add integration tests for RabbitMQ publisher plugin
-- [ ] 15.6 Add integration tests for Kafka publisher plugin
+- [x] 15.3 Add unit tests for EF Core interceptor with in-memory provider
+- [x] 15.4 Add integration tests for PostgreSQL repository and outbox plugins
+- [ ] 15.5 Add integration tests for RabbitMQ publisher plugin (written, requires Docker)
+- [ ] 15.6 Add integration tests for Kafka publisher plugin (written, requires Docker)
 - [ ] 15.6.1 Add integration tests for NOTIFY-based publishing with PostgreSQL
 - [ ] 15.6.2 Add integration tests for LISTEN reconnection and backlog scan
 - [ ] 15.6.3 Add integration tests for fallback polling activation on connection loss
-- [ ] 15.7 Add integration tests for JSON serializer plugin
-- [ ] 15.8 Add integration tests for Protobuf serializer plugin
-- [ ] 15.9 Add integration tests for Gzip and Brotli compressor plugins
-- [ ] 15.10 Add integration tests for in-memory repository, outbox, and queue plugins
-- [ ] 15.11 Add integration tests for end-to-end change tracking with in-memory storage and queue
-- [ ] 15.12 Add integration tests for end-to-end change tracking with EF Core + PostgreSQL + queue
-- [ ] 15.13 Add tests for standalone configuration and builder API
-- [ ] 15.14 Add tests for outbox cleanup service
-- [ ] 15.15 Add tests for concurrent change detection
-- [ ] 15.16 Add tests for separate assembly loading (Serializers.Json, Serializers.Protobuf, Serializers.MessagePack, Compressors.Gzip, Compressors.Brotli, Compressors.Lz4, InMemory)
+- [x] 15.7 Add integration tests for JSON serializer plugin
+- [x] 15.8 Add integration tests for Protobuf serializer plugin
+- [x] 15.9 Add integration tests for Gzip and Brotli compressor plugins
+- [x] 15.10 Add integration tests for in-memory repository, outbox, and queue plugins
+- [x] 15.11 Add integration tests for end-to-end change tracking with in-memory storage and queue
+- [ ] 15.12 Add integration tests for end-to-end change tracking with EF Core + PostgreSQL + queue (written, requires Docker)
+- [x] 15.13 Add tests for standalone configuration and builder API
+- [x] 15.14 Add tests for outbox cleanup service
+- [x] 15.15 Add tests for concurrent change detection
+- [x] 15.16 Add tests for separate assembly loading (Serializers.Json, Serializers.Protobuf, Serializers.MessagePack, Compressors.Gzip, Compressors.Brotli, Compressors.Lz4, InMemory)
 
 ## 16. Documentation
 

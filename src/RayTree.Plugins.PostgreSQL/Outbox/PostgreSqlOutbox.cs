@@ -32,6 +32,7 @@ public class PostgreSqlOutbox : IOutbox
                 (entity_id, change_type, timestamp, version, correlation_id, entity_type, data)
             VALUES
                 (@EntityId, @ChangeType, @Timestamp, @Version, @CorrelationId, @EntityType, @Data)
+            RETURNING id
             """, conn)
         {
             Parameters =
@@ -46,7 +47,8 @@ public class PostgreSqlOutbox : IOutbox
             }
         };
 
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        var result = await cmd.ExecuteScalarAsync(cancellationToken);
+        change.Id = result != null ? Convert.ToInt64(result) : 0;
     }
 
     public async Task<IReadOnlyList<EntityChange>> GetUnpublishedAsync(int batchSize, CancellationToken cancellationToken = default)
@@ -74,7 +76,7 @@ public class PostgreSqlOutbox : IOutbox
             changes.Add(new EntityChange
             {
                 Id = reader.GetInt64(0),
-                EntityId = reader.GetGuid(1).ToString(),
+                EntityId = reader.GetString(1),
                 ChangeType = Enum.Parse<ChangeType>(reader.GetString(2)),
                 Timestamp = reader.GetDateTime(3),
                 Version = reader.GetInt32(4),
@@ -129,7 +131,7 @@ public class PostgreSqlOutbox : IOutbox
             changes.Add(new EntityChange
             {
                 Id = reader.GetInt64(0),
-                EntityId = reader.GetGuid(1).ToString(),
+                EntityId = reader.GetString(1),
                 ChangeType = Enum.Parse<ChangeType>(reader.GetString(2)),
                 Timestamp = reader.GetDateTime(3),
                 Version = reader.GetInt32(4),
@@ -195,7 +197,7 @@ public class PostgreSqlOutbox : IOutbox
             return new EntityChange
             {
                 Id = reader.GetInt64(0),
-                EntityId = reader.GetGuid(1).ToString(),
+                EntityId = reader.GetString(1),
                 ChangeType = Enum.Parse<ChangeType>(reader.GetString(2)),
                 Timestamp = reader.GetDateTime(3),
                 Version = reader.GetInt32(4),

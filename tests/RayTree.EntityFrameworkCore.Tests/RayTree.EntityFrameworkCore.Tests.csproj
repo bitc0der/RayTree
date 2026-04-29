@@ -2,8 +2,12 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\RayTree.EntityFrameworkCore\RayTree.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.InMemory\RayTree.Plugins.InMemory.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Plugins.PostgreSQL\RayTree.Plugins.PostgreSQL.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.Json\RayTree.Plugins.Serializers.Json.csproj" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Testcontainers" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
   </ItemGroup>
 </Project>
