@@ -132,12 +132,15 @@ We need a modular entity change tracking system for .NET applications that detec
 ### 9. Build & Package Management: Centralized via Directory.*.props
 - `Directory.Build.props`: Shared MSBuild properties across all 15+ projects — target framework (net8.0), nullable enable, implicit usings, warning level 4, treat warnings as errors, assembly versioning, copyright, package metadata
 - `Directory.Packages.props`: Central package version management (CentralPackageManagement) — all external dependency versions declared once, per-project .csproj files reference packages without version numbers
+- Test framework: NUnit 4.x with NUnit3TestAdapter, Microsoft.NET.Test.Sdk, and Moq for mocking
 - Eliminates version drift across plugins; single source of truth for dependency versions
 - Prevents diamond dependency conflicts at build time
 
-**Rationale**: With 15+ projects and many shared dependencies (EF Core, Npgsql, etc.), maintaining versions in each .csproj becomes error-prone. Central management ensures all plugins use the same dependency versions.
+**Rationale**: With 15+ projects and many shared dependencies (EF Core, Npgsql, etc.), maintaining versions in each .csproj becomes error-prone. Central management ensures all plugins use the same dependency versions. NUnit provides a mature, well-supported test framework with parallel test execution and rich assertion syntax.
 
 **Alternatives considered**:
+- xUnit — good but NUnit has better parameterized test support and richer assertion model
+- MSTest — Microsoft-native but less flexible for complex test scenarios
 - Version numbers in each .csproj — duplicates version info, drift over time
 - Shared .props file in a build folder — same outcome as Directory.Build.props but non-standard location
 

@@ -6,6 +6,8 @@
 - [ ] 1.4 Define all package versions in `Directory.Packages.props` (Microsoft.EntityFrameworkCore, Npgsql, RabbitMQ.Client, Confluent.Kafka, protobuf-net, MessagePack, lz4net, System.Text.Json, System.IO.Compression)
 - [ ] 1.5 Set up project references and solution file
 - [ ] 1.6 Configure per-project .csproj files with package references using `VersionOverride` only when needed, otherwise inheriting from central management
+- [ ] 1.7 Add NUnit test packages to `Directory.Packages.props` (NUnit, NUnit.Analyzers, NUnit3TestAdapter, Microsoft.NET.Test.Sdk)
+- [ ] 1.8 Configure test project templates with NUnit + Moq + Testcontainers
 
 ## 2. Core Abstractions
 
@@ -156,7 +158,7 @@
 - [ ] 14.12 Implement standalone subscriber `IChangeSubscriber` with `StartAsync()`/`StopAsync()`
 - [ ] 14.13 Implement multi-entity consume loop with parallel processing
 
-## 15. Testing
+## 15. Testing (NUnit)
 
 - [ ] 15.1 Add unit tests for core abstractions and EntityChangeTracker
 - [ ] 15.2 Add unit tests for serialization/compression pipeline
