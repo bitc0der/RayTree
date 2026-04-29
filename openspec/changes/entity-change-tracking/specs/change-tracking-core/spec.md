@@ -47,3 +47,22 @@ The change tracking system SHALL be thread-safe and support concurrent change de
 #### Scenario: Concurrent entity changes
 - **WHEN** multiple threads modify tracked entities simultaneously
 - **THEN** the system SHALL capture all changes without data loss or corruption
+
+### Requirement: Transaction context awareness
+The change tracking system SHALL detect active transactions and coordinate outbox writes accordingly.
+
+#### Scenario: Detect ambient transaction
+- **WHEN** an `IEntityChangeTracker` detects an active `Transaction.Current`
+- **THEN** it SHALL register the outbox write to participate in that transaction
+
+#### Scenario: Register outbox write for pending transaction
+- **WHEN** a change is tracked within an ambient transaction
+- **THEN** the outbox write SHALL be queued until the transaction commits
+
+#### Scenario: Transaction committed
+- **WHEN** the ambient transaction completes successfully
+- **THEN** all queued outbox writes SHALL be committed
+
+#### Scenario: Transaction aborted
+- **WHEN** the ambient transaction is rolled back
+- **THEN** all queued outbox writes SHALL be discarded

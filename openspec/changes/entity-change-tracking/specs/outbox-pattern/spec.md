@@ -37,6 +37,25 @@ The system SHALL provide an interface to query outbox entries by: published stat
 - **WHEN** the system queries outbox entries with a date range filter
 - **THEN** only entries within the specified date range SHALL be returned
 
+### Requirement: Transaction scope support
+When an ambient `TransactionScope` or explicit database transaction is active, the outbox write SHALL participate in that transaction.
+
+#### Scenario: TransactionScope participation
+- **WHEN** entity changes are made within an active `TransactionScope`
+- **THEN** the outbox writes SHALL be deferred until `TransactionScope.Complete()` is called
+
+#### Scenario: TransactionScope rollback
+- **WHEN** a `TransactionScope` is disposed without calling `Complete()`
+- **THEN** all outbox writes within that scope SHALL be rolled back
+
+#### Scenario: Explicit database transaction
+- **WHEN** an `IDbTransaction` is passed to the repository during entity operations
+- **THEN** the outbox write SHALL use the same transaction
+
+#### Scenario: No active transaction
+- **WHEN** entity changes are made outside any transaction scope
+- **THEN** the outbox write SHALL be committed immediately in its own implicit transaction
+
 ### Requirement: Outbox cleanup
 The system SHALL support configurable cleanup of published outbox entries older than a specified retention period.
 
