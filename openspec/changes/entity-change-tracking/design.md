@@ -83,20 +83,13 @@ We need a modular entity change tracking system for .NET applications that detec
 
 **Rationale**: Supports both simple console app scenarios and full .NET host applications.
 
-### 6. Serialization & Compression: One Assembly Per Plugin
-- `IChangeSerializer` interface defined in core — each implementation in its own assembly:
-  - `RayTree.Plugins.Serializers.Json` — System.Text.Json only
-  - `RayTree.Plugins.Serializers.Protobuf` — protobuf-net only
-  - `RayTree.Plugins.Serializers.MessagePack` — MessagePack-CSharp only
-- `IChangeCompressor` interface defined in core — each implementation in its own assembly:
-  - `RayTree.Plugins.Compressors.Gzip` — System.IO.Compression only
-  - `RayTree.Plugins.Compressors.Brotli` — System.IO.Compression only
-  - `RayTree.Plugins.Compressors.Lz4` — lz4net only
-  - `RayTree.Plugins.Compressors.NoOp` — built into Core (pass-through, zero dependencies)
-- Pipeline: entity change → serialize → compress → publish
-- Configurable per-entity or globally
+### 6. Serialization & Compression: One Assembly Per Plugin, Stream-Based Pipeline
+- `IChangeSerializer` interface defined in core — stream-based: `SerializeAsync(change, destinationStream)`, `DeserializeAsync(sourceStream, entityType)`
+- `IChangeCompressor` interface defined in core — stream-based: `CompressAsync(sourceStream, destinationStream)`, `DecompressAsync(sourceStream, destinationStream)`
+- Pipeline uses `Pipe` or chained streams: serializer writes → compressor reads → publisher consumes, with zero intermediate byte array allocations
+- Each serializer/compressor in its own assembly (see Decision 1)
 
-**Rationale**: One assembly per plugin means consumers reference exactly one NuGet package per serializer/compressor they need. No transitive dependencies from unused formats. A consumer using only JSON + Gzip references just Core + Serializers.Json + Compressors.Gzip. No protobuf-net or lz4net pulled in transitively.
+**Rationale**: Stream-based interfaces eliminate O(n) memory allocations in the publish pipeline. For large entity payloads (e.g., documents, arrays), this prevents memory pressure and GC spikes. The serializer writes directly into a compression stream, which writes directly into the queue publisher's output stream — no full payload ever exists as a single byte array in memory.
 
 ### 7. Subscriber Configuration: Mirror Publisher Model
 - Subscriber builder uses same per-entity configuration pattern: `.ConsumeEntity<Order>()`, `.FromKafka()`, `.FromRabbitMq()`

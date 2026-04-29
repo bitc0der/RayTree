@@ -26,7 +26,7 @@
 - [ ] 3.1 Implement `EntityChangeTracker` as the core change detection engine
 - [ ] 3.2 Implement thread-safe change capture with concurrent collections
 - [ ] 3.3 Implement correlation ID generation and propagation across batched changes
-- [ ] 3.4 Implement serialization/compression pipeline (serialize → compress → publish)
+- [ ] 3.4 Implement stream-based serialization/compression pipeline (serialize → compress → publish via chained streams, zero intermediate allocations)
 - [ ] 3.5 Implement outbox query interface with filtering by published status, entity type, change type, and date range
 - [ ] 3.6 Implement outbox cleanup service with configurable retention period
 

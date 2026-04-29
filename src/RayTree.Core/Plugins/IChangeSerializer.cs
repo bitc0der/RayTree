@@ -5,6 +5,6 @@ namespace RayTree.Plugins;
 public interface IChangeSerializer
 {
     string Name { get; }
-    Task<byte[]> SerializeAsync(EntityChange change, CancellationToken cancellationToken = default);
-    Task<EntityChange> DeserializeAsync(byte[] data, string entityType, CancellationToken cancellationToken = default);
+    Task SerializeAsync(EntityChange change, Stream destination, CancellationToken cancellationToken = default);
+    Task<EntityChange> DeserializeAsync(Stream source, string entityType, CancellationToken cancellationToken = default);
 }

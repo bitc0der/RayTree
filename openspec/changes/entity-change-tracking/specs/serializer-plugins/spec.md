@@ -45,6 +45,21 @@ The system SHALL provide a MessagePack serializer in a separate assembly (`RayTr
 - **WHEN** the MessagePack serializer deserializes a previously serialized change
 - **THEN** the original entity change SHALL be reconstructed with all metadata intact
 
+### Requirement: Serializer stream-based interface
+The `IChangeSerializer` interface in core SHALL use stream-based serialization to avoid intermediate byte array allocations.
+
+#### Scenario: Serialize to stream
+- **WHEN** `IChangeSerializer.SerializeAsync(change, destinationStream)` is called
+- **THEN** the entity change SHALL be written directly to the destination stream as serialized bytes
+
+#### Scenario: Deserialize from stream
+- **WHEN** `IChangeSerializer.DeserializeAsync(sourceStream, entityType)` is called
+- **THEN** the entity change SHALL be read and reconstructed from the source stream
+
+#### Scenario: Stream-based pipeline
+- **WHEN** the serialization/compression pipeline runs
+- **THEN** data SHALL flow through streams without loading the entire payload into memory
+
 ### Requirement: Serializer registration
 The system SHALL allow registering a serializer via the configuration builder or DI.
 

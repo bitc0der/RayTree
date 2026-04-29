@@ -3,6 +3,6 @@ namespace RayTree.Plugins;
 public interface IChangeCompressor
 {
     string Name { get; }
-    Task<byte[]> CompressAsync(byte[] data, CancellationToken cancellationToken = default);
-    Task<byte[]> DecompressAsync(byte[] data, CancellationToken cancellationToken = default);
+    Task CompressAsync(Stream source, Stream destination, CancellationToken cancellationToken = default);
+    Task DecompressAsync(Stream source, Stream destination, CancellationToken cancellationToken = default);
 }

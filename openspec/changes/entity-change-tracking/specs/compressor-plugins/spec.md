@@ -45,6 +45,21 @@ The system SHALL provide an LZ4 compressor in a separate assembly (`RayTree.Plug
 - **WHEN** an LZ4-compressed message is decompressed
 - **THEN** the original serialized byte array SHALL be restored
 
+### Requirement: Compressor stream-based interface
+The `IChangeCompressor` interface in core SHALL use stream-based compression to avoid intermediate byte array allocations.
+
+#### Scenario: Compress stream to stream
+- **WHEN** `IChangeCompressor.CompressAsync(sourceStream, destinationStream)` is called
+- **THEN** the compressed data SHALL be written directly to the destination stream
+
+#### Scenario: Decompress stream to stream
+- **WHEN** `IChangeCompressor.DecompressAsync(sourceStream, destinationStream)` is called
+- **THEN** the decompressed data SHALL be written directly to the destination stream
+
+#### Scenario: Stream chaining
+- **WHEN** serializer writes to a stream and compressor reads from it
+- **THEN** no intermediate byte array copy SHALL be created between the two operations
+
 ### Requirement: NoOp compressor
 The Core assembly SHALL include a pass-through `NoOpCompressor` that performs no compression.
 
