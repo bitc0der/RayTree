@@ -23,32 +23,32 @@
 
 ## 3. Core Implementation
 
-- [ ] 3.1 Implement `EntityChangeTracker` as the core change detection engine
-- [ ] 3.2 Implement thread-safe change capture with concurrent collections
-- [ ] 3.3 Implement correlation ID generation and propagation across batched changes
-- [ ] 3.4 Implement stream-based serialization/compression pipeline (serialize → compress → publish via chained streams, zero intermediate allocations)
-- [ ] 3.5 Implement outbox query interface with filtering by published status, entity type, change type, and date range
-- [ ] 3.6 Implement outbox cleanup service with configurable retention period
+- [x] 3.1 Implement `EntityChangeTracker` as the core change detection engine
+- [x] 3.2 Implement thread-safe change capture with concurrent collections
+- [x] 3.3 Implement correlation ID generation and propagation across batched changes
+- [x] 3.4 Implement stream-based serialization/compression pipeline (serialize → compress → publish via chained streams, zero intermediate allocations)
+- [x] 3.5 Implement outbox query interface with filtering by published status, entity type, change type, and date range
+- [x] 3.6 Implement outbox cleanup service with configurable retention period
 
 ## 4. EF Core Integration
 
-- [ ] 4.1 Implement `EntityChangeInterceptor` implementing `ISaveChangesInterceptor`
-- [ ] 4.2 Implement `SavingChanges` detection for Added, Modified, Deleted entities
-- [ ] 4.3 Implement `SavedChanges` outbox write in same transaction
-- [ ] 4.4 Implement async interceptor methods for `SaveChangesAsync`
-- [ ] 4.5 Implement entity type registration with filter support
-- [ ] 4.6 Implement `AddChangeTracking()` extension method on `IServiceCollection`
-- [ ] 4.7 Implement automatic interceptor attachment to registered DbContexts
-- [ ] 4.8 Implement opt-out mechanism for specific DbContexts
-- [ ] 4.9 Implement multi-DbContext support with independent configuration
+- [x] 4.1 Implement `EntityChangeInterceptor` implementing `ISaveChangesInterceptor`
+- [x] 4.2 Implement `SavingChanges` detection for Added, Modified, Deleted entities
+- [x] 4.3 Implement `SavedChanges` outbox write in same transaction
+- [x] 4.4 Implement async interceptor methods for `SaveChangesAsync`
+- [x] 4.5 Implement entity type registration with filter support
+- [x] 4.6 Implement `AddChangeTracking()` extension method on `IServiceCollection`
+- [x] 4.7 Implement automatic interceptor attachment to registered DbContexts
+- [x] 4.8 Implement opt-out mechanism for specific DbContexts
+- [x] 4.9 Implement multi-DbContext support with independent configuration
 
 ## 5. Outbox Pattern Implementation
 
-- [ ] 5.1 Implement outbox schema generator for per-entity source and outbox tables
-- [ ] 5.2 Implement outbox table model with entity columns + metadata columns
-- [ ] 5.3 Implement atomic outbox write within EF Core transaction
-- [ ] 5.4 Implement rollback handling for outbox write failures
-- [ ] 5.5 Implement outbox polling with configurable interval and batch size
+- [x] 5.1 Implement outbox schema generator for per-entity source and outbox tables
+- [x] 5.2 Implement outbox table model with entity columns + metadata columns
+- [x] 5.3 Implement atomic outbox write within EF Core transaction
+- [x] 5.4 Implement rollback handling for outbox write failures
+- [x] 5.5 Implement outbox polling with configurable interval and batch size
 
 ## 6. Change Distribution
 

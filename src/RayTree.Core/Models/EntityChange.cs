@@ -12,5 +12,4 @@ public class EntityChange
     public int Version { get; set; } = 1;
     public Guid CorrelationId { get; set; } = Guid.NewGuid();
     public bool Published { get; set; }
-    public byte[]? SerializedData { get; set; }
 }

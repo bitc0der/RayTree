@@ -45,20 +45,20 @@ The system SHALL provide a MessagePack serializer in a separate assembly (`RayTr
 - **WHEN** the MessagePack serializer deserializes a previously serialized change
 - **THEN** the original entity change SHALL be reconstructed with all metadata intact
 
-### Requirement: Serializer stream-based interface
-The `IChangeSerializer` interface in core SHALL use stream-based serialization to avoid intermediate byte array allocations.
+### Requirement: Serializer pipeline-based interface
+The `IChangeSerializer` interface in core SHALL use `System.IO.Pipelines` (PipeReader/PipeWriter) for serialization to avoid intermediate byte array allocations.
 
-#### Scenario: Serialize to stream
-- **WHEN** `IChangeSerializer.SerializeAsync(change, destinationStream)` is called
-- **THEN** the entity change SHALL be written directly to the destination stream as serialized bytes
+#### Scenario: Serialize to pipe
+- **WHEN** `IChangeSerializer.SerializeAsync(change, destinationWriter)` is called
+- **THEN** the serialized change data SHALL be written directly to the destination PipeWriter
 
-#### Scenario: Deserialize from stream
-- **WHEN** `IChangeSerializer.DeserializeAsync(sourceStream, entityType)` is called
-- **THEN** the entity change SHALL be read and reconstructed from the source stream
+#### Scenario: Deserialize from pipe
+- **WHEN** `IChangeSerializer.DeserializeAsync(sourceReader, entityType)` is called
+- **THEN** the entity change SHALL be reconstructed from the PipeReader data
 
-#### Scenario: Stream-based pipeline
-- **WHEN** the serialization/compression pipeline runs
-- **THEN** data SHALL flow through streams without loading the entire payload into memory
+#### Scenario: Zero intermediate allocation
+- **WHEN** the serialization pipeline runs (serialize → compress → publish)
+- **THEN** data SHALL flow through chained Pipes without creating intermediate byte array copies
 
 ### Requirement: Serializer registration
 The system SHALL allow registering a serializer via the configuration builder or DI.

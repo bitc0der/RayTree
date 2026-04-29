@@ -83,13 +83,14 @@ We need a modular entity change tracking system for .NET applications that detec
 
 **Rationale**: Supports both simple console app scenarios and full .NET host applications.
 
-### 6. Serialization & Compression: One Assembly Per Plugin, Stream-Based Pipeline
-- `IChangeSerializer` interface defined in core — stream-based: `SerializeAsync(change, destinationStream)`, `DeserializeAsync(sourceStream, entityType)`
-- `IChangeCompressor` interface defined in core — stream-based: `CompressAsync(sourceStream, destinationStream)`, `DecompressAsync(sourceStream, destinationStream)`
-- Pipeline uses `Pipe` or chained streams: serializer writes → compressor reads → publisher consumes, with zero intermediate byte array allocations
+### 6. Serialization & Compression: One Assembly Per Plugin, Pipeline-Based
+- `IChangeSerializer` interface defined in core — uses `PipeWriter` for output, `PipeReader` for input
+- `IChangeCompressor` interface defined in core — uses `PipeReader`/`PipeWriter` for zero-copy compression
+- `IQueuePublisher` interface defined in core — accepts `PipeReader` for payload
+- Pipeline uses chained `System.IO.Pipelines` Pipes: serializer writes → compressor reads/writes → publisher consumes, with pooled buffers and zero intermediate byte array allocations
 - Each serializer/compressor in its own assembly (see Decision 1)
 
-**Rationale**: Stream-based interfaces eliminate O(n) memory allocations in the publish pipeline. For large entity payloads (e.g., documents, arrays), this prevents memory pressure and GC spikes. The serializer writes directly into a compression stream, which writes directly into the queue publisher's output stream — no full payload ever exists as a single byte array in memory.
+**Rationale**: `System.IO.Pipelines` provides pooled buffers, zero-copy reads via `ReadOnlySequence<byte>`, and built-in backpressure. For large entity payloads, this eliminates memory pressure and GC spikes. The serializer writes directly into a Pipe, the compressor reads from that Pipe and writes to another Pipe, and the publisher consumes the final Pipe — no full payload ever exists as a single byte array in memory.
 
 ### 7. Subscriber Configuration: Mirror Publisher Model
 - Subscriber builder uses same per-entity configuration pattern: `.ConsumeEntity<Order>()`, `.FromKafka()`, `.FromRabbitMq()`
