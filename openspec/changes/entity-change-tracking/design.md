@@ -83,6 +83,21 @@ We need a modular entity change tracking system for .NET applications that detec
 
 **Rationale**: Separate assemblies allow consumers to pick only the serializers/compressors they need without pulling in database or queue dependencies. A consumer using only Kafka + JSON + Gzip references just Core + Serializers + Compressors + Kafka plugins.
 
+### 7. Subscriber Configuration: Mirror Publisher Model
+- Subscriber builder uses same per-entity configuration pattern: `.ConsumeEntity<Order>()`, `.FromKafka()`, `.FromRabbitMq()`
+- Per-entity serializer/compressor resolution matches publisher config
+- Handlers registered via `.OnChange<T>(ChangeType, handler)`
+- Deduplication via correlation_id with pluggable store (in-memory, Redis, DB)
+- Error policies per entity: retry, dead-letter, skip
+- `ChangeSubscriberHostedService` manages consume loop for all configured entities
+- Shares `MessageEnvelope` schema and serializer/compressor interfaces with publisher
+
+**Rationale**: Symmetric API reduces learning curve. Publisher and subscriber config use same building blocks. Consumers don't need to know envelope internals — the framework resolves serializer/compressor automatically.
+
+**Alternatives considered**:
+- Force consumers to handle raw envelope — gives control but increases boilerplate
+- Use MassTransit directly — good but locks into one framework; we want queue-agnostic abstraction
+
 ## Risks / Trade-offs
 
 | Risk | Mitigation |

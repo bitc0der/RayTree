@@ -24,6 +24,7 @@ Applications need reliable, decoupled mechanisms to track entity changes and dis
 - `compressor-plugins`: Separate assembly with pluggable compression providers (Gzip, Brotli, LZ4, None, etc.)
 - `dotnet-host-integration`: Microsoft.Extensions.DependencyInjection and IHostedService integration
 - `standalone-configuration`: Fluent configuration API for use without DI container
+- `subscriber-configuration`: Fluent configuration API for consuming entity changes with per-entity handlers, deduplication, and error policies
 
 ### Modified Capabilities
 

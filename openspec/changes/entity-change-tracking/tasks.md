@@ -108,6 +108,23 @@
 - [ ] 13.3 Implement trigger polling mode for outbox publisher
 - [ ] 13.4 Document trigger installation and configuration steps
 
+## 12. Subscriber Configuration
+
+- [ ] 12.1 Create `ChangeSubscriberConfiguration` builder class
+- [ ] 12.2 Implement `ConsumeEntity<T>()` method with per-entity source configuration
+- [ ] 12.3 Implement `FromKafka()` and `FromRabbitMq()` entity-level consume source methods
+- [ ] 12.4 Implement per-entity serializer/compressor resolution matching publisher config
+- [ ] 12.5 Implement `OnChange<T>()` handler registration with optional ChangeType filter
+- [ ] 12.6 Implement handler invocation pipeline (decompress → deserialize → route to handlers)
+- [ ] 12.7 Implement deduplication store interface (`IDeduplicationStore`)
+- [ ] 12.8 Implement in-memory deduplication store
+- [ ] 12.9 Implement Redis deduplication store
+- [ ] 12.10 Implement per-entity error handling policies (retry, dead-letter, skip)
+- [ ] 12.11 Implement `ChangeSubscriberHostedService` for DI integration
+- [ ] 12.12 Implement `IServiceCollection.AddChangeSubscriber()` extension method
+- [ ] 12.13 Implement standalone subscriber `IChangeSubscriber` with `StartAsync()`/`StopAsync()`
+- [ ] 12.14 Implement multi-entity consume loop with parallel processing
+
 ## 14. Testing
 
 - [ ] 14.1 Add unit tests for core abstractions and EntityChangeTracker
