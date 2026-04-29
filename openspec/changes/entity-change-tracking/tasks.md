@@ -1,9 +1,11 @@
 ## 1. Project Setup
 
-- [ ] 1.1 Create solution structure with projects: RayTree.Core, RayTree.EntityFrameworkCore, RayTree.Hosting, RayTree.Subscriber, RayTree.Plugins.PostgreSQL, RayTree.Plugins.RabbitMQ, RayTree.Plugins.Kafka, RayTree.Plugins.InMemory, RayTree.Plugins.Serializers.Json, RayTree.Plugins.Serializers.Protobuf, RayTree.Plugins.Serializers.MessagePack, RayTree.Plugins.Compressors.Gzip, RayTree.Plugins.Compressors.Brotli, RayTree.Plugins.Compressors.Lz4
-- [ ] 1.2 Add per-project NuGet package references (each plugin references only its own dependency: Npgsql, RabbitMQ.Client, Confluent.Kafka, protobuf-net, MessagePack, lz4net, System.Text.Json, System.IO.Compression)
-- [ ] 1.3 Set up project references and solution file
-- [ ] 1.4 Configure common build properties and versioning
+- [ ] 1.1 Create `Directory.Build.props` with common MSBuild settings (target framework, nullable, implicit usings, warning level, treat warnings as errors)
+- [ ] 1.2 Create `Directory.Packages.props` with centralized package version management (CentralPackageManagement enabled)
+- [ ] 1.3 Create solution structure with projects: RayTree.Core, RayTree.EntityFrameworkCore, RayTree.Hosting, RayTree.Subscriber, RayTree.Plugins.PostgreSQL, RayTree.Plugins.RabbitMQ, RayTree.Plugins.Kafka, RayTree.Plugins.InMemory, RayTree.Plugins.Serializers.Json, RayTree.Plugins.Serializers.Protobuf, RayTree.Plugins.Serializers.MessagePack, RayTree.Plugins.Compressors.Gzip, RayTree.Plugins.Compressors.Brotli, RayTree.Plugins.Compressors.Lz4
+- [ ] 1.4 Define all package versions in `Directory.Packages.props` (Microsoft.EntityFrameworkCore, Npgsql, RabbitMQ.Client, Confluent.Kafka, protobuf-net, MessagePack, lz4net, System.Text.Json, System.IO.Compression)
+- [ ] 1.5 Set up project references and solution file
+- [ ] 1.6 Configure per-project .csproj files with package references using `VersionOverride` only when needed, otherwise inheriting from central management
 
 ## 2. Core Abstractions
 

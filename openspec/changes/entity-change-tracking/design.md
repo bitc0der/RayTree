@@ -129,6 +129,18 @@ We need a modular entity change tracking system for .NET applications that detec
 - Docker Compose for tests — slower, more complex, flaky in CI
 - Testcontainers — good but adds dependency and startup overhead; in-memory is faster for unit-level tests
 
+### 9. Build & Package Management: Centralized via Directory.*.props
+- `Directory.Build.props`: Shared MSBuild properties across all 15+ projects — target framework (net8.0), nullable enable, implicit usings, warning level 4, treat warnings as errors, assembly versioning, copyright, package metadata
+- `Directory.Packages.props`: Central package version management (CentralPackageManagement) — all external dependency versions declared once, per-project .csproj files reference packages without version numbers
+- Eliminates version drift across plugins; single source of truth for dependency versions
+- Prevents diamond dependency conflicts at build time
+
+**Rationale**: With 15+ projects and many shared dependencies (EF Core, Npgsql, etc.), maintaining versions in each .csproj becomes error-prone. Central management ensures all plugins use the same dependency versions.
+
+**Alternatives considered**:
+- Version numbers in each .csproj — duplicates version info, drift over time
+- Shared .props file in a build folder — same outcome as Directory.Build.props but non-standard location
+
 ## Risks / Trade-offs
 
 | Risk | Mitigation |
