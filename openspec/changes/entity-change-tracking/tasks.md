@@ -168,6 +168,16 @@
 - [x] 14.5.6 Implement `GenerateInitializationDdl()` and `GenerateDropDdl()` helpers
 - [x] 14.5.7 Implement `DatabaseInitializationOptions` for configurable table naming
 
+## 14.6 Attribute-Based DDL Generation
+
+- [x] 14.6.1 Implement `AttributeBasedDdlGenerator` reading `[Table]`, `[Column]`, `[Key]`, `[Required]`, `[MaxLength]`, `[DatabaseGenerated]` attributes
+- [x] 14.6.2 Implement C# type to PostgreSQL type mapping (int→SERIAL, string→VARCHAR/TEXT, DateTime→TIMESTAMPTZ, etc.)
+- [x] 14.6.3 Implement EF Core `[Index]` attribute support via reflection (no hard dependency)
+- [x] 14.6.4 Implement EF Core `[Precision]` attribute support via reflection
+- [x] 14.6.5 Integrate attribute-based schema into `DatabaseInitializationExtensions` with `UseAttributeBasedSchema` flag
+- [x] 14.6.6 Implement `GenerateInitializationDdlFor<T>()` extension for per-entity DDL generation
+- [x] 14.6.7 Auto-detect `[Column]` names and `[Table]` schema/name in DDL output
+
 ## 15. Testing (NUnit)
 
 - [ ] 15.1 Add unit tests for core abstractions and EntityChangeTracker
