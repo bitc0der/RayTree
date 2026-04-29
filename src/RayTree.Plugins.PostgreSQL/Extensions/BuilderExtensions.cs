@@ -17,6 +17,17 @@ public static class PostgreSqlBuilderExtensions
         return options;
     }
 
+    public static IChangeTrackingBuilder UsePostgreSqlOutbox(
+        this IChangeTrackingBuilder builder,
+        Func<Type, PostgreSqlOutboxOptions> configure)
+    {
+        return builder.UseOutbox<IOutbox>(entityType =>
+        {
+            var options = configure(entityType);
+            return new PostgreSqlOutbox(options);
+        });
+    }
+
     public static PostgreSqlOutboxOptions UseNotificationChannel(
         this PostgreSqlOutboxOptions options,
         string channelName)

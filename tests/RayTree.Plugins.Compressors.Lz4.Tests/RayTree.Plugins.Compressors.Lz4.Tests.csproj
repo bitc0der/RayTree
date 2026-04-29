@@ -1,6 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\..\src\RayTree.Plugins.Compressors.Lz4\RayTree.Plugins.Compressors.Lz4.csproj" />
-    <PackageReference Include="lz4net" />
   </ItemGroup>
 </Project>
