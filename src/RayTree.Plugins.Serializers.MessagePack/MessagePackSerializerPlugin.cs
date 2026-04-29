@@ -1,5 +1,6 @@
 using System.IO.Pipelines;
 using MessagePack;
+using MessagePack.Resolvers;
 using RayTree.Models;
 using RayTree.Plugins;
 
@@ -9,7 +10,8 @@ public class MessagePackSerializerPlugin : IChangeSerializer
 {
     public string Name => "MessagePack";
 
-    private static readonly MessagePackSerializerOptions DefaultOptions = MessagePackSerializerOptions.Standard;
+    private static readonly MessagePackSerializerOptions DefaultOptions =
+        MessagePackSerializerOptions.Standard.WithResolver(ContractlessStandardResolver.Instance);
 
     public async Task SerializeAsync(EntityChange change, PipeWriter writer, CancellationToken cancellationToken = default)
     {

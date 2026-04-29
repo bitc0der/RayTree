@@ -17,7 +17,44 @@ public class BrotliCompressorPlugin : IChangeCompressor
 
     public async Task CompressAsync(PipeReader reader, PipeWriter writer, CancellationToken cancellationToken = default)
     {
-        await using var brotli = new BrotliStream(writer.AsStream(true), _level, true);
+        using var ms = new MemoryStream();
+        await using (var brotli = new BrotliStream(ms, _level, true))
+        {
+            var result = await reader.ReadAsync(cancellationToken);
+            var buffer = result.Buffer;
+
+            while (!result.IsCompleted)
+            {
+                foreach (var segment in buffer)
+                {
+                    await brotli.WriteAsync(segment, cancellationToken);
+                }
+                reader.AdvanceTo(buffer.End);
+                result = await reader.ReadAsync(cancellationToken);
+                buffer = result.Buffer;
+            }
+
+            if (!buffer.IsEmpty)
+            {
+                foreach (var segment in buffer)
+                {
+                    await brotli.WriteAsync(segment, cancellationToken);
+                }
+                reader.AdvanceTo(buffer.End);
+            }
+        }
+
+        ms.Position = 0;
+        await ms.CopyToAsync(writer.AsStream(), cancellationToken);
+
+        await writer.FlushAsync(cancellationToken);
+        await writer.CompleteAsync();
+        await reader.CompleteAsync();
+    }
+
+    public async Task DecompressAsync(PipeReader reader, PipeWriter writer, CancellationToken cancellationToken = default)
+    {
+        using var ms = new MemoryStream();
         var result = await reader.ReadAsync(cancellationToken);
         var buffer = result.Buffer;
 
@@ -25,11 +62,9 @@ public class BrotliCompressorPlugin : IChangeCompressor
         {
             foreach (var segment in buffer)
             {
-                await brotli.WriteAsync(segment, cancellationToken);
+                await ms.WriteAsync(segment, cancellationToken);
             }
-
-            var consumed = buffer.End;
-            reader.AdvanceTo(consumed);
+            reader.AdvanceTo(buffer.End);
             result = await reader.ReadAsync(cancellationToken);
             buffer = result.Buffer;
         }
@@ -38,33 +73,16 @@ public class BrotliCompressorPlugin : IChangeCompressor
         {
             foreach (var segment in buffer)
             {
-                await brotli.WriteAsync(segment, cancellationToken);
+                await ms.WriteAsync(segment, cancellationToken);
             }
             reader.AdvanceTo(buffer.End);
         }
 
-        await brotli.FlushAsync(cancellationToken);
+        ms.Position = 0;
+        await using var brotli = new BrotliStream(ms, CompressionMode.Decompress, true);
+        await brotli.CopyToAsync(writer.AsStream(), cancellationToken);
+
         await writer.FlushAsync(cancellationToken);
-        await writer.CompleteAsync();
-        await reader.CompleteAsync();
-    }
-
-    public async Task DecompressAsync(PipeReader reader, PipeWriter writer, CancellationToken cancellationToken = default)
-    {
-        await using var brotli = new BrotliStream(reader.AsStream(true), CompressionMode.Decompress, true);
-        var buffer = writer.GetMemory(8192);
-
-        while (true)
-        {
-            var bytesRead = await brotli.ReadAsync(buffer, cancellationToken);
-            if (bytesRead == 0)
-                break;
-
-            writer.Advance(bytesRead);
-            await writer.FlushAsync(cancellationToken);
-            buffer = writer.GetMemory(8192);
-        }
-
         await writer.CompleteAsync();
         await reader.CompleteAsync();
     }

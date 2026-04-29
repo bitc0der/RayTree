@@ -1,5 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\..\src\RayTree.Core\RayTree.Core.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Plugins.InMemory\RayTree.Plugins.InMemory.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.Json\RayTree.Plugins.Serializers.Json.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.Protobuf\RayTree.Plugins.Serializers.Protobuf.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.MessagePack\RayTree.Plugins.Serializers.MessagePack.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Plugins.Compressors.Gzip\RayTree.Plugins.Compressors.Gzip.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Plugins.Compressors.Brotli\RayTree.Plugins.Compressors.Brotli.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Plugins.Compressors.Lz4\RayTree.Plugins.Compressors.Lz4.csproj" />
   </ItemGroup>
 </Project>

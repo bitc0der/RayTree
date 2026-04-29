@@ -75,14 +75,15 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
 
         foreach (var entry in dbContext.ChangeTracker.Entries())
         {
-            if (!_trackedEntityTypes.Contains(entry.Entity.GetType()))
+            var entityType = entry.Entity.GetType();
+            if (!_trackedEntityTypes.Contains(entityType))
                 continue;
 
             var change = entry.State switch
             {
-                EntityState.Added => CreateChange(entry, ChangeType.Insert),
-                EntityState.Modified => CreateChange(entry, ChangeType.Update),
-                EntityState.Deleted => CreateChange(entry, ChangeType.Delete),
+                EntityState.Added => CreateChange(entry, entityType, ChangeType.Insert),
+                EntityState.Modified => CreateChange(entry, entityType, ChangeType.Update),
+                EntityState.Deleted => CreateChange(entry, entityType, ChangeType.Delete),
                 _ => null
             };
 
@@ -93,11 +94,11 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
         return changes;
     }
 
-    private static EntityChange CreateChange(EntityEntry entry, ChangeType changeType)
+    private static EntityChange CreateChange(EntityEntry entry, Type entityType, ChangeType changeType)
     {
         return new EntityChange
         {
-            EntityType = entry.Entity.GetType().FullName ?? entry.Entity.GetType().Name,
+            EntityType = entityType.AssemblyQualifiedName ?? entityType.FullName ?? entityType.Name,
             EntityId = entry.Property("Id").CurrentValue?.ToString() ?? Guid.NewGuid().ToString(),
             ChangeType = changeType,
             Timestamp = DateTime.UtcNow
@@ -115,7 +116,11 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
 
         foreach (var change in changes)
         {
-            var outbox = _tracker.GetOutbox(Type.GetType(change.EntityType)!);
+            var entityType = Type.GetType(change.EntityType);
+            if (entityType == null)
+                continue;
+
+            var outbox = _tracker.GetOutboxes().GetValueOrDefault(entityType);
             if (outbox != null)
             {
                 await outbox.WriteAsync(change, cancellationToken);

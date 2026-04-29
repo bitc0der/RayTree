@@ -180,9 +180,13 @@
 
 ## 15. Testing (NUnit)
 
-- [ ] 15.1 Add unit tests for core abstractions and EntityChangeTracker
-- [ ] 15.2 Add unit tests for serialization/compression pipeline
+- [x] 15.1 Add unit tests for core abstractions and EntityChangeTracker
+- [x] 15.2 Add unit tests for serialization/compression pipeline
+- [x] 15.15 Add tests for concurrent change detection
+- [x] 15.13 Add tests for standalone configuration and builder API
+- [x] 15.14 Add tests for outbox cleanup service
 - [ ] 15.3 Add unit tests for EF Core interceptor with in-memory provider
+- [x] 15.16 Add tests for separate assembly loading (Serializers.Json, Serializers.Protobuf, Serializers.MessagePack, Compressors.Gzip, Compressors.Brotli, Compressors.Lz4, InMemory)
 - [ ] 15.4 Add integration tests for PostgreSQL repository and outbox plugins
 - [ ] 15.5 Add integration tests for RabbitMQ publisher plugin
 - [ ] 15.6 Add integration tests for Kafka publisher plugin
