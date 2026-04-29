@@ -27,9 +27,15 @@ We need a modular entity change tracking system for .NET applications that detec
   - `RayTree.Plugins.PostgreSQL`: Repository and outbox implementations
   - `RayTree.Plugins.RabbitMQ`: Queue publisher
   - `RayTree.Plugins.Kafka`: Queue publisher
-  - `RayTree.Plugins.Serializers`: JSON, Protobuf, MessagePack serializers
-  - `RayTree.Plugins.Compressors`: Gzip, Brotli, LZ4, NoOp compressors
-- **Integration layer** (`RayTree.EntityFrameworkCore`, `RayTree.Hosting`): EF Core interceptor and IHostedService
+  - `RayTree.Plugins.InMemory`: Repository, outbox, queue (testing/dev)
+  - `RayTree.Plugins.Serializers.Json`: JSON serializer (System.Text.Json)
+  - `RayTree.Plugins.Serializers.Protobuf`: Protobuf serializer (protobuf-net)
+  - `RayTree.Plugins.Serializers.MessagePack`: MessagePack serializer (MessagePack-CSharp)
+  - `RayTree.Plugins.Compressors.Gzip`: Gzip compressor (System.IO.Compression)
+  - `RayTree.Plugins.Compressors.Brotli`: Brotli compressor (System.IO.Compression)
+  - `RayTree.Plugins.Compressors.Lz4`: LZ4 compressor (lz4net)
+  - `RayTree.Plugins.Compressors.NoOp`: Pass-through compressor (Core)
+- **Integration layer** (`RayTree.EntityFrameworkCore`, `RayTree.Hosting`, `RayTree.Subscriber`): EF Core interceptor, IHostedService, subscriber engine
 
 **Rationale**: Separate assemblies for serializers and compressors allow consumers to reference only the plugins they need. A lightweight consumer might only need the core + one serializer without pulling in database or queue dependencies. The builder pattern provides fluent configuration across all assemblies.
 
@@ -77,13 +83,20 @@ We need a modular entity change tracking system for .NET applications that detec
 
 **Rationale**: Supports both simple console app scenarios and full .NET host applications.
 
-### 6. Serialization & Compression: Separate Plugin Assemblies
-- `IChangeSerializer` interface defined in core — implementations in `RayTree.Plugins.Serializers`: JSON (System.Text.Json), Protobuf (protobuf-net), MessagePack (MessagePack-CSharp)
-- `IChangeCompressor` interface defined in core — implementations in `RayTree.Plugins.Compressors`: Gzip, Brotli, LZ4, NoOp
+### 6. Serialization & Compression: One Assembly Per Plugin
+- `IChangeSerializer` interface defined in core — each implementation in its own assembly:
+  - `RayTree.Plugins.Serializers.Json` — System.Text.Json only
+  - `RayTree.Plugins.Serializers.Protobuf` — protobuf-net only
+  - `RayTree.Plugins.Serializers.MessagePack` — MessagePack-CSharp only
+- `IChangeCompressor` interface defined in core — each implementation in its own assembly:
+  - `RayTree.Plugins.Compressors.Gzip` — System.IO.Compression only
+  - `RayTree.Plugins.Compressors.Brotli` — System.IO.Compression only
+  - `RayTree.Plugins.Compressors.Lz4` — lz4net only
+  - `RayTree.Plugins.Compressors.NoOp` — built into Core (pass-through, zero dependencies)
 - Pipeline: entity change → serialize → compress → publish
 - Configurable per-entity or globally
 
-**Rationale**: Separate assemblies allow consumers to pick only the serializers/compressors they need without pulling in database or queue dependencies. A consumer using only Kafka + JSON + Gzip references just Core + Serializers + Compressors + Kafka plugins.
+**Rationale**: One assembly per plugin means consumers reference exactly one NuGet package per serializer/compressor they need. No transitive dependencies from unused formats. A consumer using only JSON + Gzip references just Core + Serializers.Json + Compressors.Gzip. No protobuf-net or lz4net pulled in transitively.
 
 ### 7. Subscriber Configuration: Mirror Publisher Model
 - Subscriber builder uses same per-entity configuration pattern: `.ConsumeEntity<Order>()`, `.FromKafka()`, `.FromRabbitMq()`

@@ -20,8 +20,8 @@ Applications need reliable, decoupled mechanisms to track entity changes and dis
 - `change-distribution`: Queue-based distribution of entity changes via pub/sub plugins
 - `ef-core-integration`: EF Core interceptor for automatic change tracking on SaveChanges
 - `plugin-system`: Extensible plugin architecture for repository, outbox, and queue providers
-- `serializer-plugins`: Separate assembly with pluggable serialization providers (JSON, Protobuf, MessagePack, etc.)
-- `compressor-plugins`: Separate assembly with pluggable compression providers (Gzip, Brotli, LZ4, None, etc.)
+- `serializer-plugins`: Separate assemblies per serializer (JSON, Protobuf, MessagePack)
+- `compressor-plugins`: Separate assemblies per compressor (Gzip, Brotli, LZ4, NoOp)
 - `dotnet-host-integration`: Microsoft.Extensions.DependencyInjection and IHostedService integration
 - `standalone-configuration`: Fluent configuration API for use without DI container
 - `subscriber-configuration`: Fluent configuration API for consuming entity changes with per-entity handlers, deduplication, and error policies
@@ -33,9 +33,9 @@ Applications need reliable, decoupled mechanisms to track entity changes and dis
 
 ## Impact
 
-- New packages/assemblies: core library, EF Core integration, host integration, data plugins (PostgreSQL, RabbitMQ, Kafka), in-memory plugins (repository, outbox, queue), serializer plugins (JSON, Protobuf, MessagePack), compressor plugins (Gzip, Brotli, LZ4)
+- New packages/assemblies: core library, EF Core integration, host integration, data plugins (PostgreSQL, RabbitMQ, Kafka), in-memory plugins (repository, outbox, queue), serializer plugins (Json, Protobuf, MessagePack — each in separate assembly), compressor plugins (Gzip, Brotli, Lz4, NoOp — each in separate assembly)
 - Dependencies: Npgsql (PostgreSQL), RabbitMQ.Client, Confluent.Kafka, Microsoft.EntityFrameworkCore, protobuf-net, MessagePack-CSharp, lz4net
 - Database schema changes: requires source + outbox tables per tracked entity (unless using in-memory storage), potentially DB triggers
 - Existing applications can integrate via NuGet packages or source reference
-- Consumers reference only the plugin assemblies they need — serializers/compressors are separate from data plugins
+- Consumers reference only the plugin assemblies they need — each serializer and compressor is a separate assembly with no shared dependencies
 - In-memory plugins have zero external dependencies

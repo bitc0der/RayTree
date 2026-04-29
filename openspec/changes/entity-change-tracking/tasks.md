@@ -1,7 +1,7 @@
 ## 1. Project Setup
 
-- [ ] 1.1 Create solution structure with projects: RayTree.Core, RayTree.EntityFrameworkCore, RayTree.Hosting, RayTree.Plugins.PostgreSQL, RayTree.Plugins.RabbitMQ, RayTree.Plugins.Kafka, RayTree.Plugins.Serializers, RayTree.Plugins.Compressors
-- [ ] 1.2 Add shared NuGet package references (Microsoft.EntityFrameworkCore, Npgsql, RabbitMQ.Client, Confluent.Kafka, protobuf-net, MessagePack, lz4net)
+- [ ] 1.1 Create solution structure with projects: RayTree.Core, RayTree.EntityFrameworkCore, RayTree.Hosting, RayTree.Subscriber, RayTree.Plugins.PostgreSQL, RayTree.Plugins.RabbitMQ, RayTree.Plugins.Kafka, RayTree.Plugins.InMemory, RayTree.Plugins.Serializers.Json, RayTree.Plugins.Serializers.Protobuf, RayTree.Plugins.Serializers.MessagePack, RayTree.Plugins.Compressors.Gzip, RayTree.Plugins.Compressors.Brotli, RayTree.Plugins.Compressors.Lz4
+- [ ] 1.2 Add per-project NuGet package references (each plugin references only its own dependency: Npgsql, RabbitMQ.Client, Confluent.Kafka, protobuf-net, MessagePack, lz4net, System.Text.Json, System.IO.Compression)
 - [ ] 1.3 Set up project references and solution file
 - [ ] 1.4 Configure common build properties and versioning
 
@@ -76,22 +76,31 @@
 - [ ] 8.3 Implement RabbitMQ queue publisher plugin using RabbitMQ.Client
 - [ ] 8.4 Implement Kafka queue publisher plugin using Confluent.Kafka
 
-## 9. Serializer Plugins Assembly
+## 9. Serializer Plugin Assemblies
 
-- [ ] 9.1 Create `RayTree.Plugins.Serializers` project with no dependencies on RayTree.Core beyond interfaces
-- [ ] 9.2 Implement JSON serializer plugin using System.Text.Json
-- [ ] 9.3 Implement Protobuf serializer plugin using protobuf-net
-- [ ] 9.4 Implement MessagePack serializer plugin using MessagePack-CSharp
-- [ ] 9.5 Implement serializer extension methods on configuration builder (UseJsonSerializer, UseProtobufSerializer, UseMessagePackSerializer)
+- [ ] 9.1 Create `RayTree.Plugins.Serializers.Json` project with only `RayTree.Core` dependency
+- [ ] 9.2 Implement JSON serializer using System.Text.Json
+- [ ] 9.3 Implement `.UseJsonSerializer()` extension method
+- [ ] 9.4 Create `RayTree.Plugins.Serializers.Protobuf` project with only `RayTree.Core` + protobuf-net dependency
+- [ ] 9.5 Implement Protobuf serializer using protobuf-net
+- [ ] 9.6 Implement `.UseProtobufSerializer()` extension method
+- [ ] 9.7 Create `RayTree.Plugins.Serializers.MessagePack` project with only `RayTree.Core` + MessagePack-CSharp dependency
+- [ ] 9.8 Implement MessagePack serializer using MessagePack-CSharp
+- [ ] 9.9 Implement `.UseMessagePackSerializer()` extension method
 
-## 10. Compressor Plugins Assembly
+## 10. Compressor Plugin Assemblies
 
-- [ ] 10.1 Create `RayTree.Plugins.Compressors` project with no dependencies on RayTree.Core beyond interfaces
-- [ ] 10.2 Implement Gzip compressor plugin using System.IO.Compression
-- [ ] 10.3 Implement Brotli compressor plugin using System.IO.Compression
-- [ ] 10.4 Implement LZ4 compressor plugin using lz4net
-- [ ] 10.5 Implement NoOp compressor plugin (pass-through, in core)
-- [ ] 10.6 Implement compressor extension methods on configuration builder (UseGzipCompressor, UseBrotliCompressor, UseLz4Compressor, UseNoOpCompressor)
+- [ ] 10.1 Create `RayTree.Plugins.Compressors.Gzip` project with only `RayTree.Core` dependency
+- [ ] 10.2 Implement Gzip compressor using System.IO.Compression
+- [ ] 10.3 Implement `.UseGzipCompressor()` extension method
+- [ ] 10.4 Create `RayTree.Plugins.Compressors.Brotli` project with only `RayTree.Core` dependency
+- [ ] 10.5 Implement Brotli compressor using System.IO.Compression
+- [ ] 10.6 Implement `.UseBrotliCompressor()` extension method
+- [ ] 10.7 Create `RayTree.Plugins.Compressors.Lz4` project with only `RayTree.Core` + lz4net dependency
+- [ ] 10.8 Implement LZ4 compressor using lz4net
+- [ ] 10.9 Implement `.UseLz4Compressor()` extension method
+- [ ] 10.10 Implement NoOp compressor in Core (pass-through)
+- [ ] 10.11 Implement `.UseNoOpCompressor()` extension method
 
 ## 10.5 In-Memory Plugins Assembly
 
@@ -165,15 +174,15 @@
 - [ ] 15.13 Add tests for standalone configuration and builder API
 - [ ] 15.14 Add tests for outbox cleanup service
 - [ ] 15.15 Add tests for concurrent change detection
-- [ ] 15.16 Add tests for separate assembly loading (Serializers, Compressors, InMemory)
+- [ ] 15.16 Add tests for separate assembly loading (Serializers.Json, Serializers.Protobuf, Serializers.MessagePack, Compressors.Gzip, Compressors.Brotli, Compressors.Lz4, InMemory)
 
 ## 16. Documentation
 
 - [ ] 16.1 Write getting started guide with quick-start example
 - [ ] 16.2 Write configuration guide (standalone and DI modes)
 - [ ] 16.3 Write plugin development guide for custom providers
-- [ ] 16.4 Write serializer plugin guide (JSON, Protobuf, MessagePack)
-- [ ] 16.5 Write compressor plugin guide (Gzip, Brotli, LZ4)
+- [ ] 16.4 Write serializer plugin guides (JSON, Protobuf, MessagePack — each as separate package)
+- [ ] 16.5 Write compressor plugin guides (Gzip, Brotli, LZ4 — each as separate package)
 - [ ] 16.6 Write in-memory plugin guide (testing and development)
 - [ ] 16.7 Write EF Core integration guide
 - [ ] 16.8 Write database migration guide for source/outbox tables
