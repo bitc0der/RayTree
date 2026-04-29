@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Plugin registration interface
-The system SHALL define a plugin registration mechanism that allows providers to be discovered and registered for: repository, outbox, queue, serialization, and compression.
+The system SHALL define a plugin registration mechanism that allows providers to be discovered and registered for: repository, outbox, and queue.
 
 #### Scenario: Register repository plugin
 - **WHEN** a repository plugin is registered via the configuration builder
@@ -14,14 +14,6 @@ The system SHALL define a plugin registration mechanism that allows providers to
 #### Scenario: Register queue plugin
 - **WHEN** a queue plugin is registered via the configuration builder
 - **THEN** the system SHALL use that queue implementation for publishing change messages
-
-#### Scenario: Register serializer plugin
-- **WHEN** a serializer plugin is registered via the configuration builder
-- **THEN** the system SHALL use that serializer for converting changes to message format
-
-#### Scenario: Register compressor plugin
-- **WHEN** a compressor plugin is registered via the configuration builder
-- **THEN** the system SHALL use that compressor for message compression
 
 ### Requirement: Built-in PostgreSQL plugin
 The system SHALL include a PostgreSQL plugin providing repository and outbox implementations using Npgsql.
@@ -48,26 +40,12 @@ The system SHALL include a Kafka plugin providing queue publisher implementation
 - **WHEN** the Kafka plugin is configured
 - **THEN** change messages SHALL be published to a Kafka topic
 
-### Requirement: Built-in JSON serializer
-The system SHALL include a JSON serializer using System.Text.Json.
-
-#### Scenario: JSON serialization
-- **WHEN** the JSON serializer is configured
-- **THEN** entity changes SHALL be serialized to JSON format
-
-### Requirement: Built-in Gzip compressor
-The system SHALL include a Gzip compressor implementation.
-
-#### Scenario: Gzip compression
-- **WHEN** the Gzip compressor is configured
-- **THEN** serialized messages SHALL be compressed using gzip
-
 ### Requirement: Plugin interface contracts
 All plugins SHALL implement well-defined interfaces that the core system uses for interaction.
 
 #### Scenario: Interface compliance
 - **WHEN** a plugin is registered
-- **THEN** the plugin SHALL implement the corresponding interface (IRepository, IOutbox, IQueuePublisher, IChangeSerializer, IChangeCompressor)
+- **THEN** the plugin SHALL implement the corresponding interface (IRepository, IOutbox, IQueuePublisher)
 
 #### Scenario: Plugin validation
 - **WHEN** a plugin is registered that does not implement the required interface

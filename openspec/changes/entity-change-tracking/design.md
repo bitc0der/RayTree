@@ -8,7 +8,8 @@ We need a modular entity change tracking system for .NET applications that detec
 - Detect entity changes automatically via EF Core interceptors or manual registration
 - Store changes in an outbox table alongside source entity tables
 - Distribute changes reliably via configurable queue providers (RabbitMQ, Kafka)
-- Support plugin architecture for repository, outbox, queue, serialization, and compression
+- Support plugin architecture for repository, outbox, and queue providers
+- Support separate plugin assemblies for serializers and compressors
 - Work standalone (fluent config) or via .NET DI/IHostedService
 - Support DB-level triggers as optional change detection mechanism
 
@@ -20,16 +21,22 @@ We need a modular entity change tracking system for .NET applications that detec
 
 ## Decisions
 
-### 1. Architecture: Layered Plugin System
-- **Core layer**: Abstractions (`IEntityChangeTracker`, `IOutbox`, `IQueuePublisher`, `IChangeSerializer`, `IChangeCompressor`)
-- **Plugin layer**: Provider implementations registered via `IChangeTrackingBuilder`
-- **Integration layer**: EF Core interceptor (`ISaveChangesInterceptor`) and HostedService (`IHostedService`)
+### 1. Architecture: Layered Plugin System with Separate Assemblies
+- **Core layer** (`RayTree.Core`): Abstractions (`IEntityChangeTracker`, `IOutbox`, `IQueuePublisher`, `IChangeSerializer`, `IChangeCompressor`)
+- **Plugin layer** (`RayTree.Plugins.*`):
+  - `RayTree.Plugins.PostgreSQL`: Repository and outbox implementations
+  - `RayTree.Plugins.RabbitMQ`: Queue publisher
+  - `RayTree.Plugins.Kafka`: Queue publisher
+  - `RayTree.Plugins.Serializers`: JSON, Protobuf, MessagePack serializers
+  - `RayTree.Plugins.Compressors`: Gzip, Brotli, LZ4, NoOp compressors
+- **Integration layer** (`RayTree.EntityFrameworkCore`, `RayTree.Hosting`): EF Core interceptor and IHostedService
 
-**Rationale**: Clean separation allows swapping any component without affecting others. The builder pattern provides fluent configuration.
+**Rationale**: Separate assemblies for serializers and compressors allow consumers to reference only the plugins they need. A lightweight consumer might only need the core + one serializer without pulling in database or queue dependencies. The builder pattern provides fluent configuration across all assemblies.
 
 **Alternatives considered**:
 - MediatR-style mediator — too heavy, adds indirection not needed here
-- Single monolithic service — would lock users into specific providers
+- Single monolithic assembly — would force all dependencies on every consumer
+- Serialization/compression in plugin assembly — would mix concerns and force serializer consumers to pull in database plugins
 
 ### 2. Outbox Pattern: Per-Entity Source + Outbox Tables
 - For each tracked entity type `T`, maintain: `{T}_source` (original or metadata) and `{T}_outbox` (pending changes)
@@ -68,13 +75,13 @@ We need a modular entity change tracking system for .NET applications that detec
 
 **Rationale**: Supports both simple console app scenarios and full .NET host applications.
 
-### 6. Serialization & Compression: Pluggable Pipeline
-- `IChangeSerializer` interface — built-in: JSON (System.Text.Json)
-- `IChangeCompressor` interface — built-in: Gzip, None
+### 6. Serialization & Compression: Separate Plugin Assemblies
+- `IChangeSerializer` interface defined in core — implementations in `RayTree.Plugins.Serializers`: JSON (System.Text.Json), Protobuf (protobuf-net), MessagePack (MessagePack-CSharp)
+- `IChangeCompressor` interface defined in core — implementations in `RayTree.Plugins.Compressors`: Gzip, Brotli, LZ4, NoOp
 - Pipeline: entity change → serialize → compress → publish
 - Configurable per-entity or globally
 
-**Rationale**: Allows users to optimize for their queue payload limits and consumer requirements.
+**Rationale**: Separate assemblies allow consumers to pick only the serializers/compressors they need without pulling in database or queue dependencies. A consumer using only Kafka + JSON + Gzip references just Core + Serializers + Compressors + Kafka plugins.
 
 ## Risks / Trade-offs
 

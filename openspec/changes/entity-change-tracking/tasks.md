@@ -1,7 +1,7 @@
 ## 1. Project Setup
 
-- [ ] 1.1 Create solution structure with projects: RayTree.Core, RayTree.EntityFrameworkCore, RayTree.Hosting, RayTree.Plugins.PostgreSQL, RayTree.Plugins.RabbitMQ, RayTree.Plugins.Kafka
-- [ ] 1.2 Add shared NuGet package references (Microsoft.EntityFrameworkCore, Npgsql, RabbitMQ.Client, Confluent.Kafka)
+- [ ] 1.1 Create solution structure with projects: RayTree.Core, RayTree.EntityFrameworkCore, RayTree.Hosting, RayTree.Plugins.PostgreSQL, RayTree.Plugins.RabbitMQ, RayTree.Plugins.Kafka, RayTree.Plugins.Serializers, RayTree.Plugins.Compressors
+- [ ] 1.2 Add shared NuGet package references (Microsoft.EntityFrameworkCore, Npgsql, RabbitMQ.Client, Confluent.Kafka, protobuf-net, MessagePack, lz4net)
 - [ ] 1.3 Set up project references and solution file
 - [ ] 1.4 Configure common build properties and versioning
 
@@ -61,57 +61,77 @@
 - [ ] 7.3 Implement global plugin defaults and per-entity plugin overrides
 - [ ] 7.4 Implement `IChangeTrackingBuilder` fluent API (UseRepository, UseOutbox, UseQueue, UseSerializer, UseCompressor)
 
-## 8. Built-in Plugins
+## 8. Built-in Data Plugins
 
 - [ ] 8.1 Implement PostgreSQL repository plugin using Npgsql
 - [ ] 8.2 Implement PostgreSQL outbox plugin with table-per-entity schema
 - [ ] 8.3 Implement RabbitMQ queue publisher plugin using RabbitMQ.Client
 - [ ] 8.4 Implement Kafka queue publisher plugin using Confluent.Kafka
-- [ ] 8.5 Implement JSON serializer plugin using System.Text.Json
-- [ ] 8.6 Implement Gzip compressor plugin
-- [ ] 8.7 Implement No-op compressor plugin (pass-through)
 
-## 9. .NET Host Integration
+## 9. Serializer Plugins Assembly
 
-- [ ] 9.1 Implement `OutboxPublisherHostedService` implementing `IHostedService`
-- [ ] 9.2 Implement hosted service start/stop lifecycle
-- [ ] 9.3 Implement `IOptions<ChangeTrackingOptions>` configuration binding
-- [ ] 9.4 Implement `IServiceCollection.AddChangeTracking()` with builder pattern
-- [ ] 9.5 Implement configuration support via appsettings.json and environment variables
+- [ ] 9.1 Create `RayTree.Plugins.Serializers` project with no dependencies on RayTree.Core beyond interfaces
+- [ ] 9.2 Implement JSON serializer plugin using System.Text.Json
+- [ ] 9.3 Implement Protobuf serializer plugin using protobuf-net
+- [ ] 9.4 Implement MessagePack serializer plugin using MessagePack-CSharp
+- [ ] 9.5 Implement serializer extension methods on configuration builder (UseJsonSerializer, UseProtobufSerializer, UseMessagePackSerializer)
 
-## 10. Standalone Configuration
+## 10. Compressor Plugins Assembly
 
-- [ ] 10.1 Implement `ChangeTrackingConfiguration` builder class
-- [ ] 10.2 Implement fluent configuration methods (UseRepository, UseOutbox, UseQueue, UseSerializer, UseCompressor)
-- [ ] 10.3 Implement `Build()` method returning `IEntityChangeTracker`
-- [ ] 10.4 Implement `StartPublisher()` and `StopPublisher()` for standalone publisher
-- [ ] 10.5 Implement `Dispose()` for resource cleanup
+- [ ] 10.1 Create `RayTree.Plugins.Compressors` project with no dependencies on RayTree.Core beyond interfaces
+- [ ] 10.2 Implement Gzip compressor plugin using System.IO.Compression
+- [ ] 10.3 Implement Brotli compressor plugin using System.IO.Compression
+- [ ] 10.4 Implement LZ4 compressor plugin using lz4net
+- [ ] 10.5 Implement NoOp compressor plugin (pass-through, in core)
+- [ ] 10.6 Implement compressor extension methods on configuration builder (UseGzipCompressor, UseBrotliCompressor, UseLz4Compressor, UseNoOpCompressor)
 
-## 11. Database Triggers (Optional)
+## 11. .NET Host Integration
 
-- [ ] 11.1 Implement PostgreSQL trigger generator for source tables
-- [ ] 11.2 Implement trigger-based outbox write for non-EF Core changes
-- [ ] 11.3 Implement trigger polling mode for outbox publisher
-- [ ] 11.4 Document trigger installation and configuration steps
+- [ ] 11.1 Implement `OutboxPublisherHostedService` implementing `IHostedService`
+- [ ] 11.2 Implement hosted service start/stop lifecycle
+- [ ] 11.3 Implement `IOptions<ChangeTrackingOptions>` configuration binding
+- [ ] 11.4 Implement `IServiceCollection.AddChangeTracking()` with builder pattern
+- [ ] 11.5 Implement configuration support via appsettings.json and environment variables
 
-## 12. Testing
+## 12. Standalone Configuration
 
-- [ ] 12.1 Add unit tests for core abstractions and EntityChangeTracker
-- [ ] 12.2 Add unit tests for serialization/compression pipeline
-- [ ] 12.3 Add unit tests for EF Core interceptor with in-memory provider
-- [ ] 12.4 Add integration tests for PostgreSQL repository and outbox plugins
-- [ ] 12.5 Add integration tests for RabbitMQ publisher plugin
-- [ ] 12.6 Add integration tests for Kafka publisher plugin
-- [ ] 12.7 Add integration tests for end-to-end change tracking with EF Core + PostgreSQL + queue
-- [ ] 12.8 Add tests for standalone configuration and builder API
-- [ ] 12.9 Add tests for outbox cleanup service
-- [ ] 12.10 Add tests for concurrent change detection
+- [ ] 12.1 Implement `ChangeTrackingConfiguration` builder class
+- [ ] 12.2 Implement fluent configuration methods (UseRepository, UseOutbox, UseQueue, UseSerializer, UseCompressor)
+- [ ] 12.3 Implement `Build()` method returning `IEntityChangeTracker`
+- [ ] 12.4 Implement `StartPublisher()` and `StopPublisher()` for standalone publisher
+- [ ] 12.5 Implement `Dispose()` for resource cleanup
 
-## 13. Documentation
+## 13. Database Triggers (Optional)
 
-- [ ] 13.1 Write getting started guide with quick-start example
-- [ ] 13.2 Write configuration guide (standalone and DI modes)
-- [ ] 13.3 Write plugin development guide for custom providers
-- [ ] 13.4 Write EF Core integration guide
-- [ ] 13.5 Write database migration guide for source/outbox tables
-- [ ] 13.6 Write database trigger setup guide
+- [ ] 13.1 Implement PostgreSQL trigger generator for source tables
+- [ ] 13.2 Implement trigger-based outbox write for non-EF Core changes
+- [ ] 13.3 Implement trigger polling mode for outbox publisher
+- [ ] 13.4 Document trigger installation and configuration steps
+
+## 14. Testing
+
+- [ ] 14.1 Add unit tests for core abstractions and EntityChangeTracker
+- [ ] 14.2 Add unit tests for serialization/compression pipeline
+- [ ] 14.3 Add unit tests for EF Core interceptor with in-memory provider
+- [ ] 14.4 Add integration tests for PostgreSQL repository and outbox plugins
+- [ ] 14.5 Add integration tests for RabbitMQ publisher plugin
+- [ ] 14.6 Add integration tests for Kafka publisher plugin
+- [ ] 14.7 Add integration tests for JSON serializer plugin
+- [ ] 14.8 Add integration tests for Protobuf serializer plugin
+- [ ] 14.9 Add integration tests for Gzip and Brotli compressor plugins
+- [ ] 14.10 Add integration tests for end-to-end change tracking with EF Core + PostgreSQL + queue
+- [ ] 14.11 Add tests for standalone configuration and builder API
+- [ ] 14.12 Add tests for outbox cleanup service
+- [ ] 14.13 Add tests for concurrent change detection
+- [ ] 14.14 Add tests for separate assembly loading (Serializers, Compressors)
+
+## 15. Documentation
+
+- [ ] 15.1 Write getting started guide with quick-start example
+- [ ] 15.2 Write configuration guide (standalone and DI modes)
+- [ ] 15.3 Write plugin development guide for custom providers
+- [ ] 15.4 Write serializer plugin guide (JSON, Protobuf, MessagePack)
+- [ ] 15.5 Write compressor plugin guide (Gzip, Brotli, LZ4)
+- [ ] 15.6 Write EF Core integration guide
+- [ ] 15.7 Write database migration guide for source/outbox tables
+- [ ] 15.8 Write database trigger setup guide

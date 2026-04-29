@@ -19,7 +19,9 @@ Applications need reliable, decoupled mechanisms to track entity changes and dis
 - `outbox-pattern`: Outbox storage and management with per-entity source/outbox table pairs
 - `change-distribution`: Queue-based distribution of entity changes via pub/sub plugins
 - `ef-core-integration`: EF Core interceptor for automatic change tracking on SaveChanges
-- `plugin-system`: Extensible plugin architecture for repository, outbox, queue, serialization, and compression providers
+- `plugin-system`: Extensible plugin architecture for repository, outbox, and queue providers
+- `serializer-plugins`: Separate assembly with pluggable serialization providers (JSON, Protobuf, MessagePack, etc.)
+- `compressor-plugins`: Separate assembly with pluggable compression providers (Gzip, Brotli, LZ4, None, etc.)
 - `dotnet-host-integration`: Microsoft.Extensions.DependencyInjection and IHostedService integration
 - `standalone-configuration`: Fluent configuration API for use without DI container
 
@@ -29,7 +31,8 @@ Applications need reliable, decoupled mechanisms to track entity changes and dis
 
 ## Impact
 
-- New packages/assemblies: core library, EF Core integration, host integration, plugin providers
-- Dependencies: Npgsql (PostgreSQL), RabbitMQ.Client, Confluent.Kafka, Microsoft.EntityFrameworkCore
+- New packages/assemblies: core library, EF Core integration, host integration, data plugins (PostgreSQL, RabbitMQ, Kafka), serializer plugins (JSON, Protobuf, MessagePack), compressor plugins (Gzip, Brotli, LZ4)
+- Dependencies: Npgsql (PostgreSQL), RabbitMQ.Client, Confluent.Kafka, Microsoft.EntityFrameworkCore, protobuf-net, MessagePack-CSharp, lz4net
 - Database schema changes: requires source + outbox tables per tracked entity, potentially DB triggers
 - Existing applications can integrate via NuGet packages or source reference
+- Consumers reference only the plugin assemblies they need — serializers/compressors are separate from data plugins
