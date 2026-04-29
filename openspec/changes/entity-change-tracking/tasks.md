@@ -11,15 +11,15 @@
 
 ## 2. Core Abstractions
 
-- [ ] 2.1 Define `IEntityChangeTracker` interface with change detection methods
-- [ ] 2.2 Define `IRepository` interface for entity persistence operations
-- [ ] 2.3 Define `IOutbox` interface for change storage operations
-- [ ] 2.4 Define `IQueuePublisher` interface for message publishing
-- [ ] 2.5 Define `IChangeSerializer` interface for message serialization
-- [ ] 2.6 Define `IChangeCompressor` interface for message compression
-- [ ] 2.7 Define `EntityChange` model with metadata fields (change_type, timestamp, version, correlation_id, entity_type)
-- [ ] 2.8 Define `ChangeType` enum (Insert, Update, Delete)
-- [ ] 2.9 Define `EntityConfiguration` model for per-entity plugin settings
+- [x] 2.1 Define `IEntityChangeTracker` interface with change detection methods
+- [x] 2.2 Define `IRepository` interface for entity persistence operations
+- [x] 2.3 Define `IOutbox` interface for change storage operations
+- [x] 2.4 Define `IQueuePublisher` interface for message publishing
+- [x] 2.5 Define `IChangeSerializer` interface for message serialization
+- [x] 2.6 Define `IChangeCompressor` interface for message compression
+- [x] 2.7 Define `EntityChange` model with metadata fields (change_type, timestamp, version, correlation_id, entity_type)
+- [x] 2.8 Define `ChangeType` enum (Insert, Update, Delete)
+- [x] 2.9 Define `EntityConfiguration` model for per-entity plugin settings
 
 ## 3. Core Implementation
 
