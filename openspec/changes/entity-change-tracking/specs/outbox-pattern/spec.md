@@ -47,3 +47,44 @@ The system SHALL support configurable cleanup of published outbox entries older 
 #### Scenario: Cleanup preserves unpublished entries
 - **WHEN** the cleanup job runs
 - **THEN** unpublished entries SHALL NOT be deleted regardless of age
+
+### Requirement: PostgreSQL notification trigger
+When NOTIFY mode is enabled for a PostgreSQL outbox, the system SHALL generate a trigger that sends a `pg_notify` message after each outbox insert.
+
+#### Scenario: Trigger generation
+- **WHEN** `.UseNotificationChannel("entity_changes")` is configured on a PostgreSQL outbox
+- **THEN** a trigger function and trigger SHALL be generated that calls `pg_notify` after each outbox row insert
+
+#### Scenario: Notification payload
+- **WHEN** an outbox row is inserted and NOTIFY mode is enabled
+- **THEN** the notification payload SHALL contain entity type, outbox row ID, and change type as JSON
+
+#### Scenario: Multiple outbox tables, single channel
+- **WHEN** multiple entity outbox tables share the same notification channel
+- **THEN** the notification payload SHALL include the entity type so listeners can distinguish sources
+
+### Requirement: Notification DDL generation
+The system SHALL provide SQL scripts to create, update, and drop notification triggers for PostgreSQL outbox tables.
+
+#### Scenario: Generate notification DDL
+- **WHEN** the migration generator is called with NOTIFY enabled
+- **THEN** it SHALL output `CREATE TRIGGER` and `CREATE FUNCTION` statements for notification
+
+#### Scenario: Drop notification DDL
+- **WHEN** NOTIFY mode is disabled
+- **THEN** the migration generator SHALL output `DROP TRIGGER` and `DROP FUNCTION` statements
+
+### Requirement: Connection resilience for notifications
+The system SHALL detect PostgreSQL connection drops and recover the LISTEN subscription automatically.
+
+#### Scenario: Connection drop detection
+- **WHEN** the PostgreSQL connection used for LISTEN is lost
+- **THEN** the system SHALL detect the drop and log a warning
+
+#### Scenario: Automatic reconnection
+- **WHEN** the connection is lost during LISTEN
+- **THEN** the system SHALL reconnect and re-issue the LISTEN command
+
+#### Scenario: Backlog scan on reconnect
+- **WHEN** the notification listener reconnects after a disconnection
+- **THEN** the system SHALL scan for unpublished entries created during the outage and process them before resuming LISTEN

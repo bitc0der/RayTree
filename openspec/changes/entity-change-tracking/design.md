@@ -56,17 +56,19 @@ We need a modular entity change tracking system for .NET applications that detec
 
 **Rationale**: EF Core interceptor is the most natural fit for .NET apps. Trigger support covers edge cases where entities change outside EF Core.
 
-### 4. Queue Distribution: HostedService with Polling
-- `OutboxPublisherHostedService` polls outbox tables for unpublished changes
+### 4. Queue Distribution: Dual Mode (Polling + NOTIFY)
+- **Default**: `OutboxPublisherHostedService` polls outbox tables for unpublished changes
+- **NOTIFY mode** (PostgreSQL only): Dedicated connection issues `LISTEN` on configured channel; trigger on outbox table fires `pg_notify` on insert
+- **Fallback poller**: Activates on connection loss or as periodic safety net; configurable interval
 - Uses serialization → compression → publish pipeline
 - Configurable polling interval, batch size
 - Marks changes as published after successful queue publish
 
-**Rationale**: Polling is simpler and more reliable than event-driven for outbox. Works with any queue provider.
+**Rationale**: Polling works universally but introduces latency and DB load. NOTIFY gives near-instant publishing with zero DB load when idle, but is PostgreSQL-specific and requires connection management. Fallback poller ensures no messages are lost on reconnect.
 
 **Alternatives considered**:
 - Event-driven (notify after write) — tighter coupling, harder to guarantee delivery
-- Database NOTIFY/LISTEN (PostgreSQL-specific) — not portable across providers
+- Database NOTIFY/LISTEN without fallback — lost notifications on reconnect with no recovery
 
 ### 5. Configuration: Dual Mode (Standalone + DI)
 - Standalone: `ChangeTrackingConfiguration` builder with `.UseRepository()`, `.UseOutbox()`, `.UseQueue()`, etc.

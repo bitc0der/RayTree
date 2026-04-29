@@ -51,3 +51,48 @@ Before publishing, each change SHALL pass through a serialization pipeline: enti
 #### Scenario: No compression
 - **WHEN** the configured compressor is None
 - **THEN** the serialized message SHALL be published without compression
+
+### Requirement: PostgreSQL NOTIFY-based distribution
+When a PostgreSQL outbox is configured with a notification channel, the system SHALL use `LISTEN`/`NOTIFY` to trigger immediate publishing instead of polling.
+
+#### Scenario: Notification triggers publish
+- **WHEN** a `pg_notify` message is received on the configured channel
+- **THEN** the system SHALL fetch the referenced outbox entry and publish it immediately
+
+#### Scenario: Notification payload parsing
+- **WHEN** a notification payload is received
+- **THEN** the system SHALL extract entity type and outbox row ID from the JSON payload
+
+#### Scenario: Immediate publish latency
+- **WHEN** NOTIFY mode is active and an outbox entry is inserted
+- **THEN** the publish SHALL begin within 100ms of the database commit
+
+### Requirement: Fallback polling with NOTIFY
+When NOTIFY mode is enabled, the system SHALL maintain a fallback polling loop that activates on connection loss and runs periodically as a safety net.
+
+#### Scenario: Fallback activation on connection loss
+- **WHEN** the PostgreSQL LISTEN connection is lost
+- **THEN** the fallback poller SHALL activate and process unpublished entries at the configured fallback interval
+
+#### Scenario: Fallback deactivation on reconnect
+- **WHEN** the PostgreSQL LISTEN connection is restored
+- **THEN** the fallback poller SHALL deactivate and return to passive monitoring
+
+#### Scenario: Configurable fallback interval
+- **WHEN** `.WithFallbackPolling(TimeSpan.FromSeconds(30))` is configured
+- **THEN** the fallback poller SHALL check for unpublished entries every 30 seconds when active
+
+### Requirement: Notification listener lifecycle
+The system SHALL manage the PostgreSQL connection and LISTEN subscription as a managed lifecycle with graceful startup and shutdown.
+
+#### Scenario: Start notification listener
+- **WHEN** the notification-based publisher starts
+- **THEN** it SHALL open a dedicated PostgreSQL connection and issue the LISTEN command
+
+#### Scenario: Graceful shutdown
+- **WHEN** the application is shutting down
+- **THEN** the notification listener SHALL unlisten, close the connection, and complete in-flight publish operations
+
+#### Scenario: Multiple channels
+- **WHEN** multiple notification channels are configured
+- **THEN** the system SHALL subscribe to all channels and route notifications to the correct entity outbox handlers

@@ -53,6 +53,14 @@
 - [ ] 6.3 Implement post-publish confirmation (mark outbox entry as published)
 - [ ] 6.4 Implement failed publish retry logic (leave unpublished for next poll)
 - [ ] 6.5 Implement graceful shutdown with in-flight operation completion
+- [ ] 6.6 Implement `NotificationBasedPublisher` with PostgreSQL LISTEN loop
+- [ ] 6.7 Implement `pg_notify` trigger generation for PostgreSQL outbox tables
+- [ ] 6.8 Implement notification payload parsing (entity type, outbox row ID, change type)
+- [ ] 6.9 Implement fallback polling that activates on LISTEN connection loss
+- [ ] 6.10 Implement automatic LISTEN reconnection with backlog scan on reconnect
+- [ ] 6.11 Implement `.UseNotificationChannel()` and `.WithFallbackPolling()` fluent API on PostgreSQL outbox config
+- [ ] 6.12 Implement multi-channel LISTEN support with notification routing
+- [ ] 6.13 Implement notification trigger DDL migration scripts (create/drop)
 
 ## 7. Plugin System
 
@@ -133,6 +141,9 @@
 - [ ] 14.4 Add integration tests for PostgreSQL repository and outbox plugins
 - [ ] 14.5 Add integration tests for RabbitMQ publisher plugin
 - [ ] 14.6 Add integration tests for Kafka publisher plugin
+- [ ] 14.6.1 Add integration tests for NOTIFY-based publishing with PostgreSQL
+- [ ] 14.6.2 Add integration tests for LISTEN reconnection and backlog scan
+- [ ] 14.6.3 Add integration tests for fallback polling activation on connection loss
 - [ ] 14.7 Add integration tests for JSON serializer plugin
 - [ ] 14.8 Add integration tests for Protobuf serializer plugin
 - [ ] 14.9 Add integration tests for Gzip and Brotli compressor plugins
