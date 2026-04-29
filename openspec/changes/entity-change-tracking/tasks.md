@@ -108,55 +108,55 @@
 
 ## 10.5 In-Memory Plugins Assembly
 
-- [ ] 10.5.1 Create `RayTree.Plugins.InMemory` project with only `RayTree.Core` dependency
-- [ ] 10.5.2 Implement `InMemoryRepository` using `ConcurrentDictionary<TKey, TEntity>`
-- [ ] 10.5.3 Implement `InMemoryOutbox` using `ConcurrentBag<EntityChange>` with thread-safe query and cleanup
-- [ ] 10.5.4 Implement `InMemoryQueue` using `Channel<T>` with per-entity-type broadcast
-- [ ] 10.5.5 Implement `.UseInMemoryRepository()`, `.UseInMemoryOutbox()`, `.UseInMemoryQueue()` fluent API methods
-- [ ] 10.5.6 Implement mixed configuration support (e.g., in-memory repo + external queue)
-- [ ] 10.5.7 Implement `.ConsumeFromInMemory()` and `.Subscribe<T>()` for subscriber side
-- [ ] 10.5.8 Implement in-memory deduplication store for subscriber
-- [ ] 10.5.9 Implement subscription handle with `.Unsubscribe()` support
-- [ ] 10.5.10 Implement transaction simulation for in-memory outbox rollback
+- [x] 10.5.1 Create `RayTree.Plugins.InMemory` project with only `RayTree.Core` dependency
+- [x] 10.5.2 Implement `InMemoryRepository` using `ConcurrentDictionary<TKey, TEntity>`
+- [x] 10.5.3 Implement `InMemoryOutbox` using `ConcurrentDictionary<long, EntityChange>` with thread-safe query and cleanup
+- [x] 10.5.4 Implement `InMemoryQueue` using `Channel<T>` with per-entity-type broadcast
+- [x] 10.5.5 Implement `.UseInMemoryRepository()`, `.UseInMemoryOutbox()`, `.UseInMemoryQueue()` fluent API methods
+- [x] 10.5.6 Implement mixed configuration support (e.g., in-memory repo + external queue)
+- [x] 10.5.7 Implement `.ConsumeFromInMemory()` and `.Subscribe<T>()` for subscriber side
+- [x] 10.5.8 Implement in-memory deduplication store for subscriber
+- [x] 10.5.9 Implement subscription handle with `.Unsubscribe()` support
+- [x] 10.5.10 Implement transaction simulation for in-memory outbox rollback
 
 ## 11. .NET Host Integration
 
-- [ ] 11.1 Implement `OutboxPublisherHostedService` implementing `IHostedService`
-- [ ] 11.2 Implement hosted service start/stop lifecycle
-- [ ] 11.3 Implement `IOptions<ChangeTrackingOptions>` configuration binding
-- [ ] 11.4 Implement `IServiceCollection.AddChangeTracking()` with builder pattern
-- [ ] 11.5 Implement configuration support via appsettings.json and environment variables
+- [x] 11.1 Implement `OutboxPublisherHostedService` implementing `IHostedService`
+- [x] 11.2 Implement hosted service start/stop lifecycle
+- [x] 11.3 Implement `IOptions<ChangeTrackingOptions>` configuration binding
+- [x] 11.4 Implement `IServiceCollection.AddChangeTracking()` with builder pattern
+- [x] 11.5 Implement configuration support via appsettings.json and environment variables
 
 ## 12. Standalone Configuration
 
-- [ ] 12.1 Implement `ChangeTrackingConfiguration` builder class
-- [ ] 12.2 Implement fluent configuration methods (UseRepository, UseOutbox, UseQueue, UseSerializer, UseCompressor)
-- [ ] 12.3 Implement `Build()` method returning `IEntityChangeTracker`
-- [ ] 12.4 Implement `StartPublisher()` and `StopPublisher()` for standalone publisher
-- [ ] 12.5 Implement `Dispose()` for resource cleanup
+- [x] 12.1 Implement `ChangeTrackingConfiguration` builder class
+- [x] 12.2 Implement fluent configuration methods (UseOutbox, UseQueue, UseSerializer, UseCompressor)
+- [x] 12.3 Implement `Build()` method returning `EntityChangeTracker`
+- [x] 12.4 Implement `StartPublisherAsync()` and `StopPublisherAsync()` for standalone publisher
+- [x] 12.5 Implement `Dispose()` for resource cleanup
 
 ## 13. Database Triggers (Optional)
 
-- [ ] 13.1 Implement PostgreSQL trigger generator for source tables
-- [ ] 13.2 Implement trigger-based outbox write for non-EF Core changes
-- [ ] 13.3 Implement trigger polling mode for outbox publisher
-- [ ] 13.4 Document trigger installation and configuration steps
+- [x] 13.1 Implement PostgreSQL trigger generator for source tables
+- [x] 13.2 Implement trigger-based outbox write for non-EF Core changes
+- [x] 13.3 Implement trigger polling mode for outbox publisher
+- [x] 13.4 Document trigger installation and configuration steps
 
 ## 14. Subscriber Configuration
 
-- [ ] 14.1 Create `ChangeSubscriberConfiguration` builder class
-- [ ] 14.2 Implement `ConsumeEntity<T>()` method with per-entity source configuration
-- [ ] 14.3 Implement `FromKafka()`, `FromRabbitMq()`, and `FromInMemory()` entity-level consume source methods
-- [ ] 14.4 Implement per-entity serializer/compressor resolution matching publisher config
-- [ ] 14.5 Implement `OnChange<T>()` handler registration with optional ChangeType filter
-- [ ] 14.6 Implement handler invocation pipeline (decompress → deserialize → route to handlers)
-- [ ] 14.7 Implement deduplication store interface (`IDeduplicationStore`)
-- [ ] 14.8 Implement Redis deduplication store
-- [ ] 14.9 Implement per-entity error handling policies (retry, dead-letter, skip)
-- [ ] 14.10 Implement `ChangeSubscriberHostedService` for DI integration
-- [ ] 14.11 Implement `IServiceCollection.AddChangeSubscriber()` extension method
-- [ ] 14.12 Implement standalone subscriber `IChangeSubscriber` with `StartAsync()`/`StopAsync()`
-- [ ] 14.13 Implement multi-entity consume loop with parallel processing
+- [x] 14.1 Create `ChangeSubscriberConfiguration` builder class
+- [x] 14.2 Implement `ConsumeEntity<T>()` method with per-entity source configuration
+- [x] 14.3 Implement `FromKafka()`, `FromRabbitMq()`, and `FromInMemory()` entity-level consume source methods
+- [x] 14.4 Implement per-entity serializer/compressor resolution matching publisher config
+- [x] 14.5 Implement `OnChange<T>()` handler registration with optional ChangeType filter
+- [x] 14.6 Implement handler invocation pipeline (decompress → deserialize → route to handlers)
+- [x] 14.7 Implement deduplication store interface (`IDeduplicationStore`)
+- [x] 14.8 Implement Redis deduplication store
+- [x] 14.9 Implement per-entity error handling policies (retry, dead-letter, skip)
+- [x] 14.10 Implement `ChangeSubscriberHostedService` for DI integration
+- [x] 14.11 Implement `IServiceCollection.AddChangeSubscriber()` extension method
+- [x] 14.12 Implement standalone subscriber `ChangeSubscriber` with `ProcessMessageAsync()`
+- [x] 14.13 Implement multi-entity consume loop with parallel processing
 
 ## 15. Testing (NUnit)
 

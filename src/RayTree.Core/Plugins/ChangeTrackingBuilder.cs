@@ -14,13 +14,14 @@ public interface IChangeTrackingBuilder
 
 public interface IEntityBuilder
 {
+    IEntityBuilder UseRepository(IRepository repository);
     IEntityBuilder UseOutbox(IOutbox outbox);
     IEntityBuilder UseQueue(IQueuePublisher queue);
     IEntityBuilder UseSerializer(IChangeSerializer serializer);
     IEntityBuilder UseCompressor(IChangeCompressor compressor);
 }
 
-internal class ChangeTrackingBuilder : IChangeTrackingBuilder
+public class ChangeTrackingBuilder : IChangeTrackingBuilder
 {
     private readonly Dictionary<Type, IOutbox> _outboxOverrides = new();
     private readonly Dictionary<Type, IQueuePublisher> _queueOverrides = new();
@@ -109,6 +110,11 @@ internal class EntityBuilder : IEntityBuilder
     {
         _parent = parent;
         _entityType = entityType;
+    }
+
+    public IEntityBuilder UseRepository(IRepository repository)
+    {
+        return this;
     }
 
     public IEntityBuilder UseOutbox(IOutbox outbox)

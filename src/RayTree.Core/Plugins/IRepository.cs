@@ -1,6 +1,10 @@
 namespace RayTree.Plugins;
 
-public interface IRepository<TEntity> where TEntity : class
+public interface IRepository
+{
+}
+
+public interface IRepository<TEntity> : IRepository where TEntity : class
 {
     Task InsertAsync(TEntity entity, CancellationToken cancellationToken = default);
     Task UpdateAsync(TEntity entity, CancellationToken cancellationToken = default);
