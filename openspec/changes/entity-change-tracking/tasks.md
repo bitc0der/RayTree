@@ -158,6 +158,16 @@
 - [x] 14.12 Implement standalone subscriber `ChangeSubscriber` with `ProcessMessageAsync()`
 - [x] 14.13 Implement multi-entity consume loop with parallel processing
 
+## 14.5 Database DDL Initialization
+
+- [x] 14.5.1 Implement `SourceTableDdlGenerator` for source table CREATE/DROP DDL
+- [x] 14.5.2 Implement `CombinedDdlGenerator` orchestrating source + outbox + triggers
+- [x] 14.5.3 Implement `IDdlExecutor` interface
+- [x] 14.5.4 Implement `PostgreSqlDdlExecutor` with statement splitting and existence checks
+- [x] 14.5.5 Implement `InitializeDatabaseAsync()` extension on `EntityChangeTracker`
+- [x] 14.5.6 Implement `GenerateInitializationDdl()` and `GenerateDropDdl()` helpers
+- [x] 14.5.7 Implement `DatabaseInitializationOptions` for configurable table naming
+
 ## 15. Testing (NUnit)
 
 - [ ] 15.1 Add unit tests for core abstractions and EntityChangeTracker
