@@ -1,0 +1,35 @@
+## Why
+
+Applications need reliable, decoupled mechanisms to track entity changes and distribute them to downstream consumers. Current approaches are tightly coupled to specific databases, queues, or frameworks, making reuse and swapping components difficult. This change introduces a modular, plugin-based entity change tracking system with outbox pattern support, designed for .NET applications with EF Core integration.
+
+## What Changes
+
+- Introduce a core entity change tracking library with plugin architecture
+- Add EF Core integration for automatic change detection via SaveChanges interception
+- Implement outbox pattern with configurable storage per entity (source + outbox tables)
+- Support standalone configuration and .NET Generic Host integration
+- Add plugin system for repository, outbox, queue, serialization, and compression providers
+- Include built-in plugins for PostgreSQL, RabbitMQ, Kafka, JSON, and gzip
+
+## Capabilities
+
+### New Capabilities
+
+- `change-tracking-core`: Core abstractions for entity change detection, configuration, and lifecycle management
+- `outbox-pattern`: Outbox storage and management with per-entity source/outbox table pairs
+- `change-distribution`: Queue-based distribution of entity changes via pub/sub plugins
+- `ef-core-integration`: EF Core interceptor for automatic change tracking on SaveChanges
+- `plugin-system`: Extensible plugin architecture for repository, outbox, queue, serialization, and compression providers
+- `dotnet-host-integration`: Microsoft.Extensions.DependencyInjection and IHostedService integration
+- `standalone-configuration`: Fluent configuration API for use without DI container
+
+### Modified Capabilities
+
+<!-- No existing specs to modify -->
+
+## Impact
+
+- New packages/assemblies: core library, EF Core integration, host integration, plugin providers
+- Dependencies: Npgsql (PostgreSQL), RabbitMQ.Client, Confluent.Kafka, Microsoft.EntityFrameworkCore
+- Database schema changes: requires source + outbox tables per tracked entity, potentially DB triggers
+- Existing applications can integrate via NuGet packages or source reference
