@@ -100,6 +100,22 @@ We need a modular entity change tracking system for .NET applications that detec
 - Force consumers to handle raw envelope — gives control but increases boilerplate
 - Use MassTransit directly — good but locks into one framework; we want queue-agnostic abstraction
 
+### 8. In-Memory Plugins for Testing and Development
+- Assembly: `RayTree.Plugins.InMemory` — zero external dependencies beyond `RayTree.Core`
+- `InMemoryRepository`: stores entities in `ConcurrentDictionary<TKey, TEntity>`
+- `InMemoryOutbox`: stores changes in `ConcurrentBag<EntityChange>` with thread-safe query and cleanup
+- `InMemoryQueue`: in-process pub/sub using `Channel<T>` with per-entity-type broadcast
+- Mixed configuration supported: e.g., in-memory repo + RabbitMQ queue
+- Subscribers consume directly from `InMemoryQueue` — no serialization/compression overhead within the same process
+- Suitable for: unit tests, integration tests, local development without infrastructure
+
+**Rationale**: Testing change tracking requires infrastructure (PostgreSQL, RabbitMQ) which slows CI and makes local dev harder. In-memory plugins provide fast, deterministic tests with zero setup. The same code paths (interceptor → outbox → publisher → subscriber) are exercised, just with in-memory substitutes.
+
+**Alternatives considered**:
+- Mock interfaces in tests — doesn't exercise real integration between components
+- Docker Compose for tests — slower, more complex, flaky in CI
+- Testcontainers — good but adds dependency and startup overhead; in-memory is faster for unit-level tests
+
 ## Risks / Trade-offs
 
 | Risk | Mitigation |

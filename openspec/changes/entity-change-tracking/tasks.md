@@ -93,6 +93,19 @@
 - [ ] 10.5 Implement NoOp compressor plugin (pass-through, in core)
 - [ ] 10.6 Implement compressor extension methods on configuration builder (UseGzipCompressor, UseBrotliCompressor, UseLz4Compressor, UseNoOpCompressor)
 
+## 10.5 In-Memory Plugins Assembly
+
+- [ ] 10.5.1 Create `RayTree.Plugins.InMemory` project with only `RayTree.Core` dependency
+- [ ] 10.5.2 Implement `InMemoryRepository` using `ConcurrentDictionary<TKey, TEntity>`
+- [ ] 10.5.3 Implement `InMemoryOutbox` using `ConcurrentBag<EntityChange>` with thread-safe query and cleanup
+- [ ] 10.5.4 Implement `InMemoryQueue` using `Channel<T>` with per-entity-type broadcast
+- [ ] 10.5.5 Implement `.UseInMemoryRepository()`, `.UseInMemoryOutbox()`, `.UseInMemoryQueue()` fluent API methods
+- [ ] 10.5.6 Implement mixed configuration support (e.g., in-memory repo + external queue)
+- [ ] 10.5.7 Implement `.ConsumeFromInMemory()` and `.Subscribe<T>()` for subscriber side
+- [ ] 10.5.8 Implement in-memory deduplication store for subscriber
+- [ ] 10.5.9 Implement subscription handle with `.Unsubscribe()` support
+- [ ] 10.5.10 Implement transaction simulation for in-memory outbox rollback
+
 ## 11. .NET Host Integration
 
 - [ ] 11.1 Implement `OutboxPublisherHostedService` implementing `IHostedService`
@@ -116,50 +129,52 @@
 - [ ] 13.3 Implement trigger polling mode for outbox publisher
 - [ ] 13.4 Document trigger installation and configuration steps
 
-## 12. Subscriber Configuration
+## 14. Subscriber Configuration
 
-- [ ] 12.1 Create `ChangeSubscriberConfiguration` builder class
-- [ ] 12.2 Implement `ConsumeEntity<T>()` method with per-entity source configuration
-- [ ] 12.3 Implement `FromKafka()` and `FromRabbitMq()` entity-level consume source methods
-- [ ] 12.4 Implement per-entity serializer/compressor resolution matching publisher config
-- [ ] 12.5 Implement `OnChange<T>()` handler registration with optional ChangeType filter
-- [ ] 12.6 Implement handler invocation pipeline (decompress → deserialize → route to handlers)
-- [ ] 12.7 Implement deduplication store interface (`IDeduplicationStore`)
-- [ ] 12.8 Implement in-memory deduplication store
-- [ ] 12.9 Implement Redis deduplication store
-- [ ] 12.10 Implement per-entity error handling policies (retry, dead-letter, skip)
-- [ ] 12.11 Implement `ChangeSubscriberHostedService` for DI integration
-- [ ] 12.12 Implement `IServiceCollection.AddChangeSubscriber()` extension method
-- [ ] 12.13 Implement standalone subscriber `IChangeSubscriber` with `StartAsync()`/`StopAsync()`
-- [ ] 12.14 Implement multi-entity consume loop with parallel processing
+- [ ] 14.1 Create `ChangeSubscriberConfiguration` builder class
+- [ ] 14.2 Implement `ConsumeEntity<T>()` method with per-entity source configuration
+- [ ] 14.3 Implement `FromKafka()`, `FromRabbitMq()`, and `FromInMemory()` entity-level consume source methods
+- [ ] 14.4 Implement per-entity serializer/compressor resolution matching publisher config
+- [ ] 14.5 Implement `OnChange<T>()` handler registration with optional ChangeType filter
+- [ ] 14.6 Implement handler invocation pipeline (decompress → deserialize → route to handlers)
+- [ ] 14.7 Implement deduplication store interface (`IDeduplicationStore`)
+- [ ] 14.8 Implement Redis deduplication store
+- [ ] 14.9 Implement per-entity error handling policies (retry, dead-letter, skip)
+- [ ] 14.10 Implement `ChangeSubscriberHostedService` for DI integration
+- [ ] 14.11 Implement `IServiceCollection.AddChangeSubscriber()` extension method
+- [ ] 14.12 Implement standalone subscriber `IChangeSubscriber` with `StartAsync()`/`StopAsync()`
+- [ ] 14.13 Implement multi-entity consume loop with parallel processing
 
-## 14. Testing
+## 15. Testing
 
-- [ ] 14.1 Add unit tests for core abstractions and EntityChangeTracker
-- [ ] 14.2 Add unit tests for serialization/compression pipeline
-- [ ] 14.3 Add unit tests for EF Core interceptor with in-memory provider
-- [ ] 14.4 Add integration tests for PostgreSQL repository and outbox plugins
-- [ ] 14.5 Add integration tests for RabbitMQ publisher plugin
-- [ ] 14.6 Add integration tests for Kafka publisher plugin
-- [ ] 14.6.1 Add integration tests for NOTIFY-based publishing with PostgreSQL
-- [ ] 14.6.2 Add integration tests for LISTEN reconnection and backlog scan
-- [ ] 14.6.3 Add integration tests for fallback polling activation on connection loss
-- [ ] 14.7 Add integration tests for JSON serializer plugin
-- [ ] 14.8 Add integration tests for Protobuf serializer plugin
-- [ ] 14.9 Add integration tests for Gzip and Brotli compressor plugins
-- [ ] 14.10 Add integration tests for end-to-end change tracking with EF Core + PostgreSQL + queue
-- [ ] 14.11 Add tests for standalone configuration and builder API
-- [ ] 14.12 Add tests for outbox cleanup service
-- [ ] 14.13 Add tests for concurrent change detection
-- [ ] 14.14 Add tests for separate assembly loading (Serializers, Compressors)
+- [ ] 15.1 Add unit tests for core abstractions and EntityChangeTracker
+- [ ] 15.2 Add unit tests for serialization/compression pipeline
+- [ ] 15.3 Add unit tests for EF Core interceptor with in-memory provider
+- [ ] 15.4 Add integration tests for PostgreSQL repository and outbox plugins
+- [ ] 15.5 Add integration tests for RabbitMQ publisher plugin
+- [ ] 15.6 Add integration tests for Kafka publisher plugin
+- [ ] 15.6.1 Add integration tests for NOTIFY-based publishing with PostgreSQL
+- [ ] 15.6.2 Add integration tests for LISTEN reconnection and backlog scan
+- [ ] 15.6.3 Add integration tests for fallback polling activation on connection loss
+- [ ] 15.7 Add integration tests for JSON serializer plugin
+- [ ] 15.8 Add integration tests for Protobuf serializer plugin
+- [ ] 15.9 Add integration tests for Gzip and Brotli compressor plugins
+- [ ] 15.10 Add integration tests for in-memory repository, outbox, and queue plugins
+- [ ] 15.11 Add integration tests for end-to-end change tracking with in-memory storage and queue
+- [ ] 15.12 Add integration tests for end-to-end change tracking with EF Core + PostgreSQL + queue
+- [ ] 15.13 Add tests for standalone configuration and builder API
+- [ ] 15.14 Add tests for outbox cleanup service
+- [ ] 15.15 Add tests for concurrent change detection
+- [ ] 15.16 Add tests for separate assembly loading (Serializers, Compressors, InMemory)
 
-## 15. Documentation
+## 16. Documentation
 
-- [ ] 15.1 Write getting started guide with quick-start example
-- [ ] 15.2 Write configuration guide (standalone and DI modes)
-- [ ] 15.3 Write plugin development guide for custom providers
-- [ ] 15.4 Write serializer plugin guide (JSON, Protobuf, MessagePack)
-- [ ] 15.5 Write compressor plugin guide (Gzip, Brotli, LZ4)
-- [ ] 15.6 Write EF Core integration guide
-- [ ] 15.7 Write database migration guide for source/outbox tables
-- [ ] 15.8 Write database trigger setup guide
+- [ ] 16.1 Write getting started guide with quick-start example
+- [ ] 16.2 Write configuration guide (standalone and DI modes)
+- [ ] 16.3 Write plugin development guide for custom providers
+- [ ] 16.4 Write serializer plugin guide (JSON, Protobuf, MessagePack)
+- [ ] 16.5 Write compressor plugin guide (Gzip, Brotli, LZ4)
+- [ ] 16.6 Write in-memory plugin guide (testing and development)
+- [ ] 16.7 Write EF Core integration guide
+- [ ] 16.8 Write database migration guide for source/outbox tables
+- [ ] 16.9 Write database trigger setup guide

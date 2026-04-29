@@ -25,6 +25,7 @@ Applications need reliable, decoupled mechanisms to track entity changes and dis
 - `dotnet-host-integration`: Microsoft.Extensions.DependencyInjection and IHostedService integration
 - `standalone-configuration`: Fluent configuration API for use without DI container
 - `subscriber-configuration`: Fluent configuration API for consuming entity changes with per-entity handlers, deduplication, and error policies
+- `in-memory-plugins`: In-memory implementations of repository, outbox, and queue for testing, development, and single-process scenarios
 
 ### Modified Capabilities
 
@@ -32,8 +33,9 @@ Applications need reliable, decoupled mechanisms to track entity changes and dis
 
 ## Impact
 
-- New packages/assemblies: core library, EF Core integration, host integration, data plugins (PostgreSQL, RabbitMQ, Kafka), serializer plugins (JSON, Protobuf, MessagePack), compressor plugins (Gzip, Brotli, LZ4)
+- New packages/assemblies: core library, EF Core integration, host integration, data plugins (PostgreSQL, RabbitMQ, Kafka), in-memory plugins (repository, outbox, queue), serializer plugins (JSON, Protobuf, MessagePack), compressor plugins (Gzip, Brotli, LZ4)
 - Dependencies: Npgsql (PostgreSQL), RabbitMQ.Client, Confluent.Kafka, Microsoft.EntityFrameworkCore, protobuf-net, MessagePack-CSharp, lz4net
-- Database schema changes: requires source + outbox tables per tracked entity, potentially DB triggers
+- Database schema changes: requires source + outbox tables per tracked entity (unless using in-memory storage), potentially DB triggers
 - Existing applications can integrate via NuGet packages or source reference
 - Consumers reference only the plugin assemblies they need — serializers/compressors are separate from data plugins
+- In-memory plugins have zero external dependencies
