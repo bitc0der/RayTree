@@ -52,59 +52,59 @@
 
 ## 6. Change Distribution
 
-- [ ] 6.1 Implement `OutboxPublisherService` with polling loop
-- [ ] 6.2 Implement configurable polling interval and batch size
-- [ ] 6.3 Implement post-publish confirmation (mark outbox entry as published)
-- [ ] 6.4 Implement failed publish retry logic (leave unpublished for next poll)
-- [ ] 6.5 Implement graceful shutdown with in-flight operation completion
-- [ ] 6.6 Implement `NotificationBasedPublisher` with PostgreSQL LISTEN loop
-- [ ] 6.7 Implement `pg_notify` trigger generation for PostgreSQL outbox tables
-- [ ] 6.8 Implement notification payload parsing (entity type, outbox row ID, change type)
-- [ ] 6.9 Implement fallback polling that activates on LISTEN connection loss
-- [ ] 6.10 Implement automatic LISTEN reconnection with backlog scan on reconnect
-- [ ] 6.11 Implement `.UseNotificationChannel()` and `.WithFallbackPolling()` fluent API on PostgreSQL outbox config
-- [ ] 6.12 Implement multi-channel LISTEN support with notification routing
-- [ ] 6.13 Implement notification trigger DDL migration scripts (create/drop)
+- [x] 6.1 Implement `OutboxPublisherService` with polling loop
+- [x] 6.2 Implement configurable polling interval and batch size
+- [x] 6.3 Implement post-publish confirmation (mark outbox entry as published)
+- [x] 6.4 Implement failed publish retry logic (leave unpublished for next poll)
+- [x] 6.5 Implement graceful shutdown with in-flight operation completion
+- [x] 6.6 Implement `NotificationBasedPublisher` with PostgreSQL LISTEN loop
+- [x] 6.7 Implement `pg_notify` trigger generation for PostgreSQL outbox tables
+- [x] 6.8 Implement notification payload parsing (entity type, outbox row ID, change type)
+- [x] 6.9 Implement fallback polling that activates on LISTEN connection loss
+- [x] 6.10 Implement automatic LISTEN reconnection with backlog scan on reconnect
+- [x] 6.11 Implement `.UseNotificationChannel()` and `.WithFallbackPolling()` fluent API on PostgreSQL outbox config
+- [x] 6.12 Implement multi-channel LISTEN support with notification routing
+- [x] 6.13 Implement notification trigger DDL migration scripts (create/drop)
 
 ## 7. Plugin System
 
-- [ ] 7.1 Implement plugin registration via `IChangeTrackingBuilder`
-- [ ] 7.2 Implement plugin interface validation at registration time
-- [ ] 7.3 Implement global plugin defaults and per-entity plugin overrides
-- [ ] 7.4 Implement `IChangeTrackingBuilder` fluent API (UseRepository, UseOutbox, UseQueue, UseSerializer, UseCompressor)
+- [x] 7.1 Implement plugin registration via `IChangeTrackingBuilder`
+- [x] 7.2 Implement plugin interface validation at registration time
+- [x] 7.3 Implement global plugin defaults and per-entity plugin overrides
+- [x] 7.4 Implement `IChangeTrackingBuilder` fluent API (UseRepository, UseOutbox, UseQueue, UseSerializer, UseCompressor)
 
 ## 8. Built-in Data Plugins
 
-- [ ] 8.1 Implement PostgreSQL repository plugin using Npgsql
-- [ ] 8.2 Implement PostgreSQL outbox plugin with table-per-entity schema
-- [ ] 8.3 Implement RabbitMQ queue publisher plugin using RabbitMQ.Client
-- [ ] 8.4 Implement Kafka queue publisher plugin using Confluent.Kafka
+- [x] 8.1 Implement PostgreSQL repository plugin using Npgsql
+- [x] 8.2 Implement PostgreSQL outbox plugin with table-per-entity schema
+- [x] 8.3 Implement RabbitMQ queue publisher plugin using RabbitMQ.Client
+- [x] 8.4 Implement Kafka queue publisher plugin using Confluent.Kafka
 
 ## 9. Serializer Plugin Assemblies
 
-- [ ] 9.1 Create `RayTree.Plugins.Serializers.Json` project with only `RayTree.Core` dependency
-- [ ] 9.2 Implement JSON serializer using System.Text.Json
-- [ ] 9.3 Implement `.UseJsonSerializer()` extension method
-- [ ] 9.4 Create `RayTree.Plugins.Serializers.Protobuf` project with only `RayTree.Core` + protobuf-net dependency
-- [ ] 9.5 Implement Protobuf serializer using protobuf-net
-- [ ] 9.6 Implement `.UseProtobufSerializer()` extension method
-- [ ] 9.7 Create `RayTree.Plugins.Serializers.MessagePack` project with only `RayTree.Core` + MessagePack-CSharp dependency
-- [ ] 9.8 Implement MessagePack serializer using MessagePack-CSharp
-- [ ] 9.9 Implement `.UseMessagePackSerializer()` extension method
+- [x] 9.1 Create `RayTree.Plugins.Serializers.Json` project with only `RayTree.Core` dependency
+- [x] 9.2 Implement JSON serializer using System.Text.Json
+- [x] 9.3 Implement `.UseJsonSerializer()` extension method
+- [x] 9.4 Create `RayTree.Plugins.Serializers.Protobuf` project with only `RayTree.Core` + protobuf-net dependency
+- [x] 9.5 Implement Protobuf serializer using protobuf-net
+- [x] 9.6 Implement `.UseProtobufSerializer()` extension method
+- [x] 9.7 Create `RayTree.Plugins.Serializers.MessagePack` project with only `RayTree.Core` + MessagePack-CSharp dependency
+- [x] 9.8 Implement MessagePack serializer using MessagePack-CSharp
+- [x] 9.9 Implement `.UseMessagePackSerializer()` extension method
 
 ## 10. Compressor Plugin Assemblies
 
-- [ ] 10.1 Create `RayTree.Plugins.Compressors.Gzip` project with only `RayTree.Core` dependency
-- [ ] 10.2 Implement Gzip compressor using System.IO.Compression
-- [ ] 10.3 Implement `.UseGzipCompressor()` extension method
-- [ ] 10.4 Create `RayTree.Plugins.Compressors.Brotli` project with only `RayTree.Core` dependency
-- [ ] 10.5 Implement Brotli compressor using System.IO.Compression
-- [ ] 10.6 Implement `.UseBrotliCompressor()` extension method
-- [ ] 10.7 Create `RayTree.Plugins.Compressors.Lz4` project with only `RayTree.Core` + lz4net dependency
-- [ ] 10.8 Implement LZ4 compressor using lz4net
-- [ ] 10.9 Implement `.UseLz4Compressor()` extension method
-- [ ] 10.10 Implement NoOp compressor in Core (pass-through)
-- [ ] 10.11 Implement `.UseNoOpCompressor()` extension method
+- [x] 10.1 Create `RayTree.Plugins.Compressors.Gzip` project with only `RayTree.Core` dependency
+- [x] 10.2 Implement Gzip compressor using System.IO.Compression
+- [x] 10.3 Implement `.UseGzipCompressor()` extension method
+- [x] 10.4 Create `RayTree.Plugins.Compressors.Brotli` project with only `RayTree.Core` dependency
+- [x] 10.5 Implement Brotli compressor using System.IO.Compression
+- [x] 10.6 Implement `.UseBrotliCompressor()` extension method
+- [x] 10.7 Create `RayTree.Plugins.Compressors.Lz4` project with only `RayTree.Core` + K4os.Compression.LZ4 dependency
+- [x] 10.8 Implement LZ4 compressor using K4os.Compression.LZ4
+- [x] 10.9 Implement `.UseLz4Compressor()` extension method
+- [x] 10.10 Implement NoOp compressor in Core (pass-through)
+- [x] 10.11 Implement `.UseNoOpCompressor()` extension method
 
 ## 10.5 In-Memory Plugins Assembly
 
