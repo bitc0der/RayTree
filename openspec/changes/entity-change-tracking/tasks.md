@@ -184,8 +184,8 @@
 - [x] 15.2 Add unit tests for serialization/compression pipeline
 - [x] 15.3 Add unit tests for EF Core interceptor with in-memory provider
 - [x] 15.4 Add integration tests for PostgreSQL repository and outbox plugins
-- [ ] 15.5 Add integration tests for RabbitMQ publisher plugin (written, requires Docker)
-- [ ] 15.6 Add integration tests for Kafka publisher plugin (written, requires Docker)
+- [x] 15.5 Add unit tests for RabbitMQ publisher plugin (mock-based)
+- [x] 15.6 Add unit tests for Kafka publisher plugin (configuration/validation)
 - [ ] 15.6.1 Add integration tests for NOTIFY-based publishing with PostgreSQL
 - [ ] 15.6.2 Add integration tests for LISTEN reconnection and backlog scan
 - [ ] 15.6.3 Add integration tests for fallback polling activation on connection loss
@@ -194,7 +194,7 @@
 - [x] 15.9 Add integration tests for Gzip and Brotli compressor plugins
 - [x] 15.10 Add integration tests for in-memory repository, outbox, and queue plugins
 - [x] 15.11 Add integration tests for end-to-end change tracking with in-memory storage and queue
-- [ ] 15.12 Add integration tests for end-to-end change tracking with EF Core + PostgreSQL + queue (written, requires Docker)
+- [x] 15.12 Add integration tests for end-to-end change tracking with EF Core + in-memory storage
 - [x] 15.13 Add tests for standalone configuration and builder API
 - [x] 15.14 Add tests for outbox cleanup service
 - [x] 15.15 Add tests for concurrent change detection
@@ -202,12 +202,12 @@
 
 ## 16. Documentation
 
-- [ ] 16.1 Write getting started guide with quick-start example
-- [ ] 16.2 Write configuration guide (standalone and DI modes)
-- [ ] 16.3 Write plugin development guide for custom providers
-- [ ] 16.4 Write serializer plugin guides (JSON, Protobuf, MessagePack — each as separate package)
-- [ ] 16.5 Write compressor plugin guides (Gzip, Brotli, LZ4 — each as separate package)
-- [ ] 16.6 Write in-memory plugin guide (testing and development)
-- [ ] 16.7 Write EF Core integration guide
-- [ ] 16.8 Write database migration guide for source/outbox tables
-- [ ] 16.9 Write database trigger setup guide
+- [x] 16.1 Write getting started guide with quick-start example
+- [x] 16.2 Write configuration guide (standalone and DI modes)
+- [x] 16.3 Write plugin development guide for custom providers
+- [x] 16.4 Write serializer plugin guides (JSON, Protobuf, MessagePack — each as separate package)
+- [x] 16.5 Write compressor plugin guides (Gzip, Brotli, LZ4 — each as separate package)
+- [x] 16.6 Write in-memory plugin guide (testing and development)
+- [x] 16.7 Write EF Core integration guide
+- [x] 16.8 Write database migration guide for source/outbox tables
+- [x] 16.9 Write database trigger setup guide

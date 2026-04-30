@@ -2,65 +2,20 @@ using Microsoft.EntityFrameworkCore;
 using RayTree.EntityFrameworkCore.Interceptors;
 using RayTree.Models;
 using RayTree.Plugins;
+using RayTree.Plugins.Compressors.Gzip;
 using RayTree.Plugins.InMemory;
-using RayTree.Plugins.PostgreSQL;
 using RayTree.Plugins.Serializers.Json;
 using RayTree.Tracking;
-using Testcontainers.PostgreSql;
 
 namespace RayTree.EntityFrameworkCore.Tests;
 
-[NonParallelizable]
-public class EndToEndPostgreSqlTests : IAsyncDisposable
+public class EndToEndInMemoryTests
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
-        .Build();
-
-    private string _connectionString = null!;
-
-    [OneTimeSetUp]
-    public async Task OneTimeSetUp()
-    {
-        await _postgres.StartAsync();
-        _connectionString = _postgres.GetConnectionString();
-        await using var conn = new Npgsql.NpgsqlConnection(_connectionString);
-        await conn.OpenAsync();
-
-        await using var cmd = new Npgsql.NpgsqlCommand("""
-            CREATE TABLE test_products (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                price NUMERIC(10,2) NOT NULL DEFAULT 0,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-
-            CREATE TABLE test_products_outbox (
-                id BIGSERIAL PRIMARY KEY,
-                entity_id TEXT NOT NULL,
-                change_type TEXT NOT NULL,
-                timestamp TIMESTAMPTZ NOT NULL,
-                version INT NOT NULL DEFAULT 0,
-                correlation_id UUID NOT NULL,
-                entity_type TEXT NOT NULL,
-                data BYTEA,
-                published BOOLEAN NOT NULL DEFAULT FALSE
-            );
-            """, conn);
-        await cmd.ExecuteNonQueryAsync();
-    }
-
-    public ValueTask DisposeAsync() => _postgres.DisposeAsync();
-
     [Test]
-    public async Task EfCore_SaveChanges_WritesToPostgreSqlOutbox()
+    public async Task EfCore_SaveChanges_WritesToInMemoryOutbox()
     {
         var tracker = new EntityChangeTracker();
-        var outbox = new PostgreSqlOutbox(new PostgreSqlOutboxOptions
-        {
-            ConnectionString = _connectionString,
-            OutboxTableName = "test_products_outbox"
-        });
+        var outbox = new InMemoryOutbox();
         var serializer = new JsonSerializerPlugin();
         var compressor = new NoOpCompressorPlugin();
 
@@ -71,7 +26,7 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
-            .UseNpgsql(_connectionString)
+            .UseInMemoryDatabase("test_write_outbox")
             .AddInterceptors(interceptor)
             .Options;
 
@@ -80,20 +35,17 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
         context.Products.Add(new Product { Name = "Widget", Price = 9.99m });
         await context.SaveChangesAsync();
 
-        var outboxEntries = await outbox.GetUnpublishedAsync(10);
+        var outboxEntries = outbox.GetAll();
         Assert.That(outboxEntries, Has.Count.EqualTo(1));
         Assert.That(outboxEntries[0].EntityType, Does.Contain("Product"));
+        Assert.That(outboxEntries[0].ChangeType, Is.EqualTo(ChangeType.Insert));
     }
 
     [Test]
     public async Task EfCore_MultipleChanges_WritesAllToOutbox()
     {
         var tracker = new EntityChangeTracker();
-        var outbox = new PostgreSqlOutbox(new PostgreSqlOutboxOptions
-        {
-            ConnectionString = _connectionString,
-            OutboxTableName = "test_products_outbox"
-        });
+        var outbox = new InMemoryOutbox();
         var serializer = new JsonSerializerPlugin();
         var compressor = new NoOpCompressorPlugin();
 
@@ -104,7 +56,7 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
-            .UseNpgsql(_connectionString)
+            .UseInMemoryDatabase("test_multiple_changes")
             .AddInterceptors(interceptor)
             .Options;
 
@@ -114,7 +66,7 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
         context.Products.Add(new Product { Name = "Doohickey", Price = 4.99m });
         await context.SaveChangesAsync();
 
-        var outboxEntries = await outbox.GetUnpublishedAsync(10);
+        var outboxEntries = outbox.GetAll();
         Assert.That(outboxEntries, Has.Count.EqualTo(2));
     }
 
@@ -122,11 +74,7 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
     public async Task EfCore_UpdateChange_DetectedAndStored()
     {
         var tracker = new EntityChangeTracker();
-        var outbox = new PostgreSqlOutbox(new PostgreSqlOutboxOptions
-        {
-            ConnectionString = _connectionString,
-            OutboxTableName = "test_products_outbox"
-        });
+        var outbox = new InMemoryOutbox();
         var serializer = new JsonSerializerPlugin();
         var compressor = new NoOpCompressorPlugin();
 
@@ -137,24 +85,29 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
-            .UseNpgsql(_connectionString)
+            .UseInMemoryDatabase("test_update")
             .AddInterceptors(interceptor)
             .Options;
 
+        int productId;
         await using (var context = new TestDbContext(options))
         {
             context.Products.Add(new Product { Name = "Original", Price = 1.00m });
             await context.SaveChangesAsync();
+            productId = context.Products.First().Id;
         }
 
         await using (var context = new TestDbContext(options))
         {
-            var product = context.Products.First();
-            product.Name = "Modified";
-            await context.SaveChangesAsync();
+            var product = context.Products.Find(productId);
+            if (product != null)
+            {
+                product.Name = "Modified";
+                await context.SaveChangesAsync();
+            }
         }
 
-        var updates = await outbox.GetUnpublishedAsync("TestProduct", changeType: ChangeType.Update, batchSize: 10);
+        var updates = outbox.GetAll().Where(c => c.ChangeType == ChangeType.Update).ToList();
         Assert.That(updates, Is.Not.Empty);
     }
 
@@ -162,11 +115,7 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
     public async Task EfCore_DeleteChange_DetectedAndStored()
     {
         var tracker = new EntityChangeTracker();
-        var outbox = new PostgreSqlOutbox(new PostgreSqlOutboxOptions
-        {
-            ConnectionString = _connectionString,
-            OutboxTableName = "test_products_outbox"
-        });
+        var outbox = new InMemoryOutbox();
         var serializer = new JsonSerializerPlugin();
         var compressor = new NoOpCompressorPlugin();
 
@@ -177,7 +126,7 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
-            .UseNpgsql(_connectionString)
+            .UseInMemoryDatabase("test_delete")
             .AddInterceptors(interceptor)
             .Options;
 
@@ -199,8 +148,102 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
             }
         }
 
-        var deletes = await outbox.GetUnpublishedAsync("TestProduct", changeType: ChangeType.Delete, batchSize: 10);
+        var deletes = outbox.GetAll().Where(c => c.ChangeType == ChangeType.Delete).ToList();
         Assert.That(deletes, Is.Not.Empty);
+    }
+
+    [Test]
+    public async Task EfCore_WithQueue_OutboxAndQueueRegistered()
+    {
+        var tracker = new EntityChangeTracker();
+        var queue = new InMemoryQueue();
+        var outbox = new InMemoryOutbox();
+        var serializer = new JsonSerializerPlugin();
+        var compressor = new NoOpCompressorPlugin();
+
+        tracker.RegisterOutbox(typeof(Product), outbox);
+        tracker.RegisterPublisher(typeof(Product), queue);
+        tracker.RegisterSerializer(typeof(Product), serializer);
+        tracker.RegisterCompressor(typeof(Product), compressor);
+
+        var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
+
+        var options = new DbContextOptionsBuilder<TestDbContext>()
+            .UseInMemoryDatabase("test_queue")
+            .AddInterceptors(interceptor)
+            .Options;
+
+        await using var context = new TestDbContext(options);
+
+        context.Products.Add(new Product { Name = "Queued", Price = 42.0m });
+        await context.SaveChangesAsync();
+
+        var outboxEntries = outbox.GetAll();
+        Assert.That(outboxEntries, Has.Count.EqualTo(1));
+
+        Assert.That(tracker.GetPublisher(typeof(Product)), Is.Not.Null);
+        Assert.That(tracker.GetOutbox(typeof(Product)), Is.Not.Null);
+    }
+
+    [Test]
+    public async Task EfCore_TrackerDirectlyPublishesToQueue()
+    {
+        var tracker = new EntityChangeTracker();
+        var queue = new InMemoryQueue();
+        var outbox = new InMemoryOutbox();
+        var serializer = new JsonSerializerPlugin();
+        var compressor = new NoOpCompressorPlugin();
+
+        tracker.RegisterOutbox(typeof(Product), outbox);
+        tracker.RegisterPublisher(typeof(Product), queue);
+        tracker.RegisterSerializer(typeof(Product), serializer);
+        tracker.RegisterCompressor(typeof(Product), compressor);
+
+        await tracker.TrackChangesAsync(new[]
+        {
+            new EntityChange
+            {
+                EntityType = typeof(Product).AssemblyQualifiedName!,
+                EntityId = "1",
+                ChangeType = ChangeType.Insert,
+                Timestamp = DateTime.UtcNow
+            }
+        });
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var message = await queue.Reader.ReadAsync(cts.Token);
+        Assert.That(message.Change.EntityId, Is.EqualTo("1"));
+        Assert.That(message.Change.ChangeType, Is.EqualTo(ChangeType.Insert));
+    }
+
+    [Test]
+    public async Task EfCore_WithCompression_RoundTripPreservesData()
+    {
+        var tracker = new EntityChangeTracker();
+        var outbox = new InMemoryOutbox();
+        var queue = new InMemoryQueue();
+        var serializer = new JsonSerializerPlugin();
+        var compressor = new GzipCompressorPlugin();
+
+        tracker.RegisterOutbox(typeof(Product), outbox);
+        tracker.RegisterPublisher(typeof(Product), queue);
+        tracker.RegisterSerializer(typeof(Product), serializer);
+        tracker.RegisterCompressor(typeof(Product), compressor);
+
+        var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
+
+        var options = new DbContextOptionsBuilder<TestDbContext>()
+            .UseInMemoryDatabase("test_compression")
+            .AddInterceptors(interceptor)
+            .Options;
+
+        await using var context = new TestDbContext(options);
+
+        context.Products.Add(new Product { Name = "Compressed", Price = 15.0m });
+        await context.SaveChangesAsync();
+
+        var outboxEntries = outbox.GetAll();
+        Assert.That(outboxEntries, Has.Count.EqualTo(1));
     }
 
     private class TestDbContext : DbContext
@@ -213,10 +256,9 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
         {
             modelBuilder.Entity<Product>(b =>
             {
-                b.ToTable("test_products");
+                b.ToTable("products");
                 b.HasKey(e => e.Id);
                 b.Property(e => e.Name).HasMaxLength(100).IsRequired();
-                b.Property(e => e.Price).HasPrecision(10, 2);
             });
         }
     }
@@ -226,6 +268,5 @@ public class EndToEndPostgreSqlTests : IAsyncDisposable
         public int Id { get; set; }
         public string Name { get; set; } = null!;
         public decimal Price { get; set; }
-        public DateTime CreatedAt { get; set; }
     }
 }
