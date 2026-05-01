@@ -9,6 +9,7 @@ public class OutboxTableSchema
     public string SourceTableName { get; set; } = string.Empty;
     public List<OutboxColumn> Columns { get; set; } = new();
     public List<OutboxIndex> Indexes { get; set; } = new();
+    public List<EntityPropertyColumn> EntityPropertyColumns { get; set; } = new();
 
     public static OutboxTableSchema Create(string entityTypeName, string? outboxTableOverride = null)
     {
@@ -27,8 +28,7 @@ public class OutboxTableSchema
                 new OutboxColumn { Name = "published", Type = "BOOLEAN", IsNullable = false, Default = "FALSE" },
                 new OutboxColumn { Name = "version", Type = "INTEGER", IsNullable = false, Default = "1" },
                 new OutboxColumn { Name = "correlation_id", Type = "UUID", IsNullable = false, Default = "gen_random_uuid()" },
-                new OutboxColumn { Name = "entity_type", Type = "TEXT", IsNullable = false, Default = $"'{entityTypeName}'" },
-                new OutboxColumn { Name = "data", Type = "JSONB", IsNullable = true }
+                new OutboxColumn { Name = "entity_type", Type = "TEXT", IsNullable = false, Default = $"'{entityTypeName}'" }
             ],
             Indexes =
             [
@@ -46,6 +46,32 @@ public class OutboxTableSchema
             ]
         };
     }
+
+    public void AddEntityPropertyColumn(string propertyName, string columnName, string columnType, bool isNullable = true)
+    {
+        EntityPropertyColumns.Add(new EntityPropertyColumn
+        {
+            PropertyName = propertyName,
+            ColumnName = columnName,
+            ColumnType = columnType,
+            IsNullable = isNullable
+        });
+
+        Columns.Add(new OutboxColumn
+        {
+            Name = columnName,
+            Type = columnType,
+            IsNullable = isNullable
+        });
+    }
+}
+
+public class EntityPropertyColumn
+{
+    public string PropertyName { get; set; } = string.Empty;
+    public string ColumnName { get; set; } = string.Empty;
+    public string ColumnType { get; set; } = string.Empty;
+    public bool IsNullable { get; set; }
 }
 
 public class OutboxColumn

@@ -13,3 +13,13 @@ public class EntityChange
     public Guid CorrelationId { get; set; } = Guid.NewGuid();
     public bool Published { get; set; }
 }
+
+public class EntityChange<TEntity> : EntityChange
+{
+    public TEntity? State { get; set; }
+
+    public EntityChange()
+    {
+        State = default;
+    }
+}

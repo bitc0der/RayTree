@@ -67,6 +67,71 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         }
     }
 
+    public async Task TrackChangeAsync<TEntity>(EntityChange<TEntity> change, CancellationToken cancellationToken = default)
+    {
+        var entityType = typeof(TEntity);
+
+        var outbox = _outboxes.GetValueOrDefault(entityType) ?? throw new InvalidOperationException($"No outbox registered for {entityType.Name}");
+        var publisher = _publishers.GetValueOrDefault(entityType);
+        var serializer = _serializers.GetValueOrDefault(entityType);
+        var compressor = _compressors.GetValueOrDefault(entityType);
+
+        await outbox.WriteAsync(change, cancellationToken);
+
+        if (publisher != null && serializer != null && compressor != null)
+        {
+            await PublishAsync(change, publisher, serializer, compressor, cancellationToken);
+        }
+    }
+
+    public async Task<EntityChange<TEntity>> TrackInsertAsync<TEntity>(TEntity entity, CancellationToken cancellationToken = default) where TEntity : class
+    {
+        var change = new EntityChange<TEntity>
+        {
+            EntityType = typeof(TEntity).FullName!,
+            EntityId = GetEntityId(entity),
+            ChangeType = ChangeType.Insert,
+            State = entity
+        };
+
+        await TrackChangeAsync(change, cancellationToken);
+        return change;
+    }
+
+    public async Task<EntityChange<TEntity>> TrackUpdateAsync<TEntity>(TEntity entity, CancellationToken cancellationToken = default) where TEntity : class
+    {
+        var change = new EntityChange<TEntity>
+        {
+            EntityType = typeof(TEntity).FullName!,
+            EntityId = GetEntityId(entity),
+            ChangeType = ChangeType.Update,
+            State = entity
+        };
+
+        await TrackChangeAsync(change, cancellationToken);
+        return change;
+    }
+
+    public async Task<EntityChange<TEntity>> TrackDeleteAsync<TEntity>(TEntity entity, CancellationToken cancellationToken = default) where TEntity : class
+    {
+        var change = new EntityChange<TEntity>
+        {
+            EntityType = typeof(TEntity).FullName!,,
+            EntityId = GetEntityId(entity),
+            ChangeType = ChangeType.Delete,
+            State = entity
+        };
+
+        await TrackChangeAsync(change, cancellationToken);
+        return change;
+    }
+
+    private static string GetEntityId<TEntity>(TEntity entity)
+    {
+        var idProperty = typeof(TEntity).GetProperty("Id") ?? throw new InvalidOperationException($"Entity {typeof(TEntity).Name} must have an Id property");
+        return idProperty.GetValue(entity)?.ToString() ?? throw new InvalidOperationException("Id cannot be null");
+    }
+
     public async Task TrackChangesAsync(IEnumerable<EntityChange> changes, CancellationToken cancellationToken = default)
     {
         var correlationId = Guid.NewGuid();
