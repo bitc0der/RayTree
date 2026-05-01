@@ -73,7 +73,7 @@ public static class SourceTableDdlGenerator
     public static string GenerateCreateIndex(string tableName, SourceTableIndex index)
     {
         var unique = index.IsUnique ? "UNIQUE " : "";
-        var sql = $"CREATE {unique}INDEX {index.Name} ON {tableName} ({string.Join(", ", index.Columns)})";
+        var sql = $"CREATE {unique}INDEX IF NOT EXISTS {index.Name} ON {tableName} ({string.Join(", ", index.Columns)})";
 
         if (!string.IsNullOrEmpty(index.Where))
             sql += $"\n    WHERE {index.Where}";

@@ -1,32 +1,33 @@
 # Database Migration Guide
 
-RayTree can automatically generate and execute DDL scripts to create source tables, outbox tables, and triggers.
+RayTree now automatically initializes database schemas and triggers when you call `Build()` or `BuildAsync()`.
 
 ## Automatic Initialization
 
-### At Application Startup
+When you call `Build()` or `BuildAsync()`, RayTree automatically:
+
+1. **Creates source tables** (`CREATE TABLE IF NOT EXISTS`)
+2. **Creates outbox tables** (`CREATE TABLE IF NOT EXISTS`)
+3. **Creates triggers** (source table → outbox, outbox → NOTIFY)
+4. **Creates queues** (RabbitMQ exchanges/queues, Kafka topics, or no-op for InMemory)
+
+No manual initialization is needed.
 
 ```csharp
-await using var scope = app.Services.CreateAsyncScope();
-await scope.ServiceProvider.InitializeRayTreeDatabaseAsync(options =>
-{
-    options.UseAttributeBasedSchema = true;
-    options.TableNamePrefix = "raytree_";
-});
+var tracker = config.Build(); // Everything auto-creates
+// OR
+var tracker = await config.BuildAsync(); // Async version
 ```
 
-### Generate DDL Without Executing
+## Generate DDL Without Executing
+
+If you want to preview the DDL that will be generated:
 
 ```csharp
-var tracker = serviceProvider.GetRequiredService<IEntityChangeTracker>();
-
-// Generate CREATE scripts
-var createDdl = await tracker.GenerateInitializationDdl<Product>();
-Console.WriteLine(createDdl);
-
-// Generate DROP scripts
-var dropDdl = await tracker.GenerateDropDdl<Product>();
-Console.WriteLine(dropDdl);
+// Note: These are now just for inspection - initialization is automatic
+var sourceDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true);
+var outboxDdl = OutboxSchemaGenerator.GenerateCreateTable(outboxSchema, includeIndexes: true);
+var triggerDdl = TriggerDdlGenerator.GenerateInstallAll(sourceTable, outboxTable, channel);
 ```
 
 ## Attribute-Based Schema

@@ -2,6 +2,7 @@ namespace RayTree.Plugins;
 
 public interface IRepository
 {
+    Task InitializeAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IRepository<TEntity> : IRepository where TEntity : class

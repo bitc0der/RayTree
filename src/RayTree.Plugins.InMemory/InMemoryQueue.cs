@@ -10,6 +10,12 @@ public class InMemoryQueue : IQueuePublisher, IDisposable
     private readonly Channel<(EntityChange Change, byte[] Payload)> _channel =
         Channel.CreateUnbounded<(EntityChange, byte[])>();
 
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        // No initialization needed for in-memory queue
+        return Task.CompletedTask;
+    }
+
     public ChannelReader<(EntityChange Change, byte[] Payload)> Reader => _channel.Reader;
 
     public async Task PublishAsync(EntityChange change, PipeReader payload, CancellationToken cancellationToken = default)

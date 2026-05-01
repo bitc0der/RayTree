@@ -24,6 +24,12 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
         _options = options;
     }
 
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        var producer = GetProducer(); // Ensures producer is created
+        return Task.CompletedTask;
+    }
+
     private IProducer<string, byte[]> GetProducer()
     {
         if (_producer != null)

@@ -39,6 +39,13 @@ public class ChangeTrackingConfiguration
         return this;
     }
 
+    public ChangeTrackingConfiguration UseRepository<T>(Func<Type, IRepository> factory) where T : IRepository
+    {
+        ThrowIfBuilt();
+        _builder.UseRepository<T>(factory);
+        return this;
+    }
+
     public ChangeTrackingConfiguration ForEntity<TEntity>()
     {
         ThrowIfBuilt();
@@ -64,6 +71,12 @@ public class ChangeTrackingConfiguration
     {
         _built = true;
         return _builder.Build();
+    }
+
+    public async Task<EntityChangeTracker> BuildAsync(CancellationToken cancellationToken = default)
+    {
+        _built = true;
+        return await _builder.BuildAsync(cancellationToken);
     }
 
     public Task StartPublisherAsync(EntityChangeTracker tracker, CancellationToken cancellationToken = default)

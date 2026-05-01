@@ -9,6 +9,8 @@ public class InMemoryOutbox : IOutbox
     private readonly ConcurrentDictionary<long, EntityChange> _store = new();
     private long _nextId;
 
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task WriteAsync(EntityChange change, CancellationToken cancellationToken = default)
     {
         var id = Interlocked.Increment(ref _nextId);

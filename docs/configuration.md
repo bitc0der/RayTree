@@ -115,7 +115,11 @@ var config = new ChangeTrackingConfiguration()
     .UseJsonSerializer()
     .UseGzipCompressor();
 
+// Build() automatically initializes database schemas and queues
 var tracker = config.Build();
+
+// For async contexts, use BuildAsync()
+// var tracker = await config.BuildAsync();
 
 // Start the publisher
 await config.StartPublisherAsync();
@@ -125,6 +129,38 @@ await tracker.TrackChangesAsync(changes);
 
 // Stop when done
 await config.StopPublisherAsync();
+```
+
+### Auto-Initialization
+
+When you call `Build()` or `BuildAsync()`, RayTree automatically:
+
+1. **Initializes storage** - Creates source tables, outbox tables, triggers, and indexes (PostgreSQL)
+2. **Initializes queues** - Creates exchanges/queues (RabbitMQ), topics (Kafka), or no-op (InMemory)
+3. **Is idempotent** - Uses `IF NOT EXISTS` and `CREATE OR REPLACE` - safe to call multiple times
+
+```csharp
+// Automatic initialization on Build()
+var tracker = config.Build(); // Initializes everything
+
+// Async version for non-blocking initialization
+var tracker = await config.BuildAsync();
+```
+
+### Repository Registration
+
+You can now register repositories for entities, which will also be auto-initialized:
+
+```csharp
+var config = new ChangeTrackingConfiguration()
+    .ForEntity<Product>()
+        .UseRepository(new PostgreSqlRepository<Product>(options))
+        .UseOutbox(new PostgreSqlOutbox(outboxOptions))
+        .UseQueue(new RabbitMqPublisher(queueOptions))
+    .UseJsonSerializer()
+    .UseGzipCompressor();
+
+var tracker = config.Build(); // Initializes repository, outbox, and queue
 ```
 
 ### Resource Cleanup

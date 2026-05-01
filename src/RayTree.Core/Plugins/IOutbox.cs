@@ -5,6 +5,7 @@ namespace RayTree.Plugins;
 
 public interface IOutbox
 {
+    Task InitializeAsync(CancellationToken cancellationToken = default);
     Task WriteAsync(EntityChange change, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<EntityChange>> GetUnpublishedAsync(int batchSize, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<EntityChange>> GetUnpublishedAsync(string entityType, ChangeType? changeType = null, DateTime? since = null, int batchSize = 100, CancellationToken cancellationToken = default);

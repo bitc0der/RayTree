@@ -186,9 +186,9 @@
 - [x] 15.4 Add integration tests for PostgreSQL repository and outbox plugins
 - [x] 15.5 Add unit tests for RabbitMQ publisher plugin (mock-based)
 - [x] 15.6 Add unit tests for Kafka publisher plugin (configuration/validation)
-- [ ] 15.6.1 Add integration tests for NOTIFY-based publishing with PostgreSQL
-- [ ] 15.6.2 Add integration tests for LISTEN reconnection and backlog scan
-- [ ] 15.6.3 Add integration tests for fallback polling activation on connection loss
+- [x] 15.6.1 Add integration tests for NOTIFY-based publishing with PostgreSQL
+- [x] 15.6.2 Add integration tests for LISTEN reconnection and backlog scan
+- [x] 15.6.3 Add integration tests for fallback polling activation on connection loss
 - [x] 15.7 Add integration tests for JSON serializer plugin
 - [x] 15.8 Add integration tests for Protobuf serializer plugin
 - [x] 15.9 Add integration tests for Gzip and Brotli compressor plugins

@@ -1,0 +1,10 @@
+namespace RayTree.Plugins.PostgreSQL;
+
+public class PostgreSqlOutboxOptions
+{
+    public string ConnectionString { get; set; } = string.Empty;
+    public string OutboxTableName { get; set; } = string.Empty;
+    public bool UseNotificationChannel { get; set; }
+    public string? NotificationChannel { get; set; }
+    public TimeSpan? FallbackPollingInterval { get; set; }
+}

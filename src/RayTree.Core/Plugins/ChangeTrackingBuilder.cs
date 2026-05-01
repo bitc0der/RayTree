@@ -10,6 +10,7 @@ public interface IChangeTrackingBuilder
     IChangeTrackingBuilder UseCompressor<T>(Func<Type, IChangeCompressor> factory) where T : IChangeCompressor;
     IEntityBuilder ForEntity<TEntity>();
     EntityChangeTracker Build();
+    Task<EntityChangeTracker> BuildAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IEntityBuilder
@@ -27,11 +28,13 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
     private readonly Dictionary<Type, IQueuePublisher> _queueOverrides = new();
     private readonly Dictionary<Type, IChangeSerializer> _serializerOverrides = new();
     private readonly Dictionary<Type, IChangeCompressor> _compressorOverrides = new();
+    private readonly Dictionary<Type, IRepository> _repositoryOverrides = new();
 
     private Func<Type, IOutbox>? _outboxFactory;
     private Func<Type, IQueuePublisher>? _queueFactory;
     private Func<Type, IChangeSerializer>? _serializerFactory;
     private Func<Type, IChangeCompressor>? _compressorFactory;
+    private Func<Type, IRepository>? _repositoryFactory;
 
     public IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox
     {
@@ -57,6 +60,12 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
         return this;
     }
 
+    public IChangeTrackingBuilder UseRepository<T>(Func<Type, IRepository> factory) where T : IRepository
+    {
+        _repositoryFactory = factory;
+        return this;
+    }
+
     public IEntityBuilder ForEntity<TEntity>()
     {
         return new EntityBuilder(this, typeof(TEntity));
@@ -66,8 +75,23 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
     internal void AddQueueOverride(Type entityType, IQueuePublisher queue) => _queueOverrides[entityType] = queue;
     internal void AddSerializerOverride(Type entityType, IChangeSerializer serializer) => _serializerOverrides[entityType] = serializer;
     internal void AddCompressorOverride(Type entityType, IChangeCompressor compressor) => _compressorOverrides[entityType] = compressor;
+    internal void AddRepositoryOverride(Type entityType, IRepository repository) => _repositoryOverrides[entityType] = repository;
 
     public EntityChangeTracker Build()
+    {
+        var tracker = BuildInternal();
+        tracker.InitializeAsync().GetAwaiter().GetResult();
+        return tracker;
+    }
+
+    public async Task<EntityChangeTracker> BuildAsync(CancellationToken cancellationToken = default)
+    {
+        var tracker = BuildInternal();
+        await tracker.InitializeAsync(cancellationToken);
+        return tracker;
+    }
+
+    private EntityChangeTracker BuildInternal()
     {
         var tracker = new EntityChangeTracker();
 
@@ -75,6 +99,7 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
             .Concat(_queueOverrides.Keys)
             .Concat(_serializerOverrides.Keys)
             .Concat(_compressorOverrides.Keys)
+            .Concat(_repositoryOverrides.Keys)
             .Distinct();
 
         foreach (var entityType in entityTypes)
@@ -91,10 +116,17 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
             var compressor = _compressorOverrides.GetValueOrDefault(entityType) ?? _compressorFactory?.Invoke(entityType)
                 ?? throw new InvalidOperationException($"No compressor configured for {entityType.Name}");
 
+            var repository = _repositoryOverrides.GetValueOrDefault(entityType) ?? _repositoryFactory?.Invoke(entityType);
+
             tracker.RegisterOutbox(entityType, outbox);
             tracker.RegisterPublisher(entityType, queue);
             tracker.RegisterSerializer(entityType, serializer);
             tracker.RegisterCompressor(entityType, compressor);
+
+            if (repository != null)
+            {
+                tracker.RegisterRepository(entityType, repository);
+            }
         }
 
         return tracker;
@@ -114,6 +146,7 @@ internal class EntityBuilder : IEntityBuilder
 
     public IEntityBuilder UseRepository(IRepository repository)
     {
+        _parent.AddRepositoryOverride(_entityType, repository);
         return this;
     }
 

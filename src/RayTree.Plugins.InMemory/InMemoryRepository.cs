@@ -7,6 +7,8 @@ public class InMemoryRepository<TEntity> : IRepository<TEntity> where TEntity : 
 {
     private readonly ConcurrentDictionary<object, TEntity> _store = new();
 
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     public Task InsertAsync(TEntity entity, CancellationToken cancellationToken = default)
     {
         var id = GetEntityId(entity);

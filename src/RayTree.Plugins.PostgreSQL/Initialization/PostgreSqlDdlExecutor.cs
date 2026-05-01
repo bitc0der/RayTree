@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using RayTree.Plugins;
 
@@ -6,10 +7,12 @@ namespace RayTree.Plugins.PostgreSQL;
 public class PostgreSqlDdlExecutor : IDdlExecutor
 {
     private readonly string _connectionString;
+    private readonly ILogger<PostgreSqlDdlExecutor>? _logger;
 
-    public PostgreSqlDdlExecutor(string connectionString)
+    public PostgreSqlDdlExecutor(string connectionString, ILogger<PostgreSqlDdlExecutor>? logger = null)
     {
         _connectionString = connectionString;
+        _logger = logger;
     }
 
     public async Task ExecuteAsync(string ddl, CancellationToken cancellationToken = default)
@@ -24,6 +27,8 @@ public class PostgreSqlDdlExecutor : IDdlExecutor
             var trimmed = statement.Trim();
             if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("--"))
                 continue;
+
+            _logger?.LogDebug("Executing DDL: {Statement}", trimmed[..Math.Min(trimmed.Length, 200)]);
 
             await using var cmd = new NpgsqlCommand(trimmed, conn);
             await cmd.ExecuteNonQueryAsync(cancellationToken);

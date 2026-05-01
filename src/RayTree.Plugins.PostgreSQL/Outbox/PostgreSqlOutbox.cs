@@ -1,17 +1,10 @@
 using Npgsql;
+using RayTree.Distribution;
 using RayTree.Models;
+using RayTree.Outbox;
 using RayTree.Tracking;
 
 namespace RayTree.Plugins.PostgreSQL;
-
-public class PostgreSqlOutboxOptions
-{
-    public string ConnectionString { get; set; } = string.Empty;
-    public string OutboxTableName { get; set; } = string.Empty;
-    public bool UseNotificationChannel { get; set; }
-    public string? NotificationChannel { get; set; }
-    public TimeSpan? FallbackPollingInterval { get; set; }
-}
 
 public class PostgreSqlOutbox : IOutbox
 {
@@ -20,6 +13,38 @@ public class PostgreSqlOutbox : IOutbox
     public PostgreSqlOutbox(PostgreSqlOutboxOptions options)
     {
         _options = options;
+    }
+
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        // 1. Create outbox table using DdlExecutor to handle multiple statements
+        var outboxSchema = OutboxTableSchema.Create("Unknown", _options.OutboxTableName);
+        var outboxDdl = OutboxSchemaGenerator.GenerateCreateTable(outboxSchema, includeIndexes: true);
+        await ExecuteDdlDirectly(_options.ConnectionString, outboxDdl, cancellationToken);
+
+        // 2. Create notification trigger if enabled
+        if (_options.UseNotificationChannel && !string.IsNullOrEmpty(_options.NotificationChannel))
+        {
+            var functionName = $"notify_{_options.OutboxTableName}_change";
+            var triggerFunctionDdl = NotificationBasedPublisher.GenerateNotifyTriggerFunction(
+                _options.OutboxTableName, _options.NotificationChannel);
+            await ExecuteDdlDirectly(_options.ConnectionString, triggerFunctionDdl, cancellationToken);
+
+            var triggerName = $"{_options.OutboxTableName}_notify_trigger";
+            var dropTriggerDdl = NotificationBasedPublisher.GenerateDropTrigger(triggerName, _options.OutboxTableName);
+            await ExecuteDdlDirectly(_options.ConnectionString, dropTriggerDdl, cancellationToken);
+
+            var triggerDdl = NotificationBasedPublisher.GenerateNotifyTrigger(triggerName, _options.OutboxTableName, functionName);
+            await ExecuteDdlDirectly(_options.ConnectionString, triggerDdl, cancellationToken);
+        }
+    }
+
+    private static async Task ExecuteDdlDirectly(string connectionString, string ddl, CancellationToken cancellationToken)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(ddl, conn);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task WriteAsync(EntityChange change, CancellationToken cancellationToken = default)

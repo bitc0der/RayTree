@@ -30,6 +30,12 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
         _options = options;
     }
 
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        var channel = GetChannel();
+        return Task.CompletedTask;
+    }
+
     private IModel GetChannel()
     {
         if (_channel != null && _channel.IsOpen)

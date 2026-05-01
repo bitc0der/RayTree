@@ -11,17 +11,44 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     private readonly ConcurrentDictionary<Type, IQueuePublisher> _publishers = new();
     private readonly ConcurrentDictionary<Type, IChangeSerializer> _serializers = new();
     private readonly ConcurrentDictionary<Type, IChangeCompressor> _compressors = new();
+    private readonly ConcurrentDictionary<Type, IRepository> _repositories = new();
 
     public void RegisterOutbox(Type entityType, IOutbox outbox) => _outboxes[entityType] = outbox;
     public void RegisterPublisher(Type entityType, IQueuePublisher publisher) => _publishers[entityType] = publisher;
     public void RegisterSerializer(Type entityType, IChangeSerializer serializer) => _serializers[entityType] = serializer;
     public void RegisterCompressor(Type entityType, IChangeCompressor compressor) => _compressors[entityType] = compressor;
+    public void RegisterRepository(Type entityType, IRepository repository) => _repositories[entityType] = repository;
 
     public IOutbox GetOutbox(Type entityType) => _outboxes[entityType];
     public IQueuePublisher GetPublisher(Type entityType) => _publishers[entityType];
     public IChangeSerializer GetSerializer(Type entityType) => _serializers[entityType];
     public IChangeCompressor GetCompressor(Type entityType) => _compressors[entityType];
+    public IRepository GetRepository(Type entityType) => _repositories[entityType];
     public IReadOnlyDictionary<Type, IOutbox> GetOutboxes() => _outboxes;
+    public IReadOnlyDictionary<Type, IQueuePublisher> GetPublishers() => _publishers;
+    public IReadOnlyDictionary<Type, IRepository> GetRepositories() => _repositories;
+
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        var initTasks = new List<Task>();
+
+        foreach (var repo in _repositories.Values)
+        {
+            initTasks.Add(repo.InitializeAsync(cancellationToken));
+        }
+
+        foreach (var outbox in _outboxes.Values)
+        {
+            initTasks.Add(outbox.InitializeAsync(cancellationToken));
+        }
+
+        foreach (var publisher in _publishers.Values)
+        {
+            initTasks.Add(publisher.InitializeAsync(cancellationToken));
+        }
+
+        await Task.WhenAll(initTasks);
+    }
 
     public async Task TrackChangeAsync(EntityChange change, CancellationToken cancellationToken = default)
     {

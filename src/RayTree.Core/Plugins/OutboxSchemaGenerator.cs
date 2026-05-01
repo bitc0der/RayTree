@@ -9,7 +9,7 @@ public static class OutboxSchemaGenerator
     {
         var sb = new StringBuilder();
 
-        sb.AppendLine($"CREATE TABLE {schema.OutboxTableName} (");
+        sb.AppendLine($"CREATE TABLE IF NOT EXISTS {schema.OutboxTableName} (");
 
         for (var i = 0; i < schema.Columns.Count; i++)
         {
@@ -38,7 +38,7 @@ public static class OutboxSchemaGenerator
             foreach (var index in schema.Indexes)
             {
                 sb.AppendLine();
-                sb.Append($"CREATE INDEX {index.Name} ON {schema.OutboxTableName} ({string.Join(", ", index.Columns)})");
+                sb.Append($"CREATE INDEX IF NOT EXISTS {index.Name} ON {schema.OutboxTableName} ({string.Join(", ", index.Columns)})");
 
                 if (!string.IsNullOrEmpty(index.Where))
                     sb.AppendLine($"\n    WHERE {index.Where};");

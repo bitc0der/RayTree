@@ -18,15 +18,18 @@ public class NotificationBasedPublisher : IDisposable
 {
     private readonly EntityChangeTracker _tracker;
     private readonly NotificationBasedPublisherOptions _options;
-    private NpgsqlConnection? _connection;
     private readonly CancellationTokenSource _cts = new();
+    private NpgsqlConnection? _connection;
     private Task? _listenTask;
+    private Task? _fallbackTask;
 
     public NotificationBasedPublisher(EntityChangeTracker tracker, NotificationBasedPublisherOptions options)
     {
         _tracker = tracker;
         _options = options;
     }
+
+    public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
@@ -35,10 +38,11 @@ public class NotificationBasedPublisher : IDisposable
 
         _connection.Notification += OnNotification;
 
-        using var cmd = new NpgsqlCommand($"LISTEN {_options.ChannelName}", _connection);
+        await using var cmd = new NpgsqlCommand($"LISTEN {_options.ChannelName}", _connection);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
 
-        _listenTask = WaitLoopAsync(_cts.Token);
+        _listenTask = ListenLoopAsync(_cts.Token);
+        _fallbackTask = FallbackPollingLoopAsync(_cts.Token);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -50,63 +54,95 @@ public class NotificationBasedPublisher : IDisposable
             await Task.WhenAny(_listenTask, Task.Delay(5000, cancellationToken));
         }
 
+        if (_fallbackTask != null)
+        {
+            await Task.WhenAny(_fallbackTask, Task.Delay(5000, cancellationToken));
+        }
+
         if (_connection != null)
         {
-            await using var cmd = new NpgsqlCommand($"UNLISTEN {_options.ChannelName}", _connection);
-            await cmd.ExecuteNonQueryAsync(cancellationToken);
+            try
+            {
+                await using var cmd = new NpgsqlCommand($"UNLISTEN {_options.ChannelName}", _connection);
+                await cmd.ExecuteNonQueryAsync(CancellationToken.None);
+            }
+            catch
+            {
+            }
+
             await _connection.CloseAsync();
         }
     }
 
-    private async Task WaitLoopAsync(CancellationToken cancellationToken)
+    private async Task ListenLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                _connection?.Wait();
+                await _connection!.WaitAsync(cancellationToken);
             }
             catch (OperationCanceledException)
             {
                 break;
             }
-            catch
+            catch (Exception)
             {
                 await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
             }
         }
     }
 
-    private async void OnNotification(object? sender, NpgsqlNotificationEventArgs e)
+    private async Task FallbackPollingLoopAsync(CancellationToken cancellationToken)
     {
-        try
+        while (!cancellationToken.IsCancellationRequested)
         {
-            var payload = JsonSerializer.Deserialize<NotificationPayload>(e.Payload);
-            if (payload == null)
-                return;
-
-            var entityType = Type.GetType(payload.EntityType);
-            if (entityType == null)
-                return;
-
-            var outbox = _tracker.GetOutbox(entityType);
-            var publisher = _tracker.GetPublisher(entityType);
-            var serializer = _tracker.GetSerializer(entityType);
-            var compressor = _tracker.GetCompressor(entityType);
-
-            if (outbox == null || publisher == null || serializer == null || compressor == null)
-                return;
-
-            var change = await outbox.GetByIdAsync(payload.Id, _cts.Token);
-            if (change == null || change.Published)
-                return;
-
-            await PublishChangeAsync(change, publisher, serializer, compressor, _cts.Token);
-            await outbox.MarkPublishedAsync(change.Id, _cts.Token);
+            try
+            {
+                await ProcessUnpublishedChangesAsync(cancellationToken);
+                await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception)
+            {
+                try { await Task.Delay(_options.FallbackPollingInterval, cancellationToken); } catch { }
+            }
         }
-        catch (Exception)
+    }
+
+    private void OnNotification(object? sender, NpgsqlNotificationEventArgs e)
+    {
+        Task.Run(async () =>
         {
-        }
+            try
+            {
+                var payload = JsonSerializer.Deserialize<NotificationPayload>(e.Payload);
+                if (payload == null) return;
+
+                var entityType = Type.GetType(payload.EntityType);
+                if (entityType == null) return;
+
+                var outbox = _tracker.GetOutbox(entityType);
+                var publisher = _tracker.GetPublisher(entityType);
+                var serializer = _tracker.GetSerializer(entityType);
+                var compressor = _tracker.GetCompressor(entityType);
+
+                if (outbox == null || publisher == null || serializer == null || compressor == null)
+                    return;
+
+                var change = await outbox.GetByIdAsync(payload.Id, _cts.Token);
+                if (change == null || change.Published) return;
+
+                await PublishChangeAsync(change, publisher, serializer, compressor, _cts.Token);
+                await outbox.MarkPublishedAsync(change.Id, _cts.Token);
+            }
+            catch (Exception)
+            {
+            }
+        });
     }
 
     private static async Task PublishChangeAsync(
@@ -126,6 +162,38 @@ public class NotificationBasedPublisher : IDisposable
         await Task.WhenAll(serializeTask, compressTask, publishTask);
     }
 
+    private async Task ProcessUnpublishedChangesAsync(CancellationToken cancellationToken)
+    {
+        foreach (var entityType in _tracker.GetOutboxes().Keys)
+        {
+            if (cancellationToken.IsCancellationRequested) break;
+
+            var outbox = _tracker.GetOutbox(entityType);
+            var publisher = _tracker.GetPublisher(entityType);
+            var serializer = _tracker.GetSerializer(entityType);
+            var compressor = _tracker.GetCompressor(entityType);
+
+            if (outbox == null || publisher == null || serializer == null || compressor == null)
+                continue;
+
+            var changes = await outbox.GetUnpublishedAsync(100, cancellationToken);
+
+            foreach (var change in changes)
+            {
+                if (cancellationToken.IsCancellationRequested) break;
+
+                try
+                {
+                    await PublishChangeAsync(change, publisher, serializer, compressor, cancellationToken);
+                    await outbox.MarkPublishedAsync(change.Id, cancellationToken);
+                }
+                catch
+                {
+                }
+            }
+        }
+    }
+
     public static string GenerateNotifyTriggerFunction(string outboxTableName, string functionName)
     {
         return $"""
@@ -133,7 +201,7 @@ public class NotificationBasedPublisher : IDisposable
             RETURNS TRIGGER AS $$
             BEGIN
                 PERFORM pg_notify('entity_changes', json_build_object(
-                    'entity', NEW.entity_type,
+                    'entity_type', NEW.entity_type,
                     'id', NEW.id,
                     'change_type', NEW.change_type
                 )::text);
@@ -159,7 +227,7 @@ public class NotificationBasedPublisher : IDisposable
 
     public void Dispose()
     {
-        _cts.Cancel();
+        StopAsync().GetAwaiter().GetResult();
         _cts.Dispose();
         _connection?.Dispose();
     }

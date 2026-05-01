@@ -1,13 +1,6 @@
 using Npgsql;
-using RayTree.Plugins;
 
 namespace RayTree.Plugins.PostgreSQL;
-
-public class PostgreSqlRepositoryOptions
-{
-    public string ConnectionString { get; set; } = string.Empty;
-    public string TableName { get; set; } = string.Empty;
-}
 
 public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity : class
 {
@@ -16,6 +9,22 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity 
     public PostgreSqlRepository(PostgreSqlRepositoryOptions options)
     {
         _options = options;
+    }
+
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        // Create source table only - triggers are created by the outbox
+        var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, _options.TableName);
+        var sourceDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true);
+        await ExecuteDdlDirectly(_options.ConnectionString, sourceDdl, cancellationToken);
+    }
+
+    private static async Task ExecuteDdlDirectly(string connectionString, string ddl, CancellationToken cancellationToken)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(ddl, conn);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task InsertAsync(TEntity entity, CancellationToken cancellationToken = default)

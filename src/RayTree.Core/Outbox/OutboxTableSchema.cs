@@ -21,13 +21,13 @@ public class OutboxTableSchema
             Columns =
             [
                 new OutboxColumn { Name = "id", Type = "BIGSERIAL", IsPrimaryKey = true },
-                new OutboxColumn { Name = "entity_id", Type = "UUID", IsNullable = false },
+                new OutboxColumn { Name = "entity_id", Type = "TEXT", IsNullable = false },
                 new OutboxColumn { Name = "change_type", Type = "VARCHAR(10)", IsNullable = false },
                 new OutboxColumn { Name = "timestamp", Type = "TIMESTAMPTZ", IsNullable = false, Default = "NOW()" },
                 new OutboxColumn { Name = "published", Type = "BOOLEAN", IsNullable = false, Default = "FALSE" },
                 new OutboxColumn { Name = "version", Type = "INTEGER", IsNullable = false, Default = "1" },
                 new OutboxColumn { Name = "correlation_id", Type = "UUID", IsNullable = false, Default = "gen_random_uuid()" },
-                new OutboxColumn { Name = "entity_type", Type = "VARCHAR(100)", IsNullable = false, Default = $"'{entityTypeName}'" },
+                new OutboxColumn { Name = "entity_type", Type = "TEXT", IsNullable = false, Default = $"'{entityTypeName}'" },
                 new OutboxColumn { Name = "data", Type = "JSONB", IsNullable = true }
             ],
             Indexes =

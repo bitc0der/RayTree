@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RayTree.Distribution;
 using RayTree.Plugins;
@@ -47,10 +48,24 @@ public static class ServiceCollectionExtensions
 
 public class EntityChangeTrackerFactory
 {
+    private readonly IServiceProvider _sp;
+
+    public EntityChangeTrackerFactory(IServiceProvider sp)
+    {
+        _sp = sp;
+    }
+
     public EntityChangeTracker Create(Action<IChangeTrackingBuilder>? configure = null)
     {
         var builder = new ChangeTrackingBuilder();
         configure?.Invoke(builder);
         return builder.Build();
+    }
+
+    public async Task<EntityChangeTracker> CreateAsync(Action<IChangeTrackingBuilder>? configure = null, CancellationToken cancellationToken = default)
+    {
+        var builder = new ChangeTrackingBuilder();
+        configure?.Invoke(builder);
+        return await builder.BuildAsync(cancellationToken);
     }
 }

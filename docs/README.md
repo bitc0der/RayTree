@@ -12,6 +12,7 @@ A modular .NET 8.0 entity change tracking system with outbox pattern support, qu
 - **Modular Plugins** - Each serializer and compressor in its own NuGet package
 - **In-Memory Testing** - Full in-memory implementation for development and testing
 - **Subscriber Framework** - Deduplication, error handling, dead-letter support
+- **Auto-Initialization** - Automatic database schema and queue initialization on `Build()` / `BuildAsync()`
 
 ## Quick Start
 
@@ -52,12 +53,8 @@ builder.Services.AddChangeSubscriber(subscriber =>
 
 var app = builder.Build();
 
-// 4. Initialize database (creates source + outbox tables, triggers)
-await using var scope = app.Services.CreateAsyncScope();
-await scope.ServiceProvider.InitializeRayTreeDatabaseAsync(options =>
-{
-    options.UseAttributeBasedSchema = true; // Reads [Table], [Column] attributes
-});
+// NOTE: Auto-initialization now happens automatically on Build() / BuildAsync()
+// No manual initialization step needed
 
 app.Run();
 ```
@@ -71,7 +68,11 @@ var config = new ChangeTrackingConfiguration()
     .UseJsonSerializer()
     .UseNoOpCompressor();
 
+// Build() automatically initializes storage and queues
 var tracker = config.Build();
+
+// For async contexts, use BuildAsync()
+// var tracker = await config.BuildAsync();
 
 // Track changes manually
 await tracker.TrackChangesAsync(new[]
@@ -84,4 +85,30 @@ await tracker.TrackChangesAsync(new[]
         Timestamp = DateTime.UtcNow
     }
 });
+```
+
+## Auto-Initialization
+
+RayTree now automatically initializes database schemas and queues when you call `Build()` or `BuildAsync()`:
+
+- **Storage**: Creates source tables, outbox tables, triggers, and indexes (PostgreSQL)
+- **Queues**: Creates exchanges/queues (RabbitMQ), topics (Kafka), or no-op (InMemory)
+- **Idempotent**: Uses `IF NOT EXISTS` and `CREATE OR REPLACE` - safe to call multiple times
+
+```csharp
+// Automatic initialization on Build()
+var tracker = config.Build(); // Initializes everything automatically
+
+// Or use async version
+var tracker = await config.BuildAsync(); // Same but async
+```
+
+### Disabling Auto-Init
+
+Auto-initialization is always enabled and happens automatically. If you need to control when initialization happens, use `Build()` without auto-init by manually calling `InitializeAsync()`:
+
+```csharp
+var tracker = new EntityChangeTracker();
+// Register components...
+await tracker.InitializeAsync(); // Manual initialization
 ```
