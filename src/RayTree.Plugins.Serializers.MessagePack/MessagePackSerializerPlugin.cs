@@ -27,9 +27,9 @@ public class MessagePackSerializerPlugin : IChangeSerializer
 
         try
         {
-            var entityChange = MessagePackSerializer.Deserialize<EntityChange>(buffer, DefaultOptions, cancellationToken);
-            reader.AdvanceTo(buffer.End);
-            return entityChange ?? throw new InvalidOperationException("Deserialized entity change is null");
+            var entityType = Type.GetType(entityType) ?? typeof(EntityChange);
+        var entityChange = MessagePackSerializer.Deserialize(entityType, buffer, DefaultOptions, cancellationToken);
+        return (EntityChange)entityChange ?? throw new InvalidOperationException("Deserialized entity change is null");
         }
         finally
         {

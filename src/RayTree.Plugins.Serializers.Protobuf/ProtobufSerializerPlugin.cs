@@ -49,9 +49,10 @@ public class ProtobufSerializerPlugin : IChangeSerializer
             }
             ms.Position = 0;
 
-            var entityChange = (EntityChange)Model.Deserialize(ms, null, typeof(EntityChange));
-            reader.AdvanceTo(buffer.End);
-            return entityChange ?? throw new InvalidOperationException("Deserialized entity change is null");
+            var entityType = Type.GetType(entityType) ?? typeof(EntityChange);
+        var entityChange = (EntityChange)Model.Deserialize(entityType, null, ms);
+        reader.AdvanceTo(buffer.End);
+        return entityChange ?? throw new InvalidOperationException("Deserialized entity change is null");
         }
         finally
         {
