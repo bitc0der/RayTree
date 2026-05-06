@@ -13,7 +13,7 @@ public static class PostgreSqlRepositoryExtensions
         var options = new PostgreSqlRepositoryOptions();
         configure(options);
 
-        return builder.UseOutbox<IOutbox>(_ => new PostgreSqlOutbox(new PostgreSqlOutboxOptions
+        return builder.UseOutbox<IOutbox>(_ => new PostgreSqlOutbox<TEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = options.ConnectionString,
             OutboxTableName = options.TableName + "_outbox"

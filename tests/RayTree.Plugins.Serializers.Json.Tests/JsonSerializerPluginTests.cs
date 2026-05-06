@@ -13,7 +13,7 @@ public class JsonSerializerPluginTests
         var original = CreateTestChange();
 
         var data = await SerializeAndCaptureAsync(plugin, original);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
 
         Assert.That(result.EntityId, Is.EqualTo(original.EntityId));
         Assert.That(result.EntityType, Is.EqualTo(original.EntityType));
@@ -21,22 +21,24 @@ public class JsonSerializerPluginTests
         Assert.That(result.Timestamp, Is.EqualTo(original.Timestamp));
         Assert.That(result.Version, Is.EqualTo(original.Version));
         Assert.That(result.CorrelationId, Is.EqualTo(original.CorrelationId));
+        Assert.That(result.State?.Name, Is.EqualTo(original.State?.Name));
     }
 
     [Test]
     public async Task SerializeAsync_InsertChangeType()
     {
         var plugin = new JsonSerializerPlugin();
-        var change = new EntityChange
+        var change = new EntityChange<User>
         {
-            EntityType = "TestEntity",
+            EntityType = typeof(User).FullName!,
             EntityId = "1",
             ChangeType = ChangeType.Insert,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            State = new User { Id = 1, Name = "Alice" }
         };
 
         var data = await SerializeAndCaptureAsync(plugin, change);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
         Assert.That(result.ChangeType, Is.EqualTo(ChangeType.Insert));
     }
 
@@ -44,16 +46,17 @@ public class JsonSerializerPluginTests
     public async Task SerializeAsync_UpdateChangeType()
     {
         var plugin = new JsonSerializerPlugin();
-        var change = new EntityChange
+        var change = new EntityChange<User>
         {
-            EntityType = "TestEntity",
+            EntityType = typeof(User).FullName!,
             EntityId = "2",
             ChangeType = ChangeType.Update,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            State = new User { Id = 2 }
         };
 
         var data = await SerializeAndCaptureAsync(plugin, change);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
         Assert.That(result.ChangeType, Is.EqualTo(ChangeType.Update));
     }
 
@@ -61,16 +64,17 @@ public class JsonSerializerPluginTests
     public async Task SerializeAsync_DeleteChangeType()
     {
         var plugin = new JsonSerializerPlugin();
-        var change = new EntityChange
+        var change = new EntityChange<User>
         {
-            EntityType = "TestEntity",
+            EntityType = typeof(User).FullName!,
             EntityId = "3",
             ChangeType = ChangeType.Delete,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            State = new User { Id = 3 }
         };
 
         var data = await SerializeAndCaptureAsync(plugin, change);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
         Assert.That(result.ChangeType, Is.EqualTo(ChangeType.Delete));
     }
 
@@ -79,17 +83,18 @@ public class JsonSerializerPluginTests
     {
         var plugin = new JsonSerializerPlugin();
         var correlationId = Guid.NewGuid();
-        var change = new EntityChange
+        var change = new EntityChange<User>
         {
-            EntityType = "TestEntity",
+            EntityType = typeof(User).FullName!,
             EntityId = "4",
             ChangeType = ChangeType.Insert,
             Timestamp = DateTime.UtcNow,
-            CorrelationId = correlationId
+            CorrelationId = correlationId,
+            State = new User { Id = 4 }
         };
 
         var data = await SerializeAndCaptureAsync(plugin, change);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
         Assert.That(result.CorrelationId, Is.EqualTo(correlationId));
     }
 
@@ -108,23 +113,25 @@ public class JsonSerializerPluginTests
         await pipe.Writer.CompleteAsync();
 
         Assert.ThrowsAsync<System.Text.Json.JsonException>(async () =>
-            await plugin.DeserializeAsync(pipe.Reader, "TestEntity"));
+            await plugin.DeserializeAsync<User>(pipe.Reader));
     }
 
-    private static async Task<byte[]> SerializeAndCaptureAsync(IChangeSerializer plugin, EntityChange change)
+    private static async Task<byte[]> SerializeAndCaptureAsync<TEntity>(JsonSerializerPlugin plugin, EntityChange<TEntity> change)
+        where TEntity : class
     {
         var pipe = new Pipe();
         await plugin.SerializeAsync(change, pipe.Writer);
         return await ReadPipeDataAsync(pipe.Reader);
     }
 
-    private static async Task<EntityChange> DeserializeFromDataAsync(IChangeSerializer plugin, byte[] data, string entityType)
+    private static async Task<EntityChange<TEntity>> DeserializeFromDataAsync<TEntity>(JsonSerializerPlugin plugin, byte[] data)
+        where TEntity : class
     {
         var pipe = new Pipe();
         await pipe.Writer.WriteAsync(data);
         await pipe.Writer.FlushAsync();
         await pipe.Writer.CompleteAsync();
-        return await plugin.DeserializeAsync(pipe.Reader, entityType);
+        return await plugin.DeserializeAsync<TEntity>(pipe.Reader);
     }
 
     private static async Task<byte[]> ReadPipeDataAsync(PipeReader reader)
@@ -140,20 +147,18 @@ public class JsonSerializerPluginTests
         return ms.ToArray();
     }
 
-    private static EntityChange CreateTestChange()
+    private static EntityChange<User> CreateTestChange() => new()
     {
-        return new EntityChange
-        {
-            Id = 42,
-            EntityType = typeof(User).FullName!,
-            EntityId = "user-123",
-            ChangeType = ChangeType.Update,
-            Timestamp = DateTime.UtcNow,
-            Version = 3,
-            CorrelationId = Guid.NewGuid(),
-            Published = false
-        };
-    }
+        Id = 42,
+        EntityType = typeof(User).FullName!,
+        EntityId = "user-123",
+        ChangeType = ChangeType.Update,
+        Timestamp = DateTime.UtcNow,
+        Version = 3,
+        CorrelationId = Guid.NewGuid(),
+        Published = false,
+        State = new User { Id = 42, Name = "Test User" }
+    };
 
     private class User
     {

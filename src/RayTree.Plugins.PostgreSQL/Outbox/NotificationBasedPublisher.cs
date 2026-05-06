@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Reflection;
 using System.Text.Json;
 using Npgsql;
 using RayTree.Models;
@@ -6,13 +7,6 @@ using RayTree.Plugins;
 using RayTree.Tracking;
 
 namespace RayTree.Distribution;
-
-public class NotificationBasedPublisherOptions
-{
-    public string ConnectionString { get; set; } = string.Empty;
-    public string ChannelName { get; set; } = "entity_changes";
-    public TimeSpan FallbackPollingInterval { get; set; } = TimeSpan.FromSeconds(30);
-}
 
 public class NotificationBasedPublisher : IDisposable
 {
@@ -22,6 +16,15 @@ public class NotificationBasedPublisher : IDisposable
     private NpgsqlConnection? _connection;
     private Task? _listenTask;
     private Task? _fallbackTask;
+
+    private static readonly MethodInfo _getByIdMethod = typeof(NotificationBasedPublisher)
+        .GetMethod(nameof(GetByIdCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo _getUnpublishedMethod = typeof(NotificationBasedPublisher)
+        .GetMethod(nameof(GetUnpublishedCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo _serializeMethod = typeof(NotificationBasedPublisher)
+        .GetMethod(nameof(SerializeCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
     public NotificationBasedPublisher(EntityChangeTracker tracker, NotificationBasedPublisherOptions options)
     {
@@ -108,7 +111,13 @@ public class NotificationBasedPublisher : IDisposable
             }
             catch (Exception)
             {
-                try { await Task.Delay(_options.FallbackPollingInterval, cancellationToken); } catch { }
+                try
+                {
+                    await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
+                }
+                catch
+                {
+                }
             }
         }
     }
@@ -130,13 +139,10 @@ public class NotificationBasedPublisher : IDisposable
                 var serializer = _tracker.GetSerializer(entityType);
                 var compressor = _tracker.GetCompressor(entityType);
 
-                if (outbox == null || publisher == null || serializer == null || compressor == null)
-                    return;
-
-                var change = await outbox.GetByIdAsync(payload.Id, _cts.Token);
+                var change = await GetByIdAsync(outbox, entityType, payload.Id, _cts.Token);
                 if (change == null || change.Published) return;
 
-                await PublishChangeAsync(change, publisher, serializer, compressor, _cts.Token);
+                await PublishChangeAsync(change, entityType, publisher, serializer, compressor, _cts.Token);
                 await outbox.MarkPublishedAsync(change.Id, _cts.Token);
             }
             catch (Exception)
@@ -147,6 +153,7 @@ public class NotificationBasedPublisher : IDisposable
 
     private static async Task PublishChangeAsync(
         EntityChange change,
+        Type entityType,
         IQueuePublisher publisher,
         IChangeSerializer serializer,
         IChangeCompressor compressor,
@@ -155,7 +162,8 @@ public class NotificationBasedPublisher : IDisposable
         var serializePipe = new Pipe();
         var compressPipe = new Pipe();
 
-        var serializeTask = serializer.SerializeAsync(change, serializePipe.Writer, ct);
+        var serializeTask = (Task)_serializeMethod.MakeGenericMethod(entityType)
+            .Invoke(null, [serializer, change, serializePipe.Writer, ct])!;
         var compressTask = compressor.CompressAsync(serializePipe.Reader, compressPipe.Writer, ct);
         var publishTask = publisher.PublishAsync(change, compressPipe.Reader, ct);
 
@@ -164,19 +172,14 @@ public class NotificationBasedPublisher : IDisposable
 
     private async Task ProcessUnpublishedChangesAsync(CancellationToken cancellationToken)
     {
-        foreach (var entityType in _tracker.GetOutboxes().Keys)
+        foreach (var (entityType, outbox) in _tracker.GetOutboxes())
         {
             if (cancellationToken.IsCancellationRequested) break;
 
-            var outbox = _tracker.GetOutbox(entityType);
             var publisher = _tracker.GetPublisher(entityType);
             var serializer = _tracker.GetSerializer(entityType);
             var compressor = _tracker.GetCompressor(entityType);
-
-            if (outbox == null || publisher == null || serializer == null || compressor == null)
-                continue;
-
-            var changes = await outbox.GetUnpublishedAsync(100, cancellationToken);
+            var changes = await GetUnpublishedAsync(outbox, entityType, 100, cancellationToken);
 
             foreach (var change in changes)
             {
@@ -184,7 +187,7 @@ public class NotificationBasedPublisher : IDisposable
 
                 try
                 {
-                    await PublishChangeAsync(change, publisher, serializer, compressor, cancellationToken);
+                    await PublishChangeAsync(change, entityType, publisher, serializer, compressor, cancellationToken);
                     await outbox.MarkPublishedAsync(change.Id, cancellationToken);
                 }
                 catch
@@ -194,30 +197,68 @@ public class NotificationBasedPublisher : IDisposable
         }
     }
 
+    private static Task<EntityChange?> GetByIdAsync(IOutbox outbox, Type entityType, long id, CancellationToken ct)
+        => (Task<EntityChange?>)_getByIdMethod.MakeGenericMethod(entityType).Invoke(null, [outbox, id, ct])!;
+
+    private static async Task<EntityChange?> GetByIdCoreAsync<TEntity>(IOutbox outbox, long id, CancellationToken ct)
+        where TEntity : class
+    {
+        return await outbox.GetByIdAsync<TEntity>(id, ct);
+    }
+
+    private static Task<IReadOnlyList<EntityChange>> GetUnpublishedAsync(
+        IOutbox outbox,
+        Type entityType,
+        int batchSize,
+        CancellationToken ct)
+    {
+        return (Task<IReadOnlyList<EntityChange>>)_getUnpublishedMethod
+            .MakeGenericMethod(entityType)
+            .Invoke(null, [outbox, batchSize, ct])!;
+    }
+
+    private static async Task<IReadOnlyList<EntityChange>> GetUnpublishedCoreAsync<TEntity>(
+        IOutbox outbox,
+        int batchSize,
+        CancellationToken ct)
+        where TEntity : class
+    {
+        return await outbox.GetUnpublishedAsync<TEntity>(batchSize, ct);
+    }
+
+    private static Task SerializeCoreAsync<TEntity>(
+        IChangeSerializer serializer,
+        EntityChange<TEntity> change,
+        PipeWriter writer, CancellationToken ct)
+        where TEntity : class
+    {
+        return serializer.SerializeAsync(change, writer, ct);
+    }
+
     public static string GenerateNotifyTriggerFunction(string outboxTableName, string functionName)
     {
         return $"""
-            CREATE OR REPLACE FUNCTION {functionName}()
-            RETURNS TRIGGER AS $$
-            BEGIN
-                PERFORM pg_notify('entity_changes', json_build_object(
-                    'entity_type', NEW.entity_type,
-                    'id', NEW.id,
-                    'change_type', NEW.change_type
-                )::text);
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-            """;
+                CREATE OR REPLACE FUNCTION {functionName}()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    PERFORM pg_notify('entity_changes', json_build_object(
+                        'entity_type', NEW.entity_type,
+                        'id', NEW.id,
+                        'change_type', NEW.change_type
+                    )::text);
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                """;
     }
 
     public static string GenerateNotifyTrigger(string triggerName, string outboxTableName, string functionName)
     {
         return $"""
-            CREATE TRIGGER {triggerName}
-                AFTER INSERT ON {outboxTableName}
-                FOR EACH ROW EXECUTE FUNCTION {functionName}();
-            """;
+                CREATE TRIGGER {triggerName}
+                    AFTER INSERT ON {outboxTableName}
+                    FOR EACH ROW EXECUTE FUNCTION {functionName}();
+                """;
     }
 
     public static string GenerateDropTrigger(string triggerName, string outboxTableName)
@@ -231,11 +272,4 @@ public class NotificationBasedPublisher : IDisposable
         _cts.Dispose();
         _connection?.Dispose();
     }
-}
-
-public class NotificationPayload
-{
-    public string EntityType { get; set; } = string.Empty;
-    public long Id { get; set; }
-    public string ChangeType { get; set; } = string.Empty;
 }

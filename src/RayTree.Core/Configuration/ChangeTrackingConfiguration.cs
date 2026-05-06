@@ -8,7 +8,6 @@ public class ChangeTrackingConfiguration
 {
     private readonly ChangeTrackingBuilder _builder = new();
     private OutboxPublisherOptions _publisherOptions = new();
-    private OutboxPublisherService? _publisher;
     private bool _built;
 
     public ChangeTrackingConfiguration UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox
@@ -71,31 +70,6 @@ public class ChangeTrackingConfiguration
     {
         _built = true;
         return _builder.Build();
-    }
-
-    public async Task<EntityChangeTracker> BuildAsync(CancellationToken cancellationToken = default)
-    {
-        _built = true;
-        return await _builder.BuildAsync(cancellationToken);
-    }
-
-    public Task StartPublisherAsync(EntityChangeTracker tracker, CancellationToken cancellationToken = default)
-    {
-        _publisher = new OutboxPublisherService(tracker, _publisherOptions);
-        return _publisher.StartAsync(cancellationToken);
-    }
-
-    public async Task StopPublisherAsync(CancellationToken cancellationToken = default)
-    {
-        if (_publisher != null)
-        {
-            await _publisher.StopAsync(cancellationToken);
-        }
-    }
-
-    public void Dispose()
-    {
-        _publisher?.Dispose();
     }
 
     private void ThrowIfBuilt()

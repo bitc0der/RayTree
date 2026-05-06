@@ -5,14 +5,14 @@ namespace RayTree.Plugins;
 
 public static class PostgreSqlBuilderExtensions
 {
-    public static PostgreSqlOutboxOptions UsePostgreSqlOutbox(
+    public static PostgreSqlOutboxOptions UsePostgreSqlOutbox<TEntity>(
         this IServiceCollection services,
-        Action<PostgreSqlOutboxOptions> configure)
+        Action<PostgreSqlOutboxOptions> configure) where TEntity : class
     {
         var options = new PostgreSqlOutboxOptions();
         configure(options);
 
-        services.AddSingleton<IOutbox>(sp => new PostgreSqlOutbox(options));
+        services.AddSingleton<IOutbox>(sp => new PostgreSqlOutbox<TEntity>(options));
 
         return options;
     }
@@ -24,7 +24,8 @@ public static class PostgreSqlBuilderExtensions
         return builder.UseOutbox<IOutbox>(entityType =>
         {
             var options = configure(entityType);
-            return new PostgreSqlOutbox(options);
+            var outboxType = typeof(PostgreSqlOutbox<>).MakeGenericType(entityType);
+            return (IOutbox)Activator.CreateInstance(outboxType, options)!;
         });
     }
 

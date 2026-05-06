@@ -1,26 +1,7 @@
+using RayTree.Distribution;
 using RayTree.Tracking;
 
 namespace RayTree.Plugins;
-
-public interface IChangeTrackingBuilder
-{
-    IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox;
-    IChangeTrackingBuilder UseQueue<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher;
-    IChangeTrackingBuilder UseSerializer<T>(Func<Type, IChangeSerializer> factory) where T : IChangeSerializer;
-    IChangeTrackingBuilder UseCompressor<T>(Func<Type, IChangeCompressor> factory) where T : IChangeCompressor;
-    IEntityBuilder ForEntity<TEntity>();
-    EntityChangeTracker Build();
-    Task<EntityChangeTracker> BuildAsync(CancellationToken cancellationToken = default);
-}
-
-public interface IEntityBuilder
-{
-    IEntityBuilder UseRepository(IRepository repository);
-    IEntityBuilder UseOutbox(IOutbox outbox);
-    IEntityBuilder UseQueue(IQueuePublisher queue);
-    IEntityBuilder UseSerializer(IChangeSerializer serializer);
-    IEntityBuilder UseCompressor(IChangeCompressor compressor);
-}
 
 public class ChangeTrackingBuilder : IChangeTrackingBuilder
 {
@@ -29,6 +10,8 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
     private readonly Dictionary<Type, IChangeSerializer> _serializerOverrides = new();
     private readonly Dictionary<Type, IChangeCompressor> _compressorOverrides = new();
     private readonly Dictionary<Type, IRepository> _repositoryOverrides = new();
+
+    private Action<OutboxPublisherOptions>? _publisherOptionsConfigure;
 
     private Func<Type, IOutbox>? _outboxFactory;
     private Func<Type, IQueuePublisher>? _queueFactory;
@@ -66,6 +49,12 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
         return this;
     }
 
+    public IChangeTrackingBuilder UsePublisherOptions(Action<OutboxPublisherOptions> configure)
+    {
+        _publisherOptionsConfigure = configure;
+        return this;
+    }
+
     public IEntityBuilder ForEntity<TEntity>()
     {
         return new EntityBuilder(this, typeof(TEntity));
@@ -94,6 +83,7 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
     private EntityChangeTracker BuildInternal()
     {
         var tracker = new EntityChangeTracker();
+        _publisherOptionsConfigure?.Invoke(tracker.PublisherOptions);
 
         var entityTypes = _outboxOverrides.Keys
             .Concat(_queueOverrides.Keys)
@@ -130,47 +120,5 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
         }
 
         return tracker;
-    }
-}
-
-internal class EntityBuilder : IEntityBuilder
-{
-    private readonly ChangeTrackingBuilder _parent;
-    private readonly Type _entityType;
-
-    public EntityBuilder(ChangeTrackingBuilder parent, Type entityType)
-    {
-        _parent = parent;
-        _entityType = entityType;
-    }
-
-    public IEntityBuilder UseRepository(IRepository repository)
-    {
-        _parent.AddRepositoryOverride(_entityType, repository);
-        return this;
-    }
-
-    public IEntityBuilder UseOutbox(IOutbox outbox)
-    {
-        _parent.AddOutboxOverride(_entityType, outbox);
-        return this;
-    }
-
-    public IEntityBuilder UseQueue(IQueuePublisher queue)
-    {
-        _parent.AddQueueOverride(_entityType, queue);
-        return this;
-    }
-
-    public IEntityBuilder UseSerializer(IChangeSerializer serializer)
-    {
-        _parent.AddSerializerOverride(_entityType, serializer);
-        return this;
-    }
-
-    public IEntityBuilder UseCompressor(IChangeCompressor compressor)
-    {
-        _parent.AddCompressorOverride(_entityType, compressor);
-        return this;
     }
 }

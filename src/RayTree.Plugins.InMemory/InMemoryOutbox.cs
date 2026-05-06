@@ -11,15 +11,8 @@ public class InMemoryOutbox : IOutbox
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task WriteAsync(EntityChange change, CancellationToken cancellationToken = default)
-    {
-        var id = Interlocked.Increment(ref _nextId);
-        change.Id = id;
-        _store[id] = change;
-        return Task.CompletedTask;
-    }
-
     public Task WriteAsync<TEntity>(EntityChange<TEntity> change, CancellationToken cancellationToken = default)
+        where TEntity : class
     {
         var id = Interlocked.Increment(ref _nextId);
         change.Id = id;
@@ -27,36 +20,10 @@ public class InMemoryOutbox : IOutbox
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<EntityChange>> GetUnpublishedAsync(int batchSize, CancellationToken cancellationToken = default)
-    {
-        var changes = _store.Values
-            .Where(c => !c.Published)
-            .OrderBy(c => c.Timestamp)
-            .Take(batchSize)
-            .ToList();
-
-        return Task.FromResult<IReadOnlyList<EntityChange>>(changes);
-    }
-
-    public Task<IReadOnlyList<EntityChange>> GetUnpublishedAsync(
-        string entityType,
-        ChangeType? changeType = null,
-        DateTime? since = null,
-        int batchSize = 100,
+    public Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(
+        int batchSize,
         CancellationToken cancellationToken = default)
-    {
-        var changes = _store.Values
-            .Where(c => !c.Published && c.EntityType == entityType)
-            .Where(c => !changeType.HasValue || c.ChangeType == changeType.Value)
-            .Where(c => !since.HasValue || c.Timestamp >= since.Value)
-            .OrderBy(c => c.Timestamp)
-            .Take(batchSize)
-            .ToList();
-
-        return Task.FromResult<IReadOnlyList<EntityChange>>(changes);
-    }
-
-    public Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(int batchSize, CancellationToken cancellationToken = default)
+        where TEntity : class
     {
         var changes = _store.Values
             .OfType<EntityChange<TEntity>>()
@@ -73,6 +40,7 @@ public class InMemoryOutbox : IOutbox
         DateTime? since = null,
         int batchSize = 100,
         CancellationToken cancellationToken = default)
+        where  TEntity : class
     {
         var changes = _store.Values
             .OfType<EntityChange<TEntity>>()
@@ -111,13 +79,8 @@ public class InMemoryOutbox : IOutbox
         return Task.FromResult(toRemove.Count);
     }
 
-    public Task<EntityChange?> GetByIdAsync(long id, CancellationToken cancellationToken = default)
-    {
-        _store.TryGetValue(id, out var change);
-        return Task.FromResult(change);
-    }
-
     public Task<EntityChange<TEntity>?> GetByIdAsync<TEntity>(long id, CancellationToken cancellationToken = default)
+        where TEntity : class
     {
         _store.TryGetValue(id, out var change);
         return Task.FromResult(change as EntityChange<TEntity>);

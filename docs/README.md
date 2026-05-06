@@ -75,16 +75,9 @@ var tracker = config.Build();
 // var tracker = await config.BuildAsync();
 
 // Track changes manually
-await tracker.TrackChangesAsync(new[]
-{
-    new EntityChange
-    {
-        EntityType = typeof(Product).AssemblyQualifiedName!,
-        EntityId = "1",
-        ChangeType = ChangeType.Insert,
-        Timestamp = DateTime.UtcNow
-    }
-});
+await tracker.TrackInsertAsync(new Product { Id = 1, Name = "Widget" });
+await tracker.TrackUpdateAsync(new Product { Id = 1, Name = "Widget Pro" });
+await tracker.TrackDeleteAsync(new Product { Id = 1, Name = "Widget Pro" });
 ```
 
 ## Auto-Initialization

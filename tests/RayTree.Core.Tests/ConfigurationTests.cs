@@ -150,22 +150,4 @@ public class ChangeTrackingConfigurationTests
         Assert.That(tracker, Is.Not.Null);
     }
 
-    [Test]
-    public async Task Configuration_StartStopPublisher_Works()
-    {
-        var config = new ChangeTrackingConfiguration();
-        config.UseOutbox<IOutbox>(_ => new InMemoryOutbox());
-        config.UseQueue<IQueuePublisher>(_ => new InMemoryQueue());
-        config.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
-        config.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin());
-
-        var tracker = config.Build();
-
-        await config.StartPublisherAsync(tracker);
-
-        await config.StopPublisherAsync();
-
-        config.Dispose();
-        Assert.Pass();
-    }
 }

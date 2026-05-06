@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using Moq;
 using RayTree.Distribution;
 using RayTree.Models;
@@ -83,28 +82,36 @@ public class OutboxPublisherServiceTests
 
 public class ConcurrentChangeDetectionTests
 {
+    private class SampleEntity
+    {
+        public int Id { get; set; }
+    }
+
     [Test]
-    public async Task TrackChangesAsync_IsThreadSafe_WithConcurrentCalls()
+    public async Task TrackChangeAsync_IsThreadSafe_WithConcurrentCalls()
     {
         var tracker = new EntityChangeTracker();
         var outbox = new Mock<IOutbox>();
-        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange>(), It.IsAny<CancellationToken>()))
+        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        tracker.RegisterOutbox(typeof(object), outbox.Object);
+        tracker.RegisterOutbox(typeof(SampleEntity), outbox.Object);
 
         var tasks = Enumerable.Range(0, 100).Select(async i =>
         {
-            var changes = new[]
+            var change = new EntityChange<SampleEntity>
             {
-                new EntityChange { EntityType = typeof(object).AssemblyQualifiedName!, EntityId = i.ToString(), ChangeType = ChangeType.Insert }
+                EntityType = typeof(SampleEntity).FullName!,
+                EntityId = i.ToString(),
+                ChangeType = ChangeType.Insert,
+                State = new SampleEntity { Id = i }
             };
-            await tracker.TrackChangesAsync(changes);
+            await tracker.TrackChangeAsync(change);
         });
 
         await Task.WhenAll(tasks);
 
-        outbox.Verify(o => o.WriteAsync(It.IsAny<EntityChange>(), It.IsAny<CancellationToken>()), Times.Exactly(100));
+        outbox.Verify(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()), Times.Exactly(100));
     }
 
     [Test]
@@ -112,7 +119,7 @@ public class ConcurrentChangeDetectionTests
     {
         var tracker = new EntityChangeTracker();
         var outboxes = Enumerable.Range(0, 50).Select(i => new Mock<IOutbox>().Object).ToArray();
-        var types = Enumerable.Range(0, 50).Select(_ => typeof(object)).ToArray();
+        var types = Enumerable.Range(0, 50).Select(_ => typeof(SampleEntity)).ToArray();
 
         var registerTask = Task.Run(() =>
         {

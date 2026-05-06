@@ -17,22 +17,12 @@ public class EndToEndTests
         var serializer = new JsonSerializerPlugin();
         var compressor = new NoOpCompressorPlugin();
 
-        var entityType = typeof(User);
-        tracker.RegisterOutbox(entityType, outbox);
-        tracker.RegisterPublisher(entityType, queue);
-        tracker.RegisterSerializer(entityType, serializer);
-        tracker.RegisterCompressor(entityType, compressor);
+        tracker.RegisterOutbox(typeof(User), outbox);
+        tracker.RegisterPublisher(typeof(User), queue);
+        tracker.RegisterSerializer(typeof(User), serializer);
+        tracker.RegisterCompressor(typeof(User), compressor);
 
-        await tracker.TrackChangesAsync(new[]
-        {
-            new EntityChange
-            {
-                EntityType = entityType.AssemblyQualifiedName!,
-                EntityId = "1",
-                ChangeType = ChangeType.Insert,
-                Timestamp = DateTime.UtcNow
-            }
-        });
+        await tracker.TrackInsertAsync(new User { Id = 1, Name = "Alice" });
 
         Assert.That(outbox.GetAll(), Has.Count.EqualTo(1));
     }
@@ -46,22 +36,12 @@ public class EndToEndTests
         var serializer = new JsonSerializerPlugin();
         var compressor = new GzipCompressorPlugin();
 
-        var entityType = typeof(Order);
-        tracker.RegisterOutbox(entityType, outbox);
-        tracker.RegisterPublisher(entityType, queue);
-        tracker.RegisterSerializer(entityType, serializer);
-        tracker.RegisterCompressor(entityType, compressor);
+        tracker.RegisterOutbox(typeof(Order), outbox);
+        tracker.RegisterPublisher(typeof(Order), queue);
+        tracker.RegisterSerializer(typeof(Order), serializer);
+        tracker.RegisterCompressor(typeof(Order), compressor);
 
-        await tracker.TrackChangesAsync(new[]
-        {
-            new EntityChange
-            {
-                EntityType = entityType.AssemblyQualifiedName!,
-                EntityId = "100",
-                ChangeType = ChangeType.Update,
-                Timestamp = DateTime.UtcNow
-            }
-        });
+        await tracker.TrackUpdateAsync(new Order { Id = 100, Total = 99.99m });
 
         Assert.That(outbox.GetAll(), Has.Count.EqualTo(1));
     }
@@ -73,16 +53,11 @@ public class EndToEndTests
         var userOutbox = new InMemoryOutbox();
         var orderOutbox = new InMemoryOutbox();
 
-        var userType = typeof(User);
-        var orderType = typeof(Order);
-        tracker.RegisterOutbox(userType, userOutbox);
-        tracker.RegisterOutbox(orderType, orderOutbox);
+        tracker.RegisterOutbox(typeof(User), userOutbox);
+        tracker.RegisterOutbox(typeof(Order), orderOutbox);
 
-        await tracker.TrackChangesAsync(new[]
-        {
-            new EntityChange { EntityType = userType.AssemblyQualifiedName!, EntityId = "1", ChangeType = ChangeType.Insert },
-            new EntityChange { EntityType = orderType.AssemblyQualifiedName!, EntityId = "100", ChangeType = ChangeType.Insert }
-        });
+        await tracker.TrackInsertAsync(new User { Id = 1, Name = "Bob" });
+        await tracker.TrackInsertAsync(new Order { Id = 100, Total = 50m });
 
         Assert.That(userOutbox.GetAll(), Has.Count.EqualTo(1));
         Assert.That(orderOutbox.GetAll(), Has.Count.EqualTo(1));
@@ -96,19 +71,13 @@ public class EndToEndTests
         var serializer = new JsonSerializerPlugin();
         var compressor = new NoOpCompressorPlugin();
 
-        var entityType = typeof(User);
-        tracker.RegisterOutbox(entityType, outbox);
-        tracker.RegisterSerializer(entityType, serializer);
-        tracker.RegisterCompressor(entityType, compressor);
+        tracker.RegisterOutbox(typeof(User), outbox);
+        tracker.RegisterSerializer(typeof(User), serializer);
+        tracker.RegisterCompressor(typeof(User), compressor);
 
-        var changes = new[]
-        {
-            new EntityChange { EntityType = entityType.AssemblyQualifiedName!, EntityId = "1", ChangeType = ChangeType.Insert },
-            new EntityChange { EntityType = entityType.AssemblyQualifiedName!, EntityId = "2", ChangeType = ChangeType.Update },
-            new EntityChange { EntityType = entityType.AssemblyQualifiedName!, EntityId = "3", ChangeType = ChangeType.Delete }
-        };
-
-        await tracker.TrackChangesAsync(changes);
+        await tracker.TrackInsertAsync(new User { Id = 1, Name = "A" });
+        await tracker.TrackUpdateAsync(new User { Id = 2, Name = "B" });
+        await tracker.TrackDeleteAsync(new User { Id = 3, Name = "C" });
 
         var stored = outbox.GetAll();
         Assert.That(stored, Has.Count.EqualTo(3));
@@ -122,21 +91,21 @@ public class EndToEndTests
         var serializer = new JsonSerializerPlugin();
         var compressor = new NoOpCompressorPlugin();
 
-        var entityType = typeof(User);
-        tracker.RegisterOutbox(entityType, new InMemoryOutbox());
-        tracker.RegisterPublisher(entityType, queue);
-        tracker.RegisterSerializer(entityType, serializer);
-        tracker.RegisterCompressor(entityType, compressor);
+        tracker.RegisterOutbox(typeof(User), new InMemoryOutbox());
+        tracker.RegisterPublisher(typeof(User), queue);
+        tracker.RegisterSerializer(typeof(User), serializer);
+        tracker.RegisterCompressor(typeof(User), compressor);
 
-        await tracker.TrackChangesAsync(new[]
-        {
-            new EntityChange { EntityType = entityType.AssemblyQualifiedName!, EntityId = "1", ChangeType = ChangeType.Insert }
-        });
+        tracker.PublisherOptions.PollingInterval = TimeSpan.FromMilliseconds(50);
+        await tracker.InitializeAsync();
+
+        await tracker.TrackInsertAsync(new User { Id = 1, Name = "Charlie" });
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var message = await queue.Reader.ReadAsync(cts.Token);
-        Assert.That(message.Change.EntityId, Is.EqualTo("1"));
         Assert.That(message.Change.ChangeType, Is.EqualTo(ChangeType.Insert));
+
+        tracker.Dispose();
     }
 
     private class User

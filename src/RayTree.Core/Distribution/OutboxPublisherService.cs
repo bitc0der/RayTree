@@ -1,3 +1,6 @@
+using System.IO.Pipelines;
+using System.Reflection;
+using RayTree.Models;
 using RayTree.Plugins;
 using RayTree.Tracking;
 
@@ -11,10 +14,16 @@ public class OutboxPublisherService : IDisposable
     private Task? _pollingTask;
     private volatile bool _stopping;
 
+    private static readonly MethodInfo GetUnpublishedMethod = typeof(OutboxPublisherService)
+        .GetMethod(nameof(GetUnpublishedCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly MethodInfo SerializeMethod = typeof(OutboxPublisherService)
+        .GetMethod(nameof(SerializeCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
+
     public OutboxPublisherService(EntityChangeTracker tracker, OutboxPublisherOptions options)
     {
-        _tracker = tracker;
-        _options = options;
+        _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -40,27 +49,26 @@ public class OutboxPublisherService : IDisposable
         {
             try
             {
-                foreach (var entityType in GetTrackedEntityTypes())
+                foreach (var (entityType, outbox) in _tracker.GetOutboxes())
                 {
                     if (_stopping && cancellationToken.IsCancellationRequested)
                         break;
 
-                    var outbox = _tracker.GetOutbox(entityType);
                     var publisher = _tracker.GetPublisher(entityType);
                     var serializer = _tracker.GetSerializer(entityType);
                     var compressor = _tracker.GetCompressor(entityType);
 
-                    if (outbox == null || publisher == null || serializer == null || compressor == null)
+                    if (publisher == null || serializer == null || compressor == null)
                         continue;
 
-                    var changes = await outbox.GetUnpublishedAsync(_options.BatchSize, cancellationToken);
+                    var changes = await GetUnpublishedAsync(outbox, entityType, _options.BatchSize, cancellationToken);
 
                     foreach (var change in changes)
                     {
                         if (cancellationToken.IsCancellationRequested)
                             break;
 
-                        await PublishWithRetryAsync(change, outbox, publisher, serializer, compressor,
+                        await PublishWithRetryAsync(change, entityType, outbox, publisher, serializer, compressor,
                             cancellationToken);
                     }
                 }
@@ -79,7 +87,8 @@ public class OutboxPublisherService : IDisposable
     }
 
     private async Task PublishWithRetryAsync(
-        Models.EntityChange change,
+        EntityChange change,
+        Type entityType,
         IOutbox outbox,
         IQueuePublisher publisher,
         IChangeSerializer serializer,
@@ -91,7 +100,7 @@ public class OutboxPublisherService : IDisposable
         {
             try
             {
-                await PublishChangeAsync(change, publisher, serializer, compressor, ct);
+                await PublishChangeAsync(change, entityType, publisher, serializer, compressor, ct);
                 await outbox.MarkPublishedAsync(change.Id, ct);
                 return;
             }
@@ -106,26 +115,53 @@ public class OutboxPublisherService : IDisposable
         }
     }
 
-    private IEnumerable<Type> GetTrackedEntityTypes()
+    private static Task<IReadOnlyList<EntityChange>> GetUnpublishedAsync(
+        IOutbox outbox,
+        Type entityType,
+        int batchSize,
+        CancellationToken ct)
     {
-        return _tracker.GetOutboxes().Keys;
+        return (Task<IReadOnlyList<EntityChange>>)GetUnpublishedMethod
+            .MakeGenericMethod(entityType)
+            .Invoke(null, [outbox, batchSize, ct])!;
+    }
+
+    private static async Task<IReadOnlyList<EntityChange>> GetUnpublishedCoreAsync<TEntity>(
+        IOutbox outbox,
+        int batchSize,
+        CancellationToken cancellationToken)
+        where TEntity : class
+    {
+        return await outbox.GetUnpublishedAsync<TEntity>(batchSize, cancellationToken);
     }
 
     private static async Task PublishChangeAsync(
-        Models.EntityChange change,
+        EntityChange change,
+        Type entityType,
         IQueuePublisher publisher,
         IChangeSerializer serializer,
         IChangeCompressor compressor,
         CancellationToken ct)
     {
-        var serializePipe = new System.IO.Pipelines.Pipe();
-        var compressPipe = new System.IO.Pipelines.Pipe();
+        var serializePipe = new Pipe();
+        var compressPipe = new Pipe();
 
-        var serializeTask = serializer.SerializeAsync(change, serializePipe.Writer, ct);
+        var serializeTask = (Task)SerializeMethod.MakeGenericMethod(entityType)
+            .Invoke(null, [serializer, change, serializePipe.Writer, ct])!;
         var compressTask = compressor.CompressAsync(serializePipe.Reader, compressPipe.Writer, ct);
         var publishTask = publisher.PublishAsync(change, compressPipe.Reader, ct);
 
         await Task.WhenAll(serializeTask, compressTask, publishTask);
+    }
+
+    private static Task SerializeCoreAsync<TEntity>(
+        IChangeSerializer serializer,
+        EntityChange<TEntity> change,
+        PipeWriter writer,
+        CancellationToken ct)
+        where TEntity : class
+    {
+        return serializer.SerializeAsync(change, writer, ct);
     }
 
     public void Dispose()

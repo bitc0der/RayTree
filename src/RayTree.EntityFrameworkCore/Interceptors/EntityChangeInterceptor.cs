@@ -1,7 +1,9 @@
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using RayTree.Models;
+using RayTree.Plugins;
 using RayTree.Tracking;
 
 namespace RayTree.EntityFrameworkCore.Interceptors;
@@ -10,6 +12,9 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
 {
     private readonly EntityChangeTracker _tracker;
     private readonly IEnumerable<Type> _trackedEntityTypes;
+
+    private static readonly MethodInfo WriteTypedMethod = typeof(EntityChangeInterceptor)
+        .GetMethod(nameof(WriteTypedAsyncCore), BindingFlags.NonPublic | BindingFlags.Static)!;
 
     public EntityChangeInterceptor(EntityChangeTracker tracker, IEnumerable<Type> trackedEntityTypes)
     {
@@ -96,13 +101,14 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
 
     private static EntityChange CreateChange(EntityEntry entry, Type entityType, ChangeType changeType)
     {
-        return new EntityChange
-        {
-            EntityType = entityType.AssemblyQualifiedName ?? entityType.FullName ?? entityType.Name,
-            EntityId = entry.Property("Id").CurrentValue?.ToString() ?? Guid.NewGuid().ToString(),
-            ChangeType = changeType,
-            Timestamp = DateTime.UtcNow
-        };
+        var genericChangeType = typeof(EntityChange<>).MakeGenericType(entityType);
+        var change = (EntityChange)Activator.CreateInstance(genericChangeType)!;
+        change.EntityType = entityType.AssemblyQualifiedName ?? entityType.FullName ?? entityType.Name;
+        change.EntityId = entry.Property("Id").CurrentValue?.ToString() ?? Guid.NewGuid().ToString();
+        change.ChangeType = changeType;
+        change.Timestamp = DateTime.UtcNow;
+        genericChangeType.GetProperty("State")!.SetValue(change, entry.Entity);
+        return change;
     }
 
     private async Task WriteOutboxAsync(DbContext? dbContext, CancellationToken cancellationToken)
@@ -120,13 +126,23 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
             if (entityType == null)
                 continue;
 
-            var outbox = _tracker.GetOutboxes().GetValueOrDefault(entityType);
-            if (outbox != null)
-            {
-                await outbox.WriteAsync(change, cancellationToken);
-            }
+            var outbox = _tracker.GetOutbox(entityType);
+
+            await WriteTypedAsync(outbox, change, entityType, cancellationToken);
         }
 
         ChangeContext.Clear(dbContext);
+    }
+
+    private static Task WriteTypedAsync(IOutbox outbox, EntityChange change, Type entityType, CancellationToken ct)
+        => (Task)WriteTypedMethod.MakeGenericMethod(entityType).Invoke(null, [outbox, change, ct])!;
+
+    private static Task WriteTypedAsyncCore<TEntity>(
+        IOutbox outbox,
+        EntityChange<TEntity> change,
+        CancellationToken ct)
+        where TEntity : class
+    {
+        return outbox.WriteAsync(change, ct);
     }
 }

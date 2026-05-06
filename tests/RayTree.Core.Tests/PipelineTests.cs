@@ -9,27 +9,32 @@ namespace RayTree.Core.Tests;
 
 public class SerializationPipelineTests
 {
+    private class Customer
+    {
+        public int Id { get; set; }
+        public string? Name { get; set; }
+    }
+
     [Test]
     public async Task JsonSerializer_SerializeThenDeserialize_RoundTripsChange()
     {
         var serializer = new JsonSerializerPlugin();
-        var change = new EntityChange
+        var change = new EntityChange<Customer>
         {
             Id = 1,
-            EntityType = "TestEntity",
+            EntityType = typeof(Customer).FullName!,
             EntityId = "e-123",
             ChangeType = ChangeType.Update,
             Version = 3,
             CorrelationId = Guid.NewGuid(),
-            Published = false
+            Published = false,
+            State = new Customer { Id = 1, Name = "Acme" }
         };
 
         var pipe = new Pipe();
-
         await serializer.SerializeAsync(change, pipe.Writer);
-        pipe.Writer.Complete();
 
-        var result = await serializer.DeserializeAsync(pipe.Reader, "TestEntity");
+        var result = await serializer.DeserializeAsync<Customer>(pipe.Reader);
 
         Assert.That(result.EntityType, Is.EqualTo(change.EntityType));
         Assert.That(result.EntityId, Is.EqualTo(change.EntityId));
@@ -37,6 +42,7 @@ public class SerializationPipelineTests
         Assert.That(result.Version, Is.EqualTo(change.Version));
         Assert.That(result.CorrelationId, Is.EqualTo(change.CorrelationId));
         Assert.That(result.Published, Is.EqualTo(change.Published));
+        Assert.That(result.State?.Name, Is.EqualTo("Acme"));
     }
 
     [Test]
@@ -52,6 +58,12 @@ public class SerializationPipelineTests
 
 public class CompressionPipelineTests
 {
+    private class Item
+    {
+        public int Id { get; set; }
+        public string? Label { get; set; }
+    }
+
     [Test]
     public async Task GzipCompressor_Name_ReturnsGzip()
     {
@@ -96,31 +108,33 @@ public class CompressionPipelineTests
     {
         var serializer = new JsonSerializerPlugin();
         var compressor = new GzipCompressorPlugin();
-        var change = new EntityChange
+        var change = new EntityChange<Item>
         {
             Id = 42,
-            EntityType = "Customer",
-            EntityId = "cust-001",
+            EntityType = typeof(Item).FullName!,
+            EntityId = "item-001",
             ChangeType = ChangeType.Insert,
             Version = 1,
-            CorrelationId = Guid.NewGuid()
+            CorrelationId = Guid.NewGuid(),
+            State = new Item { Id = 42, Label = "Widget" }
         };
 
         var serializedBytes = await SerializeToBytesAsync(serializer, change);
-
         var compressOutput = await CompressDataAsync(compressor, serializedBytes);
-
         var decompressOutput = await DecompressDataAsync(compressor, compressOutput);
-
-        var deserialized = await DeserializeFromBytesAsync(serializer, decompressOutput, change.EntityType);
+        var deserialized = await DeserializeFromBytesAsync<Item>(serializer, decompressOutput);
 
         Assert.That(deserialized.EntityType, Is.EqualTo(change.EntityType));
         Assert.That(deserialized.EntityId, Is.EqualTo(change.EntityId));
         Assert.That(deserialized.ChangeType, Is.EqualTo(change.ChangeType));
         Assert.That(deserialized.Version, Is.EqualTo(change.Version));
+        Assert.That(deserialized.State?.Label, Is.EqualTo("Widget"));
     }
 
-    private static async Task<byte[]> SerializeToBytesAsync(IChangeSerializer serializer, EntityChange change)
+    private static async Task<byte[]> SerializeToBytesAsync<TEntity>(
+        IChangeSerializer serializer,
+        EntityChange<TEntity> change)
+        where TEntity : class
     {
         using var ms = new MemoryStream();
         var writer = PipeWriter.Create(ms);
@@ -128,10 +142,13 @@ public class CompressionPipelineTests
         return ms.ToArray();
     }
 
-    private static async Task<EntityChange> DeserializeFromBytesAsync(IChangeSerializer serializer, byte[] data, string entityType)
+    private static async Task<EntityChange<TEntity>> DeserializeFromBytesAsync<TEntity>(
+        IChangeSerializer serializer,
+        byte[] data)
+        where TEntity : class
     {
         var reader = PipeReader.Create(new MemoryStream(data));
-        return await serializer.DeserializeAsync(reader, entityType);
+        return await serializer.DeserializeAsync<TEntity>(reader);
     }
 
     private static async Task<byte[]> CompressDataAsync(IChangeCompressor compressor, byte[] data)
@@ -140,7 +157,7 @@ public class CompressionPipelineTests
         var outputPipe = new Pipe();
 
         await sourcePipe.Writer.WriteAsync(data);
-        sourcePipe.Writer.Complete();
+        await sourcePipe.Writer.CompleteAsync();
 
         await compressor.CompressAsync(sourcePipe.Reader, outputPipe.Writer);
 
@@ -153,7 +170,7 @@ public class CompressionPipelineTests
         var outputPipe = new Pipe();
 
         await sourcePipe.Writer.WriteAsync(data);
-        sourcePipe.Writer.Complete();
+        await sourcePipe.Writer.CompleteAsync();
 
         await compressor.DecompressAsync(sourcePipe.Reader, outputPipe.Writer);
 
@@ -171,7 +188,7 @@ public class CompressionPipelineTests
             await ms.WriteAsync(segment);
         }
         reader.AdvanceTo(buffer.End);
-        reader.Complete();
+        await reader.CompleteAsync();
 
         return ms.ToArray();
     }

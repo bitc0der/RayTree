@@ -1,4 +1,4 @@
-﻿{
+{
   "permissions": {
     "allow": [
       "Bash(openspec list *)",
@@ -8,7 +8,9 @@
       "Bash(Sort-Object)",
       "Bash(dotnet build *)",
       "Bash(dotnet test *)",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Sources\\\\RayTree\" -Directory)",
+      "Bash(Select-Object -ExpandProperty Name)"
     ]
   }
 }

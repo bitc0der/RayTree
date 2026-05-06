@@ -33,11 +33,13 @@ public class AutoInitializationTests
         Assert.That(tracker, Is.Not.Null);
 
         // Verify we can track changes
-        var change = new EntityChange
+        var change = new EntityChange<AutoInitTestEntity>
         {
-            EntityType = typeof(AutoInitTestEntity).AssemblyQualifiedName!,
+            EntityType = typeof(AutoInitTestEntity).FullName!,
+            EntityId = "1",
             ChangeType = ChangeType.Insert,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            State = new AutoInitTestEntity { Id = 1 }
         };
 
         await tracker.TrackChangeAsync(change);

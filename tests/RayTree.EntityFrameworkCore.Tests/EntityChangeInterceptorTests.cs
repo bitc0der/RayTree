@@ -38,7 +38,7 @@ public class EntityChangeInterceptorTests
     public async Task SavingChangesAsync_DetectsAddedEntities()
     {
         var outbox = new Mock<IOutbox>();
-        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange>(), It.IsAny<CancellationToken>()))
+        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var tracker = new EntityChangeTracker();
@@ -57,14 +57,14 @@ public class EntityChangeInterceptorTests
 
         await context.SaveChangesAsync();
 
-        outbox.Verify(o => o.WriteAsync(It.IsAny<EntityChange>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        outbox.Verify(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Test]
     public async Task SavingChangesAsync_DetectsModifiedEntities()
     {
         var outbox = new Mock<IOutbox>();
-        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange>(), It.IsAny<CancellationToken>()))
+        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var tracker = new EntityChangeTracker();
@@ -87,14 +87,14 @@ public class EntityChangeInterceptorTests
 
         await context.SaveChangesAsync();
 
-        outbox.Verify(o => o.WriteAsync(It.Is<EntityChange>(c => c.ChangeType == ChangeType.Update), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        outbox.Verify(o => o.WriteAsync(It.Is<EntityChange<TestEntity>>(c => c.ChangeType == ChangeType.Update), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Test]
     public async Task SavingChangesAsync_DetectsDeletedEntities()
     {
         var outbox = new Mock<IOutbox>();
-        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange>(), It.IsAny<CancellationToken>()))
+        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var tracker = new EntityChangeTracker();
@@ -117,7 +117,7 @@ public class EntityChangeInterceptorTests
 
         await context.SaveChangesAsync();
 
-        outbox.Verify(o => o.WriteAsync(It.Is<EntityChange>(c => c.ChangeType == ChangeType.Delete), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        outbox.Verify(o => o.WriteAsync(It.Is<EntityChange<TestEntity>>(c => c.ChangeType == ChangeType.Delete), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Test]

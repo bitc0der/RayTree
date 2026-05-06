@@ -13,7 +13,7 @@ public class ProtobufSerializerPluginTests
         var original = CreateTestChange();
 
         var data = await SerializeAndCaptureAsync(plugin, original);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
 
         Assert.That(result.EntityId, Is.EqualTo(original.EntityId));
         Assert.That(result.EntityType, Is.EqualTo(original.EntityType));
@@ -22,22 +22,24 @@ public class ProtobufSerializerPluginTests
         Assert.That(result.Version, Is.EqualTo(original.Version));
         Assert.That(result.CorrelationId, Is.EqualTo(original.CorrelationId));
         Assert.That(result.Published, Is.EqualTo(original.Published));
+        Assert.That(result.State?.Name, Is.EqualTo(original.State?.Name));
     }
 
     [Test]
     public async Task SerializeAsync_InsertChangeType()
     {
         var plugin = new ProtobufSerializerPlugin();
-        var change = new EntityChange
+        var change = new EntityChange<User>
         {
-            EntityType = "TestEntity",
+            EntityType = typeof(User).FullName!,
             EntityId = "1",
             ChangeType = ChangeType.Insert,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            State = new User { Id = 1, Name = "Alice" }
         };
 
         var data = await SerializeAndCaptureAsync(plugin, change);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
         Assert.That(result.ChangeType, Is.EqualTo(ChangeType.Insert));
     }
 
@@ -45,16 +47,17 @@ public class ProtobufSerializerPluginTests
     public async Task SerializeAsync_UpdateChangeType()
     {
         var plugin = new ProtobufSerializerPlugin();
-        var change = new EntityChange
+        var change = new EntityChange<User>
         {
-            EntityType = "TestEntity",
+            EntityType = typeof(User).FullName!,
             EntityId = "2",
             ChangeType = ChangeType.Update,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            State = new User { Id = 2 }
         };
 
         var data = await SerializeAndCaptureAsync(plugin, change);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
         Assert.That(result.ChangeType, Is.EqualTo(ChangeType.Update));
     }
 
@@ -62,16 +65,17 @@ public class ProtobufSerializerPluginTests
     public async Task SerializeAsync_DeleteChangeType()
     {
         var plugin = new ProtobufSerializerPlugin();
-        var change = new EntityChange
+        var change = new EntityChange<User>
         {
-            EntityType = "TestEntity",
+            EntityType = typeof(User).FullName!,
             EntityId = "3",
             ChangeType = ChangeType.Delete,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            State = new User { Id = 3 }
         };
 
         var data = await SerializeAndCaptureAsync(plugin, change);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
         Assert.That(result.ChangeType, Is.EqualTo(ChangeType.Delete));
     }
 
@@ -80,17 +84,18 @@ public class ProtobufSerializerPluginTests
     {
         var plugin = new ProtobufSerializerPlugin();
         var correlationId = Guid.NewGuid();
-        var change = new EntityChange
+        var change = new EntityChange<User>
         {
-            EntityType = "TestEntity",
+            EntityType = typeof(User).FullName!,
             EntityId = "4",
             ChangeType = ChangeType.Insert,
             Timestamp = DateTime.UtcNow,
-            CorrelationId = correlationId
+            CorrelationId = correlationId,
+            State = new User { Id = 4 }
         };
 
         var data = await SerializeAndCaptureAsync(plugin, change);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
         Assert.That(result.CorrelationId, Is.EqualTo(correlationId));
     }
 
@@ -98,17 +103,18 @@ public class ProtobufSerializerPluginTests
     public async Task SerializeAsync_WithPublishedFlag_PreservesPublishedFlag()
     {
         var plugin = new ProtobufSerializerPlugin();
-        var change = new EntityChange
+        var change = new EntityChange<User>
         {
-            EntityType = "TestEntity",
+            EntityType = typeof(User).FullName!,
             EntityId = "5",
             ChangeType = ChangeType.Insert,
             Timestamp = DateTime.UtcNow,
-            Published = true
+            Published = true,
+            State = new User { Id = 5 }
         };
 
         var data = await SerializeAndCaptureAsync(plugin, change);
-        var result = await DeserializeFromDataAsync(plugin, data, "TestEntity");
+        var result = await DeserializeFromDataAsync<User>(plugin, data);
         Assert.That(result.Published, Is.True);
     }
 
@@ -127,50 +133,6 @@ public class ProtobufSerializerPluginTests
 
         var data = await SerializeAndCaptureAsync(plugin, change);
         Assert.That(data.Length, Is.GreaterThan(0));
-    }
-
-    private static async Task<byte[]> SerializeAndCaptureAsync(IChangeSerializer plugin, EntityChange change)
-    {
-        var pipe = new Pipe();
-        await plugin.SerializeAsync(change, pipe.Writer);
-        return await ReadPipeDataAsync(pipe.Reader);
-    }
-
-    private static async Task<EntityChange> DeserializeFromDataAsync(IChangeSerializer plugin, byte[] data, string entityType)
-    {
-        var pipe = new Pipe();
-        await pipe.Writer.WriteAsync(data);
-        await pipe.Writer.FlushAsync();
-        await pipe.Writer.CompleteAsync();
-        return await plugin.DeserializeAsync(pipe.Reader, entityType);
-    }
-
-    private static async Task<byte[]> ReadPipeDataAsync(PipeReader reader)
-    {
-        using var ms = new MemoryStream();
-        var result = await reader.ReadAsync();
-        foreach (var segment in result.Buffer)
-        {
-            await ms.WriteAsync(segment);
-        }
-        reader.AdvanceTo(result.Buffer.End);
-        await reader.CompleteAsync();
-        return ms.ToArray();
-    }
-
-    private static EntityChange CreateTestChange()
-    {
-        return new EntityChange
-        {
-            Id = 100,
-            EntityType = typeof(User).FullName!,
-            EntityId = "user-456",
-            ChangeType = ChangeType.Update,
-            Timestamp = DateTime.UtcNow,
-            Version = 5,
-            CorrelationId = Guid.NewGuid(),
-            Published = false
-        };
     }
 
     [Test]
@@ -213,6 +175,50 @@ public class ProtobufSerializerPluginTests
         Assert.That(result.State!.Id, Is.EqualTo(7));
         Assert.That(result.State.Name, Is.EqualTo("Bob"));
     }
+
+    private static async Task<byte[]> SerializeAndCaptureAsync<TEntity>(ProtobufSerializerPlugin plugin, EntityChange<TEntity> change)
+        where TEntity : class
+    {
+        var pipe = new Pipe();
+        await plugin.SerializeAsync(change, pipe.Writer);
+        return await ReadPipeDataAsync(pipe.Reader);
+    }
+
+    private static async Task<EntityChange<TEntity>> DeserializeFromDataAsync<TEntity>(ProtobufSerializerPlugin plugin, byte[] data)
+        where TEntity : class
+    {
+        var pipe = new Pipe();
+        await pipe.Writer.WriteAsync(data);
+        await pipe.Writer.FlushAsync();
+        await pipe.Writer.CompleteAsync();
+        return await plugin.DeserializeAsync<TEntity>(pipe.Reader);
+    }
+
+    private static async Task<byte[]> ReadPipeDataAsync(PipeReader reader)
+    {
+        using var ms = new MemoryStream();
+        var result = await reader.ReadAsync();
+        foreach (var segment in result.Buffer)
+        {
+            await ms.WriteAsync(segment);
+        }
+        reader.AdvanceTo(result.Buffer.End);
+        await reader.CompleteAsync();
+        return ms.ToArray();
+    }
+
+    private static EntityChange<User> CreateTestChange() => new()
+    {
+        Id = 100,
+        EntityType = typeof(User).FullName!,
+        EntityId = "user-456",
+        ChangeType = ChangeType.Update,
+        Timestamp = DateTime.UtcNow,
+        Version = 5,
+        CorrelationId = Guid.NewGuid(),
+        Published = false,
+        State = new User { Id = 100, Name = "Test User" }
+    };
 
     private class User
     {
