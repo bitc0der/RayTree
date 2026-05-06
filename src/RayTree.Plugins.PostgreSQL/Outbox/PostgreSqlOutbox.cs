@@ -50,7 +50,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         var extraCols = _propertyColumns.Count > 0
             ? ", " + string.Join(", ", _propertyColumns.Select(c => c.ColumnName))
             : "";
-        return $"id, entity_id, change_type, timestamp, version, correlation_id, entity_type{extraCols}";
+        return $"id, entity_id, change_type, timestamp, version, correlation_id, entity_type, published{extraCols}";
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -242,7 +242,8 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
             Timestamp = reader.GetDateTime(3),
             Version = reader.GetInt32(4),
             CorrelationId = reader.GetGuid(5),
-            EntityType = reader.GetString(6)
+            EntityType = reader.GetString(6),
+            Published = reader.GetBoolean(7)
         };
 
         if (_propertyColumns.Count > 0)
@@ -251,9 +252,9 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
             for (var i = 0; i < _propertyColumns.Count; i++)
             {
                 var col = _propertyColumns[i];
-                if (!reader.IsDBNull(7 + i))
+                if (!reader.IsDBNull(8 + i))
                 {
-                    var value = reader.GetValue(7 + i);
+                    var value = reader.GetValue(8 + i);
                     var targetType = Nullable.GetUnderlyingType(col.Property.PropertyType) ?? col.Property.PropertyType;
                     col.Property.SetValue(entity, Convert.ChangeType(value, targetType));
                 }
