@@ -155,7 +155,46 @@ public class MessagePackSerializerPluginTests
         };
     }
 
-    private class Order
+    [Test]
+    public async Task SerializeAsync_GenericTypedState_RoundTrip()
+    {
+        var plugin = new MessagePackSerializerPlugin();
+        var original = new EntityChange<Order>
+        {
+            EntityType = typeof(Order).FullName!,
+            EntityId = "order-42",
+            ChangeType = ChangeType.Insert,
+            State = new Order { Id = 42, Total = 199.99m }
+        };
+
+        var pipe = new Pipe();
+        await plugin.SerializeAsync(original, pipe.Writer);
+
+        var dataMs = new MemoryStream();
+        var readResult = await pipe.Reader.ReadAsync();
+        foreach (var segment in readResult.Buffer)
+        {
+            await dataMs.WriteAsync(segment);
+        }
+        pipe.Reader.AdvanceTo(readResult.Buffer.End);
+        await pipe.Reader.CompleteAsync();
+
+        var dataBytes = dataMs.ToArray();
+        var deserializePipe = new Pipe();
+        await deserializePipe.Writer.WriteAsync(dataBytes);
+        await deserializePipe.Writer.FlushAsync();
+        await deserializePipe.Writer.CompleteAsync();
+
+        var result = await plugin.DeserializeAsync<Order>(deserializePipe.Reader);
+
+        Assert.That(result.EntityId, Is.EqualTo("order-42"));
+        Assert.That(result.ChangeType, Is.EqualTo(ChangeType.Insert));
+        Assert.That(result.State, Is.Not.Null);
+        Assert.That(result.State!.Id, Is.EqualTo(42));
+        Assert.That(result.State.Total, Is.EqualTo(199.99m));
+    }
+
+    public class Order
     {
         public int Id { get; set; }
         public decimal Total { get; set; }

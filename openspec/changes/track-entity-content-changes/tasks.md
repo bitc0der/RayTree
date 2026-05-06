@@ -26,23 +26,23 @@
 - [x] 4.2 Update `IChangeSerializer.DeserializeAsync` to restore typed `State` from serialized input
 - [x] 4.3 Update JSON serializer implementation (`RayTree.Plugins.Serializers.Json`) to handle typed `State`
 - [x] 4.4 Update MessagePack serializer implementation if applicable
-- [ ] 4.5 Update Protobuf serializer implementation if applicable
-- [ ] 4.6 Ensure compression pipeline (`IChangeCompressor`) correctly handles updated serialization output
+- [x] 4.5 Update Protobuf serializer implementation if applicable
+- [x] 4.6 Ensure compression pipeline (`IChangeCompressor`) correctly handles updated serialization output
 
 ## 5. Integration and Testing
 
-- [ ] 5.1 Add unit tests for generic `EntityChange<TEntity>` model with `State` property
-- [ ] 5.2 Add unit tests for non-generic `EntityChange` backward compatibility
-- [ ] 5.3 Add integration tests for track with typed state (insert)
-- [ ] 5.4 Add integration tests for track with typed state (update)
-- [ ] 5.5 Add integration tests for track with typed state (delete)
-- [ ] 5.6 Add integration tests for outbox persistence with typed state
-- [ ] 5.7 Add integration tests for serialization/deserialization with typed state
-- [ ] 5.8 Verify backward compatibility: non-generic EntityChange still works
+- [x] 5.1 Add unit tests for generic `EntityChange<TEntity>` model with `State` property
+- [x] 5.2 Add unit tests for non-generic `EntityChange` backward compatibility
+- [x] 5.3 Add integration tests for track with typed state (insert)
+- [x] 5.4 Add integration tests for track with typed state (update)
+- [x] 5.5 Add integration tests for track with typed state (delete)
+- [x] 5.6 Add integration tests for outbox persistence with typed state
+- [x] 5.7 Add integration tests for serialization/deserialization with typed state
+- [x] 5.8 Verify backward compatibility: non-generic EntityChange still works
 
 ## 6. Documentation and Cleanup
 
-- [ ] 6.1 Update XML documentation comments on modified interfaces and classes
-- [ ] 6.2 Add usage examples for generic EntityChange with typed State in code comments or docs
-- [ ] 6.3 Verify all plugin projects compile with updates
-- [ ] 6.4 Run existing tests to ensure no regressions
+- [x] 6.1 Update XML documentation comments on modified interfaces and classes
+- [x] 6.2 Add usage examples for generic EntityChange with typed State in code comments or docs
+- [x] 6.3 Verify all plugin projects compile with updates
+- [x] 6.4 Run existing tests to ensure no regressions

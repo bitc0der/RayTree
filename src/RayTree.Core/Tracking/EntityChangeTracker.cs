@@ -116,7 +116,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     {
         var change = new EntityChange<TEntity>
         {
-            EntityType = typeof(TEntity).FullName!,,
+            EntityType = typeof(TEntity).FullName!,
             EntityId = GetEntityId(entity),
             ChangeType = ChangeType.Delete,
             State = entity

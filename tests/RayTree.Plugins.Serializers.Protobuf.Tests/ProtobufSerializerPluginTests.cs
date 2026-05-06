@@ -173,6 +173,47 @@ public class ProtobufSerializerPluginTests
         };
     }
 
+    [Test]
+    public async Task SerializeAsync_GenericTypedState_RoundTrip()
+    {
+        var plugin = new ProtobufSerializerPlugin();
+        var original = new EntityChange<User>
+        {
+            EntityType = typeof(User).FullName!,
+            EntityId = "user-7",
+            ChangeType = ChangeType.Update,
+            Version = 2,
+            State = new User { Id = 7, Name = "Bob" }
+        };
+
+        var pipe = new Pipe();
+        await plugin.SerializeAsync(original, pipe.Writer);
+
+        var dataMs = new MemoryStream();
+        var readResult = await pipe.Reader.ReadAsync();
+        foreach (var segment in readResult.Buffer)
+        {
+            await dataMs.WriteAsync(segment);
+        }
+        pipe.Reader.AdvanceTo(readResult.Buffer.End);
+        await pipe.Reader.CompleteAsync();
+
+        var dataBytes = dataMs.ToArray();
+        var deserializePipe = new Pipe();
+        await deserializePipe.Writer.WriteAsync(dataBytes);
+        await deserializePipe.Writer.FlushAsync();
+        await deserializePipe.Writer.CompleteAsync();
+
+        var result = await plugin.DeserializeAsync<User>(deserializePipe.Reader);
+
+        Assert.That(result.EntityId, Is.EqualTo("user-7"));
+        Assert.That(result.ChangeType, Is.EqualTo(ChangeType.Update));
+        Assert.That(result.Version, Is.EqualTo(2));
+        Assert.That(result.State, Is.Not.Null);
+        Assert.That(result.State!.Id, Is.EqualTo(7));
+        Assert.That(result.State.Name, Is.EqualTo("Bob"));
+    }
+
     private class User
     {
         public int Id { get; set; }

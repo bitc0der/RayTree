@@ -195,3 +195,141 @@ public class ChangeTypeTests
         Assert.That((int)ChangeType.Insert, Is.EqualTo(0));
     }
 }
+
+/// <summary>5.1 Unit tests for generic EntityChange&lt;TEntity&gt; model with State property.</summary>
+public class EntityChangeGenericModelTests
+{
+    private class Product
+    {
+        public int Id { get; set; }
+        public string? Name { get; set; }
+        public decimal Price { get; set; }
+    }
+
+    [Test]
+    public void EntityChangeGeneric_HasStatePropertyOfEntityType()
+    {
+        var change = new EntityChange<Product>();
+
+        Assert.That(change.State, Is.Null);
+    }
+
+    [Test]
+    public void EntityChangeGeneric_ParameterlessConstructor_SetsStateToDefault()
+    {
+        var change = new EntityChange<Product>();
+
+        Assert.That(change.State, Is.EqualTo(default(Product)));
+    }
+
+    [Test]
+    public void EntityChangeGeneric_StateCanBeSetAndRetrieved()
+    {
+        var product = new Product { Id = 1, Name = "Widget", Price = 9.99m };
+        var change = new EntityChange<Product> { State = product };
+
+        Assert.That(change.State, Is.SameAs(product));
+        Assert.That(change.State!.Id, Is.EqualTo(1));
+        Assert.That(change.State.Name, Is.EqualTo("Widget"));
+        Assert.That(change.State.Price, Is.EqualTo(9.99m));
+    }
+
+    [Test]
+    public void EntityChangeGeneric_InheritsBaseProperties()
+    {
+        var correlationId = Guid.NewGuid();
+        var change = new EntityChange<Product>
+        {
+            Id = 7,
+            EntityType = "Product",
+            EntityId = "prod-1",
+            ChangeType = ChangeType.Insert,
+            Version = 2,
+            CorrelationId = correlationId,
+            Published = false,
+            State = new Product { Id = 1 }
+        };
+
+        Assert.That(change.Id, Is.EqualTo(7));
+        Assert.That(change.EntityType, Is.EqualTo("Product"));
+        Assert.That(change.EntityId, Is.EqualTo("prod-1"));
+        Assert.That(change.ChangeType, Is.EqualTo(ChangeType.Insert));
+        Assert.That(change.Version, Is.EqualTo(2));
+        Assert.That(change.CorrelationId, Is.EqualTo(correlationId));
+        Assert.That(change.Published, Is.False);
+        Assert.That(change.State!.Id, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void EntityChangeGeneric_IsSubclassOfEntityChange()
+    {
+        var change = new EntityChange<Product>();
+
+        Assert.That(change, Is.InstanceOf<EntityChange>());
+    }
+
+    [Test]
+    public void EntityChangeGeneric_WithValueTypeState_DefaultsToDefaultValue()
+    {
+        var change = new EntityChange<int>();
+
+        Assert.That(change.State, Is.EqualTo(0));
+    }
+}
+
+/// <summary>5.2 Unit tests for non-generic EntityChange backward compatibility.</summary>
+public class EntityChangeBackwardCompatibilityTests
+{
+    [Test]
+    public void NonGenericEntityChange_DoesNotHaveStateProperty()
+    {
+        var change = new EntityChange();
+        var properties = typeof(EntityChange).GetProperties();
+
+        Assert.That(properties, Has.None.Property("Name").EqualTo("State"));
+    }
+
+    [Test]
+    public void NonGenericEntityChange_CanBeUsedWhereBaseTypeExpected()
+    {
+        EntityChange change = new EntityChange { EntityId = "x", ChangeType = ChangeType.Insert };
+
+        Assert.That(change.EntityId, Is.EqualTo("x"));
+    }
+
+    [Test]
+    public void GenericEntityChange_CanBeAssignedToBaseType()
+    {
+        EntityChange change = new EntityChange<string> { EntityId = "y", State = "hello" };
+
+        Assert.That(change.EntityId, Is.EqualTo("y"));
+        Assert.That(change, Is.InstanceOf<EntityChange<string>>());
+    }
+
+    [Test]
+    public void NonGenericEntityChange_AllBasePropertiesWork()
+    {
+        var ts = DateTime.UtcNow;
+        var cid = Guid.NewGuid();
+        var change = new EntityChange
+        {
+            Id = 1,
+            EntityType = "Foo",
+            EntityId = "foo-1",
+            ChangeType = ChangeType.Delete,
+            Timestamp = ts,
+            Version = 3,
+            CorrelationId = cid,
+            Published = true
+        };
+
+        Assert.That(change.Id, Is.EqualTo(1));
+        Assert.That(change.EntityType, Is.EqualTo("Foo"));
+        Assert.That(change.EntityId, Is.EqualTo("foo-1"));
+        Assert.That(change.ChangeType, Is.EqualTo(ChangeType.Delete));
+        Assert.That(change.Timestamp, Is.EqualTo(ts));
+        Assert.That(change.Version, Is.EqualTo(3));
+        Assert.That(change.CorrelationId, Is.EqualTo(cid));
+        Assert.That(change.Published, Is.True);
+    }
+}
