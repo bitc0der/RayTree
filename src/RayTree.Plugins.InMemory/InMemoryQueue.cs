@@ -1,10 +1,11 @@
 using System.Threading.Channels;
 using RayTree.Core.Models;
+using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Plugins.Publisher;
 
 namespace RayTree.Plugins.InMemory;
 
-public class InMemoryQueue : IQueuePublisher, IDisposable
+public class InMemoryQueue : IQueuePublisher, IQueueConsumer, IDisposable
 {
     private readonly Channel<(EntityChange Change, byte[] Payload)> _channel =
         Channel.CreateUnbounded<(EntityChange, byte[])>();

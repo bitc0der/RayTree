@@ -1,5 +1,6 @@
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
 using RayTree.Subscriber.Plugins.Deduplication;
@@ -13,6 +14,7 @@ public class ChangeSubscriber : IDisposable
     private readonly Dictionary<Type, List<HandlerRegistration>> _handlers = new();
     private readonly Dictionary<Type, IChangeSerializer> _serializers = new();
     private readonly Dictionary<Type, IChangeCompressor> _compressors = new();
+    private readonly Dictionary<Type, IQueueConsumer> _queues = new();
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
     private readonly CancellationTokenSource _cts = new();
@@ -20,12 +22,21 @@ public class ChangeSubscriber : IDisposable
     public ChangeSubscriber(IDeduplicationStore? dedupStore = null, SubscriberOptions? options = null)
     {
         _dedupStore = dedupStore ?? new InMemoryDeduplicationStore();
-        _options = options ?? new SubscriberOptions();
+        _options    = options   ?? new SubscriberOptions();
     }
+
+    public IReadOnlyDictionary<Type, IQueueConsumer> Queues => _queues;
 
     public ChangeSubscriber ForEntity<TEntity>()
     {
         _handlers[typeof(TEntity)] = new List<HandlerRegistration>();
+        return this;
+    }
+
+    public ChangeSubscriber RegisterQueue<TEntity>(IQueueConsumer consumer)
+    {
+        ArgumentNullException.ThrowIfNull(consumer);
+        _queues[typeof(TEntity)] = consumer;
         return this;
     }
 
@@ -44,13 +55,13 @@ public class ChangeSubscriber : IDisposable
     public ChangeSubscriber OnChange<TEntity>(ChangeType? changeType, ChangeHandlerAsync handler)
     {
         if (!_handlers.ContainsKey(typeof(TEntity)))
-        {
             _handlers[typeof(TEntity)] = new List<HandlerRegistration>();
-        }
 
         _handlers[typeof(TEntity)].Add(new HandlerRegistration
         {
-            EntityType = typeof(TEntity), ChangeType = changeType, Handler = handler
+            EntityType = typeof(TEntity),
+            ChangeType = changeType,
+            Handler    = handler
         });
 
         return this;
@@ -69,16 +80,32 @@ public class ChangeSubscriber : IDisposable
         if (!_handlers.TryGetValue(entityType, out var handlers) || handlers.Count == 0)
             return;
 
-        var matchingHandlers = handlers.Where(h => h.ChangeType == null || h.ChangeType == change.ChangeType).ToList();
+        var matchingHandlers = handlers
+            .Where(h => h.ChangeType == null || h.ChangeType == change.ChangeType)
+            .ToList();
 
         foreach (var registration in matchingHandlers)
-        {
             await InvokeWithRetryAsync(registration, change, payload, cancellationToken);
-        }
     }
 
-    private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change, byte[] payload,
-        CancellationToken ct)
+    public async Task ConsumeFromConsumerAsync(IQueueConsumer consumer,
+        CancellationToken cancellationToken = default)
+    {
+        await foreach (var (change, payload) in consumer.ConsumeAsync(cancellationToken))
+            await ProcessMessageAsync(change, payload, cancellationToken);
+    }
+
+    public async Task ConsumeFromQueueAsync<TQueue>(
+        TQueue queue,
+        Func<TQueue, CancellationToken, IAsyncEnumerable<(EntityChange Change, byte[] Payload)>> reader,
+        CancellationToken cancellationToken = default)
+    {
+        await foreach (var (change, payload) in reader(queue, cancellationToken))
+            await ProcessMessageAsync(change, payload, cancellationToken);
+    }
+
+    private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change,
+        byte[] payload, CancellationToken ct)
     {
         var retries = 0;
         while (retries < _options.MaxRetries)
@@ -93,24 +120,12 @@ public class ChangeSubscriber : IDisposable
                 retries++;
                 if (retries >= _options.MaxRetries)
                 {
-                    if (_options.SkipOnFailure)
-                        return;
+                    if (_options.SkipOnFailure) return;
                     throw;
                 }
 
                 await Task.Delay(_options.RetryDelay * retries, ct);
             }
-        }
-    }
-
-    public async Task ConsumeFromQueueAsync<TQueue>(
-        TQueue queue,
-        Func<TQueue, CancellationToken, IAsyncEnumerable<(EntityChange Change, byte[] Payload)>> reader,
-        CancellationToken cancellationToken = default)
-    {
-        await foreach (var (change, payload) in reader(queue, cancellationToken))
-        {
-            await ProcessMessageAsync(change, payload, cancellationToken);
         }
     }
 
