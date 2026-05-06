@@ -60,7 +60,7 @@ public class OutboxPublisherServiceTests
     {
         var tracker = new EntityChangeTracker();
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromSeconds(1) };
-        var service = new OutboxPublisherService(tracker, options);
+        var service = new OutboxPublisherService(tracker, typeof(DummyEntity), options);
 
         await service.StartAsync();
 
@@ -74,10 +74,12 @@ public class OutboxPublisherServiceTests
     {
         var tracker = new EntityChangeTracker();
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromHours(1) };
-        var service = new OutboxPublisherService(tracker, options);
+        var service = new OutboxPublisherService(tracker, typeof(DummyEntity), options);
 
         Assert.DoesNotThrow(() => service.Dispose());
     }
+
+    private class DummyEntity { public int Id { get; set; } }
 }
 
 public class ConcurrentChangeDetectionTests

@@ -14,7 +14,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     private readonly ConcurrentDictionary<Type, IChangeCompressor> _compressors = new();
     private readonly ConcurrentDictionary<Type, IRepository> _repositories = new();
 
-    private OutboxPublisherService? _publisherService;
+    private readonly List<OutboxPublisherService> _publisherServices = new();
 
     public OutboxPublisherOptions PublisherOptions { get; } = new();
 
@@ -49,10 +49,11 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         foreach (var publisher in _publishers.Values)
             await publisher.InitializeAsync(cancellationToken);
 
-        if (_publishers.Count > 0)
+        foreach (var entityType in _publishers.Keys)
         {
-            _publisherService = new OutboxPublisherService(this, PublisherOptions);
-            await _publisherService.StartAsync(cancellationToken);
+            var service = new OutboxPublisherService(this, entityType, PublisherOptions);
+            _publisherServices.Add(service);
+            await service.StartAsync(cancellationToken);
         }
     }
 
@@ -171,7 +172,10 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
 
     public void Dispose()
     {
-        _publisherService?.StopAsync().GetAwaiter().GetResult();
-        _publisherService?.Dispose();
+        foreach (var service in _publisherServices)
+        {
+            service.StopAsync().GetAwaiter().GetResult();
+            service.Dispose();
+        }
     }
 }
