@@ -14,7 +14,7 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 
     public RabbitMqPublisher(RabbitMqPublisherOptions options)
     {
-        _options = options;
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -53,7 +53,9 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
         }
     }
 
-    public async Task PublishAsync(EntityChange change, PipeReader payload,
+    public async Task PublishAsync(
+        EntityChange change,
+        PipeReader payload,
         CancellationToken cancellationToken = default)
     {
         var channel = GetChannel();
