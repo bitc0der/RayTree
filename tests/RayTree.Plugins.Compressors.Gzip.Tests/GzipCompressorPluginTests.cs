@@ -1,5 +1,4 @@
 using System.IO.Compression;
-using System.IO.Pipelines;
 using System.Text;
 
 namespace RayTree.Plugins.Compressors.Gzip.Tests;
@@ -81,19 +80,15 @@ public class GzipCompressorPluginTests
 
     private static async Task<byte[]> CompressAndCaptureAsync(GzipCompressorPlugin compressor, byte[] data)
     {
-        var ms = new MemoryStream();
-        var pipeWriter = PipeWriter.Create(ms);
-        var readPipe = PipeReader.Create(new MemoryStream(data));
-        await compressor.CompressAsync(readPipe, pipeWriter);
-        return ms.ToArray();
+        using var output = new MemoryStream();
+        await compressor.CompressAsync(new MemoryStream(data), output);
+        return output.ToArray();
     }
 
     private static async Task<byte[]> DecompressAndCaptureAsync(GzipCompressorPlugin compressor, byte[] data)
     {
-        var ms = new MemoryStream();
-        var pipeWriter = PipeWriter.Create(ms);
-        var readPipe = PipeReader.Create(new MemoryStream(data));
-        await compressor.DecompressAsync(readPipe, pipeWriter);
-        return ms.ToArray();
+        using var output = new MemoryStream();
+        await compressor.DecompressAsync(new MemoryStream(data), output);
+        return output.ToArray();
     }
 }

@@ -136,10 +136,16 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await _queue.Reader.ReadAsync(cts.Token);
 
-        // Allow mark-published write to complete
-        await Task.Delay(200);
+        // Poll until MarkPublishedAsync completes the DB write (runs after PublishAsync in the same loop iteration)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        EntityChange<TestEntity>? stored = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            stored = await _outbox.GetByIdAsync<TestEntity>(change.Id);
+            if (stored?.Published == true) break;
+            await Task.Delay(50);
+        }
 
-        var stored = await _outbox.GetByIdAsync<TestEntity>(change.Id);
         Assert.That(stored!.Published, Is.True);
     }
 

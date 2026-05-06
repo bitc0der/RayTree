@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.IO.Pipelines;
 using System.Reflection;
 using ProtoBuf.Meta;
 using RayTree.Core.Models;
@@ -14,50 +13,31 @@ public class ProtobufSerializerPlugin : IChangeSerializer
 
     private static readonly ConcurrentDictionary<Type, RuntimeTypeModel> GenericModels = new();
 
-    public async Task SerializeAsync<TEntity>(
+    public Task SerializeAsync<TEntity>(
         EntityChange<TEntity> change,
-        PipeWriter writer,
+        Stream destination,
         CancellationToken cancellationToken = default)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(change);
-
         var model = GetOrCreateGenericModel<TEntity>();
-        model.Serialize(writer.AsStream(), change);
-        await writer.FlushAsync(cancellationToken);
-        await writer.CompleteAsync();
+        model.Serialize(destination, change);
+        return Task.CompletedTask;
     }
 
     public async Task<EntityChange<TEntity>> DeserializeAsync<TEntity>(
-        PipeReader reader,
+        Stream source,
         CancellationToken cancellationToken = default)
         where TEntity : class
     {
-        ArgumentNullException.ThrowIfNull(reader);
-
-        var result = await reader.ReadAsync(cancellationToken);
-
-        var buffer = result.Buffer;
-
-        try
-        {
-            using var ms = new MemoryStream();
-            foreach (var segment in buffer)
-            {
-                await ms.WriteAsync(segment, cancellationToken);
-            }
-
-            ms.Position = 0;
-
-            var model = GetOrCreateGenericModel<TEntity>();
-            var entityChange = model.Deserialize<EntityChange<TEntity>>(ms);
-            reader.AdvanceTo(buffer.End);
-            return entityChange ?? throw new InvalidOperationException("Deserialized entity change is null");
-        }
-        finally
-        {
-            await reader.CompleteAsync();
-        }
+        ArgumentNullException.ThrowIfNull(source);
+        var model = GetOrCreateGenericModel<TEntity>();
+        // ProtoBuf-net doesn't natively support async; buffer first to avoid blocking
+        using var ms = new MemoryStream();
+        await source.CopyToAsync(ms, cancellationToken);
+        ms.Position = 0;
+        var result = model.Deserialize<EntityChange<TEntity>>(ms);
+        return result ?? throw new InvalidOperationException("Deserialized entity change is null");
     }
 
     private static RuntimeTypeModel GetOrCreateGenericModel<TEntity>()

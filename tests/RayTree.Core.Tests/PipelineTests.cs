@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Compression;
@@ -34,28 +33,26 @@ public class SerializationPipelineTests
             State = new Customer { Id = 1, Name = "Acme" }
         };
 
-        var pipe = new Pipe();
-        await serializer.SerializeAsync(change, pipe.Writer);
+        using var ms = new MemoryStream();
+        await serializer.SerializeAsync(change, ms);
+        ms.Position = 0;
 
-        var result = await serializer.DeserializeAsync<Customer>(pipe.Reader);
+        var result = await serializer.DeserializeAsync<Customer>(ms);
 
-        Assert.That(result.EntityType, Is.EqualTo(change.EntityType));
-        Assert.That(result.EntityId, Is.EqualTo(change.EntityId));
-        Assert.That(result.ChangeType, Is.EqualTo(change.ChangeType));
-        Assert.That(result.Version, Is.EqualTo(change.Version));
+        Assert.That(result.EntityType,    Is.EqualTo(change.EntityType));
+        Assert.That(result.EntityId,      Is.EqualTo(change.EntityId));
+        Assert.That(result.ChangeType,    Is.EqualTo(change.ChangeType));
+        Assert.That(result.Version,       Is.EqualTo(change.Version));
         Assert.That(result.CorrelationId, Is.EqualTo(change.CorrelationId));
-        Assert.That(result.Published, Is.EqualTo(change.Published));
-        Assert.That(result.State?.Name, Is.EqualTo("Acme"));
+        Assert.That(result.Published,     Is.EqualTo(change.Published));
+        Assert.That(result.State?.Name,   Is.EqualTo("Acme"));
     }
 
     [Test]
-    public async Task JsonSerializer_Name_ReturnsJson()
+    public void JsonSerializer_Name_ReturnsJson()
     {
         var serializer = new JsonSerializerPlugin();
-
-        var name = serializer.Name;
-
-        Assert.That(name, Is.EqualTo("Json"));
+        Assert.That(serializer.Name, Is.EqualTo("Json"));
     }
 }
 
@@ -68,13 +65,10 @@ public class CompressionPipelineTests
     }
 
     [Test]
-    public async Task GzipCompressor_Name_ReturnsGzip()
+    public void GzipCompressor_Name_ReturnsGzip()
     {
         var compressor = new GzipCompressorPlugin();
-
-        var name = compressor.Name;
-
-        Assert.That(name, Is.EqualTo("Gzip"));
+        Assert.That(compressor.Name, Is.EqualTo("Gzip"));
     }
 
     [Test]
@@ -83,27 +77,18 @@ public class CompressionPipelineTests
         var compressor = new NoOpCompressorPlugin();
         var originalData = new byte[] { 1, 2, 3, 4, 5 };
 
-        var sourcePipe = new Pipe();
-        await sourcePipe.Writer.WriteAsync(originalData);
-        sourcePipe.Writer.Complete();
+        using var source = new MemoryStream(originalData);
+        using var output = new MemoryStream();
+        await compressor.CompressAsync(source, output);
 
-        var outputPipe = new Pipe();
-
-        await compressor.CompressAsync(sourcePipe.Reader, outputPipe.Writer);
-
-        var compressedData = await ReadAllFromPipeAsync(outputPipe.Reader);
-
-        Assert.That(compressedData, Is.EqualTo(originalData));
+        Assert.That(output.ToArray(), Is.EqualTo(originalData));
     }
 
     [Test]
-    public async Task NoOpCompressor_Name_ReturnsNoOp()
+    public void NoOpCompressor_Name_ReturnsNoOp()
     {
         var compressor = new NoOpCompressorPlugin();
-
-        var name = compressor.Name;
-
-        Assert.That(name, Is.EqualTo("NoOp"));
+        Assert.That(compressor.Name, Is.EqualTo("NoOp"));
     }
 
     [Test]
@@ -122,77 +107,24 @@ public class CompressionPipelineTests
             State = new Item { Id = 42, Label = "Widget" }
         };
 
-        var serializedBytes = await SerializeToBytesAsync(serializer, change);
-        var compressOutput = await CompressDataAsync(compressor, serializedBytes);
-        var decompressOutput = await DecompressDataAsync(compressor, compressOutput);
-        var deserialized = await DeserializeFromBytesAsync<Item>(serializer, decompressOutput);
+        using var serialized = new MemoryStream();
+        await serializer.SerializeAsync(change, serialized);
+        serialized.Position = 0;
+
+        using var compressed = new MemoryStream();
+        await compressor.CompressAsync(serialized, compressed);
+        compressed.Position = 0;
+
+        using var decompressed = new MemoryStream();
+        await compressor.DecompressAsync(compressed, decompressed);
+        decompressed.Position = 0;
+
+        var deserialized = await serializer.DeserializeAsync<Item>(decompressed);
 
         Assert.That(deserialized.EntityType, Is.EqualTo(change.EntityType));
-        Assert.That(deserialized.EntityId, Is.EqualTo(change.EntityId));
+        Assert.That(deserialized.EntityId,   Is.EqualTo(change.EntityId));
         Assert.That(deserialized.ChangeType, Is.EqualTo(change.ChangeType));
-        Assert.That(deserialized.Version, Is.EqualTo(change.Version));
+        Assert.That(deserialized.Version,    Is.EqualTo(change.Version));
         Assert.That(deserialized.State?.Label, Is.EqualTo("Widget"));
-    }
-
-    private static async Task<byte[]> SerializeToBytesAsync<TEntity>(
-        IChangeSerializer serializer,
-        EntityChange<TEntity> change)
-        where TEntity : class
-    {
-        using var ms = new MemoryStream();
-        var writer = PipeWriter.Create(ms);
-        await serializer.SerializeAsync(change, writer);
-        return ms.ToArray();
-    }
-
-    private static async Task<EntityChange<TEntity>> DeserializeFromBytesAsync<TEntity>(
-        IChangeSerializer serializer,
-        byte[] data)
-        where TEntity : class
-    {
-        var reader = PipeReader.Create(new MemoryStream(data));
-        return await serializer.DeserializeAsync<TEntity>(reader);
-    }
-
-    private static async Task<byte[]> CompressDataAsync(IChangeCompressor compressor, byte[] data)
-    {
-        var sourcePipe = new Pipe();
-        var outputPipe = new Pipe();
-
-        await sourcePipe.Writer.WriteAsync(data);
-        await sourcePipe.Writer.CompleteAsync();
-
-        await compressor.CompressAsync(sourcePipe.Reader, outputPipe.Writer);
-
-        return await ReadAllFromPipeAsync(outputPipe.Reader);
-    }
-
-    private static async Task<byte[]> DecompressDataAsync(IChangeCompressor compressor, byte[] data)
-    {
-        var sourcePipe = new Pipe();
-        var outputPipe = new Pipe();
-
-        await sourcePipe.Writer.WriteAsync(data);
-        await sourcePipe.Writer.CompleteAsync();
-
-        await compressor.DecompressAsync(sourcePipe.Reader, outputPipe.Writer);
-
-        return await ReadAllFromPipeAsync(outputPipe.Reader);
-    }
-
-    private static async Task<byte[]> ReadAllFromPipeAsync(PipeReader reader)
-    {
-        using var ms = new MemoryStream();
-        var result = await reader.ReadAsync();
-        var buffer = result.Buffer;
-
-        foreach (var segment in buffer)
-        {
-            await ms.WriteAsync(segment);
-        }
-        reader.AdvanceTo(buffer.End);
-        await reader.CompleteAsync();
-
-        return ms.ToArray();
     }
 }

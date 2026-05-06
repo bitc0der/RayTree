@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using K4os.Compression.LZ4;
 using RayTree.Core.Plugins;
 
@@ -8,88 +7,29 @@ public class Lz4CompressorPlugin : IChangeCompressor
 {
     public string Name => "LZ4";
 
-    private static int MaxOutputLength(int inputLength) => inputLength + (inputLength / 255) + 16;
-
-    public async Task CompressAsync(PipeReader reader, PipeWriter writer, CancellationToken cancellationToken = default)
+    public async Task CompressAsync(Stream source, Stream destination, CancellationToken cancellationToken = default)
     {
-        var result = await reader.ReadAsync(cancellationToken);
-        var buffer = result.Buffer;
+        using var ms = new MemoryStream();
+        await source.CopyToAsync(ms, cancellationToken);
+        var input = ms.ToArray();
 
-        while (!result.IsCompleted)
-        {
-            foreach (var segment in buffer)
-            {
-                var source = segment.ToArray();
-                var maxCompressedSize = MaxOutputLength(source.Length);
-                var compressed = new byte[maxCompressedSize];
-                var compressedLength = LZ4Codec.Encode(source, 0, source.Length, compressed, 0, maxCompressedSize);
-                await writer.WriteAsync(compressed.AsMemory(0, compressedLength), cancellationToken);
-            }
+        var maxCompressedSize = input.Length + (input.Length / 255) + 16;
+        var compressed = new byte[maxCompressedSize];
+        var compressedLength = LZ4Codec.Encode(input, 0, input.Length, compressed, 0, maxCompressedSize);
 
-            reader.AdvanceTo(buffer.End);
-            result = await reader.ReadAsync(cancellationToken);
-            buffer = result.Buffer;
-        }
-
-        if (!buffer.IsEmpty)
-        {
-            foreach (var segment in buffer)
-            {
-                var source = segment.ToArray();
-                var maxCompressedSize = MaxOutputLength(source.Length);
-                var compressed = new byte[maxCompressedSize];
-                var compressedLength = LZ4Codec.Encode(source, 0, source.Length, compressed, 0, maxCompressedSize);
-                await writer.WriteAsync(compressed.AsMemory(0, compressedLength), cancellationToken);
-            }
-
-            reader.AdvanceTo(buffer.End);
-        }
-
-        await writer.FlushAsync(cancellationToken);
-        await writer.CompleteAsync();
-        await reader.CompleteAsync();
+        await destination.WriteAsync(compressed.AsMemory(0, compressedLength), cancellationToken);
     }
 
-    public async Task DecompressAsync(PipeReader reader, PipeWriter writer,
-        CancellationToken cancellationToken = default)
+    public async Task DecompressAsync(Stream source, Stream destination, CancellationToken cancellationToken = default)
     {
-        var result = await reader.ReadAsync(cancellationToken);
-        var buffer = result.Buffer;
+        using var ms = new MemoryStream();
+        await source.CopyToAsync(ms, cancellationToken);
+        var input = ms.ToArray();
 
-        while (!result.IsCompleted)
-        {
-            foreach (var segment in buffer)
-            {
-                var source = segment.ToArray();
-                var maxDecompressedSize = source.Length * 255;
-                var decompressed = new byte[maxDecompressedSize];
-                var decompressedLength =
-                    LZ4Codec.Decode(source, 0, source.Length, decompressed, 0, maxDecompressedSize);
-                await writer.WriteAsync(decompressed.AsMemory(0, decompressedLength), cancellationToken);
-            }
+        var maxDecompressedSize = input.Length * 255;
+        var decompressed = new byte[maxDecompressedSize];
+        var decompressedLength = LZ4Codec.Decode(input, 0, input.Length, decompressed, 0, maxDecompressedSize);
 
-            reader.AdvanceTo(buffer.End);
-            result = await reader.ReadAsync(cancellationToken);
-            buffer = result.Buffer;
-        }
-
-        if (!buffer.IsEmpty)
-        {
-            foreach (var segment in buffer)
-            {
-                var source = segment.ToArray();
-                var maxDecompressedSize = source.Length * 255;
-                var decompressed = new byte[maxDecompressedSize];
-                var decompressedLength =
-                    LZ4Codec.Decode(source, 0, source.Length, decompressed, 0, maxDecompressedSize);
-                await writer.WriteAsync(decompressed.AsMemory(0, decompressedLength), cancellationToken);
-            }
-
-            reader.AdvanceTo(buffer.End);
-        }
-
-        await writer.FlushAsync(cancellationToken);
-        await writer.CompleteAsync();
-        await reader.CompleteAsync();
+        await destination.WriteAsync(decompressed.AsMemory(0, decompressedLength), cancellationToken);
     }
 }

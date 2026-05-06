@@ -1,5 +1,4 @@
-﻿using System.IO.Pipelines;
-using RayTree.Core.Models;
+﻿using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
@@ -256,16 +255,8 @@ public class SerializationTypedStateTests
     private static async Task<byte[]> SerializeGenericAsync<TEntity>(IChangeSerializer serializer, EntityChange<TEntity> change)
         where TEntity : class
     {
-        var pipe = new Pipe();
-        await serializer.SerializeAsync(change, pipe.Writer);
         using var ms = new MemoryStream();
-        var result = await pipe.Reader.ReadAsync();
-        foreach (var segment in result.Buffer)
-        {
-            await ms.WriteAsync(segment);
-        }
-        pipe.Reader.AdvanceTo(result.Buffer.End);
-        await pipe.Reader.CompleteAsync();
+        await serializer.SerializeAsync(change, ms);
         return ms.ToArray();
     }
 
@@ -274,11 +265,7 @@ public class SerializationTypedStateTests
         byte[] data)
         where TEntity : class
     {
-        var pipe = new Pipe();
-        await pipe.Writer.WriteAsync(data);
-        await pipe.Writer.FlushAsync();
-        await pipe.Writer.CompleteAsync();
-        return await serializer.DeserializeAsync<TEntity>(pipe.Reader);
+        return await serializer.DeserializeAsync<TEntity>(new MemoryStream(data));
     }
 
     [Test]
@@ -361,35 +348,16 @@ public class SerializationTypedStateTests
 
     private static async Task<byte[]> CompressAsync(IChangeCompressor compressor, byte[] data)
     {
-        var src = new Pipe();
-        var dst = new Pipe();
-        await src.Writer.WriteAsync(data);
-        await src.Writer.CompleteAsync();
-        await compressor.CompressAsync(src.Reader, dst.Writer);
-        return await ReadPipeAsync(dst.Reader);
+        using var dst = new MemoryStream();
+        await compressor.CompressAsync(new MemoryStream(data), dst);
+        return dst.ToArray();
     }
 
     private static async Task<byte[]> DecompressAsync(IChangeCompressor compressor, byte[] data)
     {
-        var src = new Pipe();
-        var dst = new Pipe();
-        await src.Writer.WriteAsync(data);
-        await src.Writer.CompleteAsync();
-        await compressor.DecompressAsync(src.Reader, dst.Writer);
-        return await ReadPipeAsync(dst.Reader);
-    }
-
-    private static async Task<byte[]> ReadPipeAsync(PipeReader reader)
-    {
-        using var ms = new MemoryStream();
-        var result = await reader.ReadAsync();
-        foreach (var segment in result.Buffer)
-        {
-            await ms.WriteAsync(segment);
-        }
-        reader.AdvanceTo(result.Buffer.End);
-        await reader.CompleteAsync();
-        return ms.ToArray();
+        using var dst = new MemoryStream();
+        await compressor.DecompressAsync(new MemoryStream(data), dst);
+        return dst.ToArray();
     }
 }
 

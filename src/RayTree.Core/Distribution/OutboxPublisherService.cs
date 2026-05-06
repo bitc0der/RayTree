@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using System.Reflection;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
@@ -26,9 +25,9 @@ public class OutboxPublisherService : IDisposable
 
     public OutboxPublisherService(EntityChangeTracker tracker, Type entityType, OutboxPublisherOptions options)
     {
-        _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
+        _tracker    = tracker    ?? throw new ArgumentNullException(nameof(tracker));
         _entityType = entityType ?? throw new ArgumentNullException(nameof(entityType));
-        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _options    = options    ?? throw new ArgumentNullException(nameof(options));
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -55,32 +54,23 @@ public class OutboxPublisherService : IDisposable
                 if (!_stopping)
                     await ProcessBatchAsync(cancellationToken);
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception)
-            {
-                // swallow and retry after interval
-            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception) { /* swallow and retry after interval */ }
 
             try
             {
                 await Task.Delay(_options.PollingInterval, cancellationToken);
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            catch (OperationCanceledException) { break; }
         }
     }
 
     private async Task ProcessBatchAsync(CancellationToken cancellationToken)
     {
-        var outbox = _tracker.GetOutbox(_entityType);
-        var publisher = _tracker.GetPublisher(_entityType);
-        var serializer = _tracker.GetSerializer(_entityType);
-        var compressor = _tracker.GetCompressor(_entityType);
+        var outbox      = _tracker.GetOutbox(_entityType);
+        var publisher   = _tracker.GetPublisher(_entityType);
+        var serializer  = _tracker.GetSerializer(_entityType);
+        var compressor  = _tracker.GetCompressor(_entityType);
 
         var changes = await GetUnpublishedAsync(outbox, _options.BatchSize, cancellationToken);
 
@@ -111,9 +101,7 @@ public class OutboxPublisherService : IDisposable
             catch (Exception)
             {
                 retries++;
-                if (retries >= _options.MaxRetryCount)
-                    throw;
-
+                if (retries >= _options.MaxRetryCount) throw;
                 await Task.Delay(_options.RetryDelay * retries, ct);
             }
         }
@@ -129,37 +117,36 @@ public class OutboxPublisherService : IDisposable
         int batchSize,
         CancellationToken cancellationToken)
         where TEntity : class
-    {
-        return await outbox.GetUnpublishedAsync<TEntity>(batchSize, cancellationToken);
-    }
+        => await outbox.GetUnpublishedAsync<TEntity>(batchSize, cancellationToken);
 
-    private Task PublishChangeAsync(
+    private async Task PublishChangeAsync(
         EntityChange change,
         IQueuePublisher publisher,
         IChangeSerializer serializer,
         IChangeCompressor compressor,
         CancellationToken ct)
     {
-        var serializePipe = new Pipe();
-        var compressPipe = new Pipe();
+        using var serialized = new MemoryStream();
+        await SerializeAsync(serializer, change, serialized, ct);
+        serialized.Position = 0;
 
-        var serializeTask = (Task)SerializeMethod.MakeGenericMethod(_entityType)
-            .Invoke(null, [serializer, change, serializePipe.Writer, ct])!;
-        var compressTask = compressor.CompressAsync(serializePipe.Reader, compressPipe.Writer, ct);
-        var publishTask = publisher.PublishAsync(change, compressPipe.Reader, ct);
+        using var compressed = new MemoryStream();
+        await compressor.CompressAsync(serialized, compressed, ct);
+        compressed.Position = 0;
 
-        return Task.WhenAll(serializeTask, compressTask, publishTask);
+        await publisher.PublishAsync(change, compressed, ct);
     }
+
+    private Task SerializeAsync(IChangeSerializer serializer, EntityChange change, Stream destination, CancellationToken ct)
+        => (Task)SerializeMethod.MakeGenericMethod(_entityType).Invoke(null, [serializer, change, destination, ct])!;
 
     private static Task SerializeCoreAsync<TEntity>(
         IChangeSerializer serializer,
         EntityChange<TEntity> change,
-        PipeWriter writer,
+        Stream destination,
         CancellationToken ct)
         where TEntity : class
-    {
-        return serializer.SerializeAsync(change, writer, ct);
-    }
+        => serializer.SerializeAsync(change, destination, ct);
 
     public void Dispose()
     {

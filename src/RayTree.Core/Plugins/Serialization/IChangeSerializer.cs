@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using RayTree.Core.Models;
 
 namespace RayTree.Core.Plugins.Serialization;
@@ -9,12 +8,12 @@ public interface IChangeSerializer
 
     Task SerializeAsync<TEntity>(
         EntityChange<TEntity> change,
-        PipeWriter destination,
+        Stream destination,
         CancellationToken cancellationToken = default)
         where TEntity : class;
 
     Task<EntityChange<TEntity>> DeserializeAsync<TEntity>(
-        PipeReader source,
+        Stream source,
         CancellationToken cancellationToken = default)
         where TEntity : class;
 }

@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using System.Text;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
@@ -201,12 +200,8 @@ public class InMemoryQueueTests
 
         };
         var payloadData = "test payload"u8.ToArray();
-        var payloadPipe = new Pipe();
-        await payloadPipe.Writer.WriteAsync(payloadData);
-        await payloadPipe.Writer.FlushAsync();
-        await payloadPipe.Writer.CompleteAsync();
 
-        await queue.PublishAsync(change, payloadPipe.Reader);
+        await queue.PublishAsync(change, new MemoryStream(payloadData));
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var message = await queue.Reader.ReadAsync(cts.Token);
@@ -221,8 +216,8 @@ public class InMemoryQueueTests
         var payloadData1 = Encoding.UTF8.GetBytes("payload1");
         var payloadData2 = Encoding.UTF8.GetBytes("payload2");
 
-        await queue.PublishAsync(new EntityChange { EntityId = "1" }, CreatePipeReader(payloadData1));
-        await queue.PublishAsync(new EntityChange { EntityId = "2" }, CreatePipeReader(payloadData2));
+        await queue.PublishAsync(new EntityChange { EntityId = "1" }, new MemoryStream(payloadData1));
+        await queue.PublishAsync(new EntityChange { EntityId = "2" }, new MemoryStream(payloadData2));
 
         var messages = new List<(EntityChange Change, byte[] Payload)>();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -246,8 +241,4 @@ public class InMemoryQueueTests
         Assert.That(queue.Reader.Completion.IsCompleted, Is.True);
     }
 
-    private static PipeReader CreatePipeReader(byte[] data)
-    {
-        return PipeReader.Create(new MemoryStream(data));
-    }
 }
