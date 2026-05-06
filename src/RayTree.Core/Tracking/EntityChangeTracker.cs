@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.IO.Pipelines;
 using RayTree.Core.Distribution;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
@@ -55,7 +54,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
 
         foreach (var entityType in _publishers.Keys)
         {
-            var service = new OutboxPublisherService(this, entityType, PublisherOptions);
+            var service = new OutboxPublisherService(tracker: this, entityType, PublisherOptions);
             _publisherServices.Add(service);
             await service.StartAsync(cancellationToken);
         }
@@ -67,6 +66,8 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         CancellationToken cancellationToken = default)
         where TEntity : class
     {
+        ArgumentNullException.ThrowIfNull(entity);
+
         var change = new EntityChange<TEntity>
         {
             EntityType = typeof(TEntity).FullName!,
@@ -151,27 +152,6 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
                          throw new InvalidOperationException($"Entity {typeof(TEntity).Name} must have an Id property");
 
         return idProperty.GetValue(entity)?.ToString() ?? throw new InvalidOperationException("Id cannot be null");
-    }
-
-    public async Task PublishAsync<TEntity>(
-        EntityChange<TEntity> change,
-        CancellationToken cancellationToken)
-        where TEntity : class
-    {
-        var entityType = typeof(TEntity);
-
-        var publisher = GetPublisher(entityType);
-        var serializer = GetSerializer(entityType);
-        var compressor = GetCompressor(entityType);
-
-        var serializePipe = new Pipe();
-        var compressPipe = new Pipe();
-
-        var serializeTask = serializer.SerializeAsync(change, serializePipe.Writer, cancellationToken);
-        var compressTask = compressor.CompressAsync(serializePipe.Reader, compressPipe.Writer, cancellationToken);
-        var publishTask = publisher.PublishAsync(change, compressPipe.Reader, cancellationToken);
-
-        await Task.WhenAll(serializeTask, compressTask, publishTask);
     }
 
     public void Dispose()
