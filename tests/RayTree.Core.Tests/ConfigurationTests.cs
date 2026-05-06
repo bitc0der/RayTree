@@ -1,10 +1,12 @@
-using RayTree.Configuration;
-using RayTree.Distribution;
-using RayTree.Models;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
+using RayTree.Core.Plugins.Outbox;
+using RayTree.Core.Plugins.Publisher;
+using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Tracking;
 using RayTree.Plugins;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.Serializers.Json;
-using RayTree.Tracking;
 
 namespace RayTree.Core.Tests;
 
@@ -150,22 +152,4 @@ public class ChangeTrackingConfigurationTests
         Assert.That(tracker, Is.Not.Null);
     }
 
-    [Test]
-    public async Task Configuration_StartStopPublisher_Works()
-    {
-        var config = new ChangeTrackingConfiguration();
-        config.UseOutbox<IOutbox>(_ => new InMemoryOutbox());
-        config.UseQueue<IQueuePublisher>(_ => new InMemoryQueue());
-        config.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
-        config.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin());
-
-        var tracker = config.Build();
-
-        await config.StartPublisherAsync(tracker);
-
-        await config.StopPublisherAsync();
-
-        config.Dispose();
-        Assert.Pass();
-    }
 }

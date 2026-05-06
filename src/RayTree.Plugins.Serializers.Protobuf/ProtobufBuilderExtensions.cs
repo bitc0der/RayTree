@@ -1,12 +1,14 @@
-using Microsoft.Extensions.DependencyInjection;
-using RayTree.Plugins.Serializers.Protobuf;
+using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Tracking;
 
-namespace RayTree.Plugins;
+namespace RayTree.Plugins.Serializers.Protobuf;
 
 public static class ProtobufBuilderExtensions
 {
     public static IChangeTrackingBuilder UseProtobufSerializer(this IChangeTrackingBuilder builder)
     {
-        return builder.UseSerializer<IChangeSerializer>(_ => new ProtobufSerializerPlugin());
+        return builder == null
+            ? throw new ArgumentNullException(nameof(builder))
+            : builder.UseSerializer<IChangeSerializer>(_ => new ProtobufSerializerPlugin());
     }
 }

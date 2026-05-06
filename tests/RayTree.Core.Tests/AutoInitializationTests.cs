@@ -1,10 +1,12 @@
 using System.IO.Pipelines;
 using NUnit.Framework;
 using Moq;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Outbox;
+using RayTree.Core.Plugins.Publisher;
+using RayTree.Core.Tracking;
 using RayTree.Plugins;
 using RayTree.Plugins.InMemory;
-using RayTree.Tracking;
-using RayTree.Models;
 using RayTree.Plugins.Serializers.Json;
 using RayTree.Plugins.Compressors.Gzip;
 
@@ -33,11 +35,13 @@ public class AutoInitializationTests
         Assert.That(tracker, Is.Not.Null);
 
         // Verify we can track changes
-        var change = new EntityChange
+        var change = new EntityChange<AutoInitTestEntity>
         {
-            EntityType = typeof(AutoInitTestEntity).AssemblyQualifiedName!,
+            EntityType = typeof(AutoInitTestEntity).FullName!,
+            EntityId = "1",
             ChangeType = ChangeType.Insert,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            State = new AutoInitTestEntity { Id = 1 }
         };
 
         await tracker.TrackChangeAsync(change);

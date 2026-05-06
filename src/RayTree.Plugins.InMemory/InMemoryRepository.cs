@@ -1,5 +1,5 @@
 using System.Collections.Concurrent;
-using RayTree.Models;
+using RayTree.Core.Plugins.Repository;
 
 namespace RayTree.Plugins.InMemory;
 

@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using System.Threading.Channels;
-using RayTree.Models;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Publisher;
 using RayTree.Plugins;
 
 namespace RayTree.Plugins.InMemory;

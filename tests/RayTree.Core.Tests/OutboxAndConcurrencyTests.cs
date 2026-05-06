@@ -1,9 +1,9 @@
-using System.IO.Pipelines;
 using Moq;
-using RayTree.Distribution;
-using RayTree.Models;
+using RayTree.Core.Distribution;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Outbox;
+using RayTree.Core.Tracking;
 using RayTree.Plugins;
-using RayTree.Tracking;
 
 namespace RayTree.Core.Tests;
 
@@ -61,7 +61,7 @@ public class OutboxPublisherServiceTests
     {
         var tracker = new EntityChangeTracker();
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromSeconds(1) };
-        var service = new OutboxPublisherService(tracker, options);
+        var service = new OutboxPublisherService(tracker, typeof(DummyEntity), options);
 
         await service.StartAsync();
 
@@ -75,36 +75,46 @@ public class OutboxPublisherServiceTests
     {
         var tracker = new EntityChangeTracker();
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromHours(1) };
-        var service = new OutboxPublisherService(tracker, options);
+        var service = new OutboxPublisherService(tracker, typeof(DummyEntity), options);
 
         Assert.DoesNotThrow(() => service.Dispose());
     }
+
+    private class DummyEntity { public int Id { get; set; } }
 }
 
 public class ConcurrentChangeDetectionTests
 {
+    private class SampleEntity
+    {
+        public int Id { get; set; }
+    }
+
     [Test]
-    public async Task TrackChangesAsync_IsThreadSafe_WithConcurrentCalls()
+    public async Task TrackChangeAsync_IsThreadSafe_WithConcurrentCalls()
     {
         var tracker = new EntityChangeTracker();
         var outbox = new Mock<IOutbox>();
-        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange>(), It.IsAny<CancellationToken>()))
+        outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        tracker.RegisterOutbox(typeof(object), outbox.Object);
+        tracker.RegisterOutbox(typeof(SampleEntity), outbox.Object);
 
         var tasks = Enumerable.Range(0, 100).Select(async i =>
         {
-            var changes = new[]
+            var change = new EntityChange<SampleEntity>
             {
-                new EntityChange { EntityType = typeof(object).AssemblyQualifiedName!, EntityId = i.ToString(), ChangeType = ChangeType.Insert }
+                EntityType = typeof(SampleEntity).FullName!,
+                EntityId = i.ToString(),
+                ChangeType = ChangeType.Insert,
+                State = new SampleEntity { Id = i }
             };
-            await tracker.TrackChangesAsync(changes);
+            await tracker.TrackChangeAsync(change);
         });
 
         await Task.WhenAll(tasks);
 
-        outbox.Verify(o => o.WriteAsync(It.IsAny<EntityChange>(), It.IsAny<CancellationToken>()), Times.Exactly(100));
+        outbox.Verify(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()), Times.Exactly(100));
     }
 
     [Test]
@@ -112,7 +122,7 @@ public class ConcurrentChangeDetectionTests
     {
         var tracker = new EntityChangeTracker();
         var outboxes = Enumerable.Range(0, 50).Select(i => new Mock<IOutbox>().Object).ToArray();
-        var types = Enumerable.Range(0, 50).Select(_ => typeof(object)).ToArray();
+        var types = Enumerable.Range(0, 50).Select(_ => typeof(SampleEntity)).ToArray();
 
         var registerTask = Task.Run(() =>
         {

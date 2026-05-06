@@ -1,12 +1,17 @@
-using Microsoft.Extensions.DependencyInjection;
-using RayTree.Plugins.RabbitMQ;
+using RayTree.Core.Plugins.Publisher;
+using RayTree.Core.Tracking;
 
-namespace RayTree.Plugins;
+namespace RayTree.Plugins.RabbitMQ;
 
 public static class RabbitMqBuilderExtensions
 {
-    public static IChangeTrackingBuilder UseRabbitMq(this IChangeTrackingBuilder builder, Action<RabbitMqPublisherOptions> configure)
+    public static IChangeTrackingBuilder UseRabbitMq(
+        this IChangeTrackingBuilder builder,
+        Action<RabbitMqPublisherOptions> configure)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
         var options = new RabbitMqPublisherOptions();
         configure(options);
         return builder.UseQueue<IQueuePublisher>(_ => new RabbitMqPublisher(options));
@@ -18,6 +23,10 @@ public static class RabbitMqBuilderExtensions
         string exchangeType = "topic",
         bool durable = true)
     {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(exchangeType);
+        ArgumentNullException.ThrowIfNull(exchangeName);
+
         options.ExchangeName = exchangeName;
         options.ExchangeType = exchangeType;
         options.Durable = durable;

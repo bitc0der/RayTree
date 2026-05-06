@@ -1,238 +1,163 @@
 # Configuration Guide
 
-RayTree supports two configuration modes: **Dependency Injection** (recommended for ASP.NET Core) and **Standalone** (for console apps, workers, or manual control).
+The primary configuration API is `ChangeTrackingBuilder`. It registers per-entity plugins, sets global defaults, and produces an `EntityChangeTracker` via `Build()` / `BuildAsync()`.
 
-## Dependency Injection Mode
+## ChangeTrackingBuilder
 
-### Basic Setup
-
-```csharp
-builder.Services.AddChangeTracking(tracking =>
-{
-    tracking.ForEntity<Product>()
-        .UsePostgreSqlOutbox(connectionString, "products");
-
-    tracking.UseJsonSerializer();
-    tracking.UseGzipCompressor();
-});
-```
-
-### Multiple DbContexts
-
-Each `DbContext` can have independent interceptor configuration:
+### Per-Entity Configuration
 
 ```csharp
-builder.Services.AddChangeTracking(tracking =>
-{
-    // Apply to all DbContexts by default
-    tracking.ForEntity<Product>()
-        .UsePostgreSqlOutbox(conn1, "products");
+var builder = new ChangeTrackingBuilder();
 
-    // Opt-out specific DbContexts
-    tracking.ExcludeDbContext<ReportingDbContext>();
-
-    // Per-DbContext overrides
-    tracking.ForDbContext<OrderDbContext>(ctx =>
+builder.ForEntity<Product>()
+    .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
     {
-        ctx.ForEntity<Order>()
-            .UsePostgreSqlOutbox(conn2, "orders")
-            .UseKafkaQueue(kafkaConn, "orders");
-    });
-});
+        ConnectionString = connectionString
+        // OutboxTableName defaults to "product_outbox"
+    }))
+    .UseQueue(new InMemoryQueue())
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseCompressor(new GzipCompressorPlugin());
+
+builder.ForEntity<Order>()
+    .UseOutbox(new PostgreSqlOutbox<Order>(new PostgreSqlOutboxOptions
+    {
+        ConnectionString = connectionString
+        // OutboxTableName defaults to "order_outbox"
+    }))
+    .UseQueue(new InMemoryQueue())
+    .UseSerializer(new ProtobufSerializerPlugin())
+    .UseCompressor(new Lz4CompressorPlugin());
+
+var tracker = builder.Build();
 ```
 
-### Per-Entity Plugin Overrides
+### Global Serializer / Compressor
+
+Extension methods on `IChangeTrackingBuilder` set a default factory applied to every entity type that does not have an explicit override:
 
 ```csharp
-builder.Services.AddChangeTracking(tracking =>
+var builder = new ChangeTrackingBuilder();
+builder.UseJsonSerializer();      // RayTree.Plugins.Serializers.Json
+builder.UseGzipCompressor();      // RayTree.Plugins.Compressors.Gzip
+// builder.UseProtobufSerializer()
+// builder.UseMessagePackSerializer()
+// builder.UseLz4Compressor()
+// builder.UseBrotliCompressor()
+// builder.UseNoOpCompressor()
+
+builder.ForEntity<Product>()
+    .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
+    {
+        ConnectionString = connectionString
+    }))
+    .UseQueue(new InMemoryQueue());
+
+var tracker = builder.Build();
+```
+
+### Publisher Options
+
+Control the polling interval, batch size, and retry behaviour for all `OutboxPublisherService` instances:
+
+```csharp
+builder.UsePublisherOptions(opt =>
 {
-    // Global defaults
-    tracking.UseJsonSerializer();
-    tracking.UseGzipCompressor();
-
-    // Product: JSON + Gzip (uses defaults)
-    tracking.ForEntity<Product>()
-        .UsePostgreSqlOutbox(conn, "products");
-
-    // Order: Protobuf + LZ4 (overrides)
-    tracking.ForEntity<Order>()
-        .UsePostgreSqlOutbox(conn, "orders")
-        .UseProtobufSerializer()
-        .UseLz4Compressor();
-
-    // AuditLog: MessagePack + NoOp
-    tracking.ForEntity<AuditLog>()
-        .UsePostgreSqlOutbox(conn, "audit_logs")
-        .UseMessagePackSerializer()
-        .UseNoOpCompressor();
+    opt.PollingInterval = TimeSpan.FromSeconds(5);
+    opt.BatchSize       = 100;
+    opt.MaxRetryCount   = 3;
+    opt.RetryDelay      = TimeSpan.FromSeconds(2);
 });
 ```
 
-### appsettings.json Configuration
+### PostgreSQL Repository
 
-```json
-{
-  "ChangeTracking": {
-    "Publisher": {
-      "PollingInterval": "00:00:05",
-      "BatchSize": 100,
-      "RetryCount": 3
-    },
-    "Notification": {
-      "Channel": "entity_changes",
-      "EnableFallbackPolling": true,
-      "FallbackPollingInterval": "00:00:30"
-    },
-    "Outbox": {
-      "RetentionPeriod": "7.00:00:00",
-      "CleanupInterval": "1.00:00:00"
-    }
-  }
-}
+Register a source table alongside the outbox:
+
+```csharp
+builder.ForEntity<Product>()
+    .UseRepository(new PostgreSqlRepository<Product>(new PostgreSqlRepositoryOptions
+    {
+        ConnectionString = connectionString
+        // TableName defaults to "product"
+    }))
+    .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
+    {
+        ConnectionString = connectionString
+    }))
+    .UseQueue(new InMemoryQueue())
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseCompressor(new GzipCompressorPlugin());
 ```
 
 ### Outbox Notification Mode (Low-Latency)
 
-```csharp
-tracking.ForEntity<Product>()
-    .UsePostgreSqlOutbox(conn, "products", config =>
-    {
-        config.UseNotificationChannel("entity_changes");
-        config.WithFallbackPolling(TimeSpan.FromSeconds(30));
-    });
-```
-
-This uses PostgreSQL `NOTIFY/LISTEN` for near-instant change detection, with automatic fallback to polling if the connection drops.
-
-## Standalone Mode
-
-For console applications or scenarios without a DI container:
+Enable PostgreSQL `NOTIFY/LISTEN` on the outbox, then create a `NotificationBasedPublisher` alongside the tracker:
 
 ```csharp
-var config = new ChangeTrackingConfiguration()
-    .UsePostgreSqlOutbox(connectionString, "products")
-    .UseRabbitMqQueue("amqp://localhost", "products", "product_exchange")
-    .UseJsonSerializer()
-    .UseGzipCompressor();
-
-// Build() automatically initializes database schemas and queues
-var tracker = config.Build();
-
-// For async contexts, use BuildAsync()
-// var tracker = await config.BuildAsync();
-
-// Start the publisher
-await config.StartPublisherAsync();
-
-// Track changes
-await tracker.TrackChangesAsync(changes);
-
-// Stop when done
-await config.StopPublisherAsync();
-```
-
-### Auto-Initialization
-
-When you call `Build()` or `BuildAsync()`, RayTree automatically:
-
-1. **Initializes storage** - Creates source tables, outbox tables, triggers, and indexes (PostgreSQL)
-2. **Initializes queues** - Creates exchanges/queues (RabbitMQ), topics (Kafka), or no-op (InMemory)
-3. **Is idempotent** - Uses `IF NOT EXISTS` and `CREATE OR REPLACE` - safe to call multiple times
-
-```csharp
-// Automatic initialization on Build()
-var tracker = config.Build(); // Initializes everything
-
-// Async version for non-blocking initialization
-var tracker = await config.BuildAsync();
-```
-
-### Repository Registration
-
-You can now register repositories for entities, which will also be auto-initialized:
-
-```csharp
-var config = new ChangeTrackingConfiguration()
-    .ForEntity<Product>()
-        .UseRepository(new PostgreSqlRepository<Product>(options))
-        .UseOutbox(new PostgreSqlOutbox(outboxOptions))
-        .UseQueue(new RabbitMqPublisher(queueOptions))
-    .UseJsonSerializer()
-    .UseGzipCompressor();
-
-var tracker = config.Build(); // Initializes repository, outbox, and queue
-```
-
-### Resource Cleanup
-
-```csharp
-await using var config = new ChangeTrackingConfiguration()
-    .UseInMemoryOutbox()
-    .UseInMemoryQueue();
-
-var tracker = config.Build();
-// ... use tracker ...
-// Dispose() called automatically by await using
-```
-
-## Subscriber Configuration
-
-### DI Mode
-
-```csharp
-builder.Services.AddChangeSubscriber(subscriber =>
+var outboxOptions = new PostgreSqlOutboxOptions
 {
-    subscriber.ForEntity<Product>()
-        .FromRabbitMq("product_exchange", "product_queue")
-        .UseJsonSerializer()
-        .UseGzipCompressor()
-        .OnInsert(p => HandleNewProduct(p))
-        .OnUpdate(p => HandleUpdatedProduct(p))
-        .OnDelete(p => HandleDeletedProduct(p));
+    ConnectionString = connectionString
+};
+outboxOptions.UseNotificationChannel("product_notify")
+             .WithFallbackPolling(TimeSpan.FromSeconds(30));
 
-    subscriber.ForEntity<Order>()
-        .FromKafka("orders-topic", "order-consumer-group")
-        .UseProtobufSerializer()
-        .UseLz4Compressor()
-        .OnChange((change, order) => HandleAnyChange(change, order));
+builder.ForEntity<Product>()
+    .UseOutbox(new PostgreSqlOutbox<Product>(outboxOptions))
+    .UseQueue(new InMemoryQueue())
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseCompressor(new GzipCompressorPlugin());
+
+var tracker = builder.Build(); // creates table + trigger
+
+var notificationPublisher = new NotificationBasedPublisher(tracker, new NotificationBasedPublisherOptions
+{
+    ConnectionString    = connectionString,
+    ChannelName         = "product_notify",
+    FallbackPollingInterval = TimeSpan.FromSeconds(30)
 });
+
+await notificationPublisher.StartAsync();
 ```
 
-### Standalone Subscriber
+See [trigger-setup.md](trigger-setup.md) for full details and hosting in ASP.NET Core.
+
+## ChangeTrackingConfiguration
+
+`ChangeTrackingConfiguration` is a thin wrapper around `ChangeTrackingBuilder` that adds `WithPollingInterval()` and `WithBatchSize()` convenience methods. It does **not** expose per-entity fluent configuration — use `ChangeTrackingBuilder` directly for most scenarios.
 
 ```csharp
-var subscriberConfig = new ChangeSubscriberConfiguration()
-    .ForEntity<Product>()
-        .FromInMemory()
-        .UseJsonSerializer()
-        .OnInsert(p => Console.WriteLine($"New: {p.Name}"));
+var config = new ChangeTrackingConfiguration()
+    .WithPollingInterval(TimeSpan.FromSeconds(5))
+    .WithBatchSize(50);
 
-var subscriber = subscriberConfig.Build();
-await subscriber.StartAsync();
+// Register per-entity via the underlying builder factory methods
+config.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
+config.UseCompressor<IChangeCompressor>(_ => new GzipCompressorPlugin());
+config.UseOutbox<IOutbox>(_ => new InMemoryOutbox());
+config.UseQueue<IQueuePublisher>(_ => new InMemoryQueue());
 
-// Process messages manually
-await subscriber.ProcessMessageAsync(rabbitMqMessage);
+var tracker = config.Build();
 ```
 
-### Deduplication
+## Tracking Changes
 
 ```csharp
-subscriber.ForEntity<Product>()
-    .FromRabbitMq("exchange", "queue")
-    .UseDeduplication(new RedisDeduplicationStore("localhost:6379"))
-    .OnInsert(p => HandleProduct(p));
+// Typed convenience methods
+await tracker.TrackInsertAsync(new Product { Id = 1, Name = "Widget" });
+await tracker.TrackUpdateAsync(new Product { Id = 1, Name = "Widget Pro" });
+await tracker.TrackDeleteAsync(new Product { Id = 1, Name = "Widget Pro" });
+
+// Generic overload (when change type is dynamic)
+await tracker.TrackChangeAsync(entity, ChangeType.Insert);
 ```
 
-### Error Handling
+## Cleanup
 
 ```csharp
-subscriber.ForEntity<Product>()
-    .FromRabbitMq("exchange", "queue")
-    .OnErrorPolicy(ErrorHandlingPolicy.Retry(3, TimeSpan.FromSeconds(5)))
-    .OnInsert(p => HandleProduct(p));
-```
+// EntityChangeTracker is IDisposable — stops all publisher services
+tracker.Dispose();
 
-Available policies:
-- `ErrorHandlingPolicy.Retry(maxRetries, delay)` - Retry with fixed delay
-- `ErrorHandlingPolicy.Skip()` - Log and skip failed messages
-- `ErrorHandlingPolicy.DeadLetter(queue)` - Send to dead-letter queue
+// Or use 'using'
+using var tracker = builder.Build();
+```

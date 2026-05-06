@@ -9,7 +9,7 @@ public class ChangeSubscriberHostedService : IHostedService
 
     public ChangeSubscriberHostedService(ChangeSubscriber subscriber)
     {
-        _subscriber = subscriber;
+        _subscriber = subscriber ?? throw new ArgumentNullException(nameof(subscriber));
     }
 
     public Task StartAsync(CancellationToken cancellationToken)

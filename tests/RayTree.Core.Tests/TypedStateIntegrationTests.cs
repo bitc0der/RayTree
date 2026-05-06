@@ -1,5 +1,8 @@
 ﻿using System.IO.Pipelines;
-using RayTree.Models;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Tracking;
 using RayTree.Plugins;
 using RayTree.Plugins.Compressors.Brotli;
 using RayTree.Plugins.Compressors.Gzip;
@@ -7,7 +10,6 @@ using RayTree.Plugins.Compressors.Lz4;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.Serializers.Json;
 using RayTree.Plugins.Serializers.Protobuf;
-using RayTree.Tracking;
 
 namespace RayTree.Core.Tests;
 
@@ -227,23 +229,6 @@ public class OutboxTypedStatePersistenceTests
         Assert.That(inserts[0].State!.Name, Is.EqualTo("A"));
     }
 
-    [Test]
-    public async Task InMemoryOutbox_WriteNonGeneric_AndReadViaBaseType_Works()
-    {
-        var outbox = new InMemoryOutbox();
-        var change = new EntityChange
-        {
-            EntityType = "LegacyEntity",
-            EntityId = "99",
-            ChangeType = ChangeType.Update
-        };
-
-        await outbox.WriteAsync(change);
-        var all = await outbox.GetUnpublishedAsync(10);
-
-        Assert.That(all, Has.Count.EqualTo(1));
-        Assert.That(all[0].EntityType, Is.EqualTo("LegacyEntity"));
-    }
 }
 
 /// <summary>Shared test entity — must be public so code-generation-based serializers (e.g. MessagePack) can access it.</summary>
@@ -269,6 +254,7 @@ public class SerializationTypedStateTests
     };
 
     private static async Task<byte[]> SerializeGenericAsync<TEntity>(IChangeSerializer serializer, EntityChange<TEntity> change)
+        where TEntity : class
     {
         var pipe = new Pipe();
         await serializer.SerializeAsync(change, pipe.Writer);
@@ -283,7 +269,10 @@ public class SerializationTypedStateTests
         return ms.ToArray();
     }
 
-    private static async Task<EntityChange<TEntity>> DeserializeGenericAsync<TEntity>(IChangeSerializer serializer, byte[] data)
+    private static async Task<EntityChange<TEntity>> DeserializeGenericAsync<TEntity>(
+        IChangeSerializer serializer,
+        byte[] data)
+        where TEntity : class
     {
         var pipe = new Pipe();
         await pipe.Writer.WriteAsync(data);
@@ -375,7 +364,7 @@ public class SerializationTypedStateTests
         var src = new Pipe();
         var dst = new Pipe();
         await src.Writer.WriteAsync(data);
-        src.Writer.Complete();
+        await src.Writer.CompleteAsync();
         await compressor.CompressAsync(src.Reader, dst.Writer);
         return await ReadPipeAsync(dst.Reader);
     }
@@ -385,7 +374,7 @@ public class SerializationTypedStateTests
         var src = new Pipe();
         var dst = new Pipe();
         await src.Writer.WriteAsync(data);
-        src.Writer.Complete();
+        await src.Writer.CompleteAsync();
         await compressor.DecompressAsync(src.Reader, dst.Writer);
         return await ReadPipeAsync(dst.Reader);
     }
@@ -404,85 +393,3 @@ public class SerializationTypedStateTests
     }
 }
 
-/// <summary>5.8 Verify backward compatibility: non-generic EntityChange still works.</summary>
-public class BackwardCompatibilityTests
-{
-    [Test]
-    public async Task NonGenericEntityChange_CanBeTrackedAndWrittenToOutbox()
-    {
-        var tracker = new EntityChangeTracker();
-        var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(object), outbox);
-
-        var change = new EntityChange
-        {
-            EntityType = typeof(object).AssemblyQualifiedName!,
-            EntityId = "legacy-1",
-            ChangeType = ChangeType.Update
-        };
-
-        await tracker.TrackChangeAsync(change);
-
-        var all = await outbox.GetUnpublishedAsync(10);
-        Assert.That(all, Has.Count.EqualTo(1));
-        Assert.That(all[0].EntityId, Is.EqualTo("legacy-1"));
-    }
-
-    [Test]
-    public async Task NonGenericEntityChange_SerializesAndDeserializesCorrectly()
-    {
-        var serializer = new JsonSerializerPlugin();
-        var change = new EntityChange
-        {
-            EntityType = "LegacyEntity",
-            EntityId = "old-42",
-            ChangeType = ChangeType.Delete,
-            Version = 1
-        };
-
-        var pipe = new Pipe();
-        await serializer.SerializeAsync(change, pipe.Writer);
-
-        var deserialized = await serializer.DeserializeAsync(pipe.Reader, "LegacyEntity");
-
-        Assert.That(deserialized.EntityId, Is.EqualTo("old-42"));
-        Assert.That(deserialized.ChangeType, Is.EqualTo(ChangeType.Delete));
-    }
-
-    [Test]
-    public async Task TrackChangesAsync_BatchWithNonGenericChanges_SetsCorrelationId()
-    {
-        var tracker = new EntityChangeTracker();
-        var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(object), outbox);
-
-        var changes = new[]
-        {
-            new EntityChange { EntityType = typeof(object).AssemblyQualifiedName!, EntityId = "1", ChangeType = ChangeType.Insert },
-            new EntityChange { EntityType = typeof(object).AssemblyQualifiedName!, EntityId = "2", ChangeType = ChangeType.Update }
-        };
-
-        await tracker.TrackChangesAsync(changes);
-
-        Assert.That(changes[0].CorrelationId, Is.EqualTo(changes[1].CorrelationId));
-        Assert.That(changes[0].CorrelationId, Is.Not.EqualTo(Guid.Empty));
-    }
-
-    [Test]
-    public async Task GenericAndNonGeneric_CanCoexistInSameOutbox_RetrievableIndependently()
-    {
-        var outbox = new InMemoryOutbox();
-        var baseChange = new EntityChange { EntityType = "Base", EntityId = "b-1", ChangeType = ChangeType.Insert };
-        var typedChange = new EntityChange<string> { EntityType = "Typed", EntityId = "t-1", ChangeType = ChangeType.Insert, State = "hello" };
-
-        await outbox.WriteAsync(baseChange);
-        await outbox.WriteAsync(typedChange);
-
-        var all = await outbox.GetUnpublishedAsync(10);
-        Assert.That(all, Has.Count.EqualTo(2));
-
-        var typed = await outbox.GetUnpublishedAsync<string>(10);
-        Assert.That(typed, Has.Count.EqualTo(1));
-        Assert.That(typed[0].State, Is.EqualTo("hello"));
-    }
-}

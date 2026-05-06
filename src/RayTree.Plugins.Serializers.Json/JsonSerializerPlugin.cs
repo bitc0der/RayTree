@@ -1,8 +1,7 @@
 using System.IO.Pipelines;
 using System.Text.Json;
-using RayTree.Models;
-using RayTree.Plugins;
-using RayTree.Tracking;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Serialization;
 
 namespace RayTree.Plugins.Serializers.Json;
 
@@ -12,25 +11,24 @@ public class JsonSerializerPlugin : IChangeSerializer
 
     private static readonly JsonSerializerOptions DefaultOptions = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false
     };
 
-    public async Task SerializeAsync(EntityChange change, PipeWriter writer, CancellationToken cancellationToken = default)
+    public async Task SerializeAsync<TEntity>(
+        EntityChange<TEntity> change,
+        PipeWriter writer,
+        CancellationToken cancellationToken = default)
+        where TEntity : class
     {
         await JsonSerializer.SerializeAsync(writer.AsStream(), change, DefaultOptions, cancellationToken);
         await writer.FlushAsync(cancellationToken);
         await writer.CompleteAsync();
     }
 
-    public async Task SerializeAsync<TEntity>(EntityChange<TEntity> change, PipeWriter writer, CancellationToken cancellationToken = default)
-    {
-        await JsonSerializer.SerializeAsync(writer.AsStream(), change, DefaultOptions, cancellationToken);
-        await writer.FlushAsync(cancellationToken);
-        await writer.CompleteAsync();
-    }
-
-    public async Task<EntityChange> DeserializeAsync(PipeReader reader, string entityType, CancellationToken cancellationToken = default)
+    public async Task<EntityChange<TEntity>> DeserializeAsync<TEntity>(
+        PipeReader reader,
+        CancellationToken cancellationToken = default)
+        where TEntity : class
     {
         var result = await reader.ReadAsync(cancellationToken);
         var buffer = result.Buffer;
@@ -42,33 +40,11 @@ public class JsonSerializerPlugin : IChangeSerializer
             {
                 await ms.WriteAsync(segment, cancellationToken);
             }
+
             ms.Position = 0;
 
-            var entityChange = await JsonSerializer.DeserializeAsync<EntityChange>(ms, DefaultOptions, cancellationToken);
-            reader.AdvanceTo(buffer.End);
-            return entityChange ?? throw new InvalidOperationException("Deserialized entity change is null");
-        }
-        finally
-        {
-            await reader.CompleteAsync();
-        }
-    }
-
-    public async Task<EntityChange<TEntity>> DeserializeAsync<TEntity>(PipeReader reader, CancellationToken cancellationToken = default)
-    {
-        var result = await reader.ReadAsync(cancellationToken);
-        var buffer = result.Buffer;
-
-        try
-        {
-            using var ms = new MemoryStream();
-            foreach (var segment in buffer)
-            {
-                await ms.WriteAsync(segment, cancellationToken);
-            }
-            ms.Position = 0;
-
-            var entityChange = await JsonSerializer.DeserializeAsync<EntityChange<TEntity>>(ms, DefaultOptions, cancellationToken);
+            var entityChange =
+                await JsonSerializer.DeserializeAsync<EntityChange<TEntity>>(ms, DefaultOptions, cancellationToken);
             reader.AdvanceTo(buffer.End);
             return entityChange ?? throw new InvalidOperationException("Deserialized entity change is null");
         }

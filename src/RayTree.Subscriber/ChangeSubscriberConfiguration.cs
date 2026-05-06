@@ -1,8 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
-using RayTree.Models;
-using RayTree.Plugins;
-using RayTree.Plugins.InMemory;
-using RayTree.Tracking;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Tracking;
+using RayTree.Subscriber.Plugins.Deduplication;
 
 namespace RayTree.Subscriber;
 
@@ -14,7 +14,7 @@ public class ChangeSubscriberConfiguration
 
     public ChangeSubscriberConfiguration(IServiceCollection services)
     {
-        _services = services;
+        _services = services ?? throw new ArgumentNullException(nameof(services));
         _subscriber = new ChangeSubscriber();
     }
 
@@ -22,25 +22,6 @@ public class ChangeSubscriberConfiguration
     {
         ThrowIfBuilt();
         _subscriber.ForEntity<T>();
-        return this;
-    }
-
-    public ChangeSubscriberConfiguration FromKafka<T>(string bootstrapServers, string topic)
-    {
-        ThrowIfBuilt();
-        return this;
-    }
-
-    public ChangeSubscriberConfiguration FromRabbitMq<T>(string hostName, string exchangeName, string routingKey)
-    {
-        ThrowIfBuilt();
-        return this;
-    }
-
-    public ChangeSubscriberConfiguration FromInMemory<T>(InMemoryQueue queue)
-    {
-        ThrowIfBuilt();
-        _services.AddSingleton(queue);
         return this;
     }
 

@@ -1,4 +1,4 @@
-namespace RayTree.Distribution;
+namespace RayTree.Core.Distribution;
 
 public class OutboxPublisherOptions
 {

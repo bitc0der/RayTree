@@ -1,0 +1,51 @@
+﻿using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Outbox;
+using RayTree.Core.Plugins.Publisher;
+using RayTree.Core.Plugins.Repository;
+using RayTree.Core.Plugins.Serialization;
+
+namespace RayTree.Core.Tracking;
+
+internal class EntityBuilder(ChangeTrackingBuilder parent, Type entityType)
+    : IEntityBuilder
+{
+    public IEntityBuilder UseRepository(IRepository repository)
+    {
+        ArgumentNullException.ThrowIfNull(repository);
+
+        parent.AddRepositoryOverride(entityType, repository);
+        return this;
+    }
+
+    public IEntityBuilder UseOutbox(IOutbox outbox)
+    {
+        ArgumentNullException.ThrowIfNull(outbox);
+
+        parent.AddOutboxOverride(entityType, outbox);
+        return this;
+    }
+
+    public IEntityBuilder UseQueue(IQueuePublisher queue)
+    {
+        ArgumentNullException.ThrowIfNull(queue);
+
+        parent.AddQueueOverride(entityType, queue);
+        return this;
+    }
+
+    public IEntityBuilder UseSerializer(IChangeSerializer serializer)
+    {
+        ArgumentNullException.ThrowIfNull(serializer);
+
+        parent.AddSerializerOverride(entityType, serializer);
+        return this;
+    }
+
+    public IEntityBuilder UseCompressor(IChangeCompressor compressor)
+    {
+        ArgumentNullException.ThrowIfNull(compressor);
+
+        parent.AddCompressorOverride(entityType, compressor);
+        return this;
+    }
+}

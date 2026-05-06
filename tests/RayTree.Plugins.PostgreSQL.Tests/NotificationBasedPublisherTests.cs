@@ -1,12 +1,11 @@
-using System.IO.Pipelines;
 using Npgsql;
-using RayTree.Models;
-using RayTree.Plugins;
-using RayTree.Plugins.InMemory;
-using RayTree.Tracking;
-using RayTree.Distribution;
-using RayTree.Plugins.Serializers.Json;
+using RayTree.Core.Models;
+using RayTree.Core.Tracking;
 using RayTree.Plugins.Compressors.Gzip;
+using RayTree.Plugins.InMemory;
+using RayTree.Plugins.PostgreSQL.Outbox;
+using RayTree.Plugins.PostgreSQL.Outbox.Notification;
+using RayTree.Plugins.Serializers.Json;
 using Testcontainers.PostgreSql;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
@@ -20,42 +19,48 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
 
     private EntityChangeTracker _tracker = null!;
     private InMemoryQueue _queue = null!;
+    private PostgreSqlOutbox<TestEntity> _outbox = null!;
     private NotificationBasedPublisher _publisher = null!;
+
+    private const string OutboxTable = "notification_test_outbox";
+    private const string ChannelName = "notification_test_channel";
 
     [OneTimeSetUp]
     public async Task OneTimeSetUp()
     {
         await _postgres.StartAsync();
-        // Auto-init happens via Build()
     }
 
     [SetUp]
-    public void SetUp()
+    public async Task SetUp()
     {
-        // Create fresh tracker with auto-init for each test
+        _queue = new InMemoryQueue();
+
+        _outbox = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
+        {
+            ConnectionString = _postgres.GetConnectionString(),
+            OutboxTableName = OutboxTable,
+            UseNotificationChannel = true,
+            NotificationChannel = ChannelName
+        });
+
+        // Initialize outbox directly: creates table + trigger without starting background publisher services
+        await _outbox.InitializeAsync();
+
         var builder = new ChangeTrackingBuilder();
         builder.ForEntity<TestEntity>()
-            .UseRepository(new PostgreSqlRepository<TestEntity>(new()
-            {
-                ConnectionString = _postgres.GetConnectionString(),
-                TableName = "test_entity_source"
-            }))
-            .UseOutbox(new PostgreSqlOutbox(new()
-            {
-                ConnectionString = _postgres.GetConnectionString(),
-                OutboxTableName = "test_entity_outbox"
-            }))
-            .UseQueue(new InMemoryQueue())
+            .UseOutbox(_outbox)
+            .UseQueue(_queue)
             .UseSerializer(new JsonSerializerPlugin())
             .UseCompressor(new GzipCompressorPlugin());
 
-        _tracker = builder.Build(); // Auto-creates source table + triggers + outbox table
-        _queue = new InMemoryQueue();
+        _tracker = builder.Build();
+
         _publisher = new NotificationBasedPublisher(_tracker, new NotificationBasedPublisherOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            ChannelName = "notify_test_entity_change",
-            FallbackPollingInterval = TimeSpan.FromSeconds(1)
+            ChannelName = ChannelName,
+            FallbackPollingInterval = TimeSpan.FromMilliseconds(300)
         });
     }
 
@@ -63,41 +68,27 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
     public async Task TearDown()
     {
         await _publisher.StopAsync();
-        // Clear outbox table for next test
+        _tracker.Dispose();
+
         await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
         await conn.OpenAsync();
-        await using var cmd = new NpgsqlCommand("TRUNCATE test_entity_outbox RESTART IDENTITY", conn);
+        await using var cmd = new NpgsqlCommand($"TRUNCATE {OutboxTable} RESTART IDENTITY", conn);
         await cmd.ExecuteNonQueryAsync();
     }
 
     public ValueTask DisposeAsync() => _postgres.DisposeAsync();
 
-    [Test]
-    public async Task StartAsync_ShouldListenForNotifications()
+    private static EntityChange<TestEntity> CreateChange(int id) => new()
     {
-        await _publisher.StartAsync();
-
-        // Insert a change via the outbox
-        var outbox = _tracker.GetOutbox(typeof(TestEntity)) as PostgreSqlOutbox;
-        var change = new EntityChange
-        {
-            EntityType = typeof(TestEntity).AssemblyQualifiedName!,
-            EntityId = Guid.NewGuid().ToString(),
-            ChangeType = ChangeType.Insert,
-            Timestamp = DateTime.UtcNow
-        };
-
-        await outbox!.WriteAsync(change);
-
-        // Wait for notification to be received
-        await Task.Delay(2000);
-
-        // Verify the publisher received the notification
-        Assert.That(_publisher.IsRunning, Is.True);
-    }
+        EntityType = typeof(TestEntity).FullName!,
+        EntityId = id.ToString(),
+        ChangeType = ChangeType.Insert,
+        Timestamp = DateTime.UtcNow,
+        State = new TestEntity { Id = id }
+    };
 
     [Test]
-    public async Task StopAsync_ShouldStopListening()
+    public async Task StartAsync_SetsIsRunning_StopAsync_ClearsIt()
     {
         await _publisher.StartAsync();
         Assert.That(_publisher.IsRunning, Is.True);
@@ -107,27 +98,81 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
     }
 
     [Test]
-    public async Task HandleNotification_ShouldPublishToQueue()
+    public async Task FallbackPolling_DeliversUnpublishedChange_ToQueue()
     {
+        var change = CreateChange(1);
+        await _outbox.WriteAsync(change);
+
         await _publisher.StartAsync();
 
-        // Insert a change via the outbox (triggers notification)
-        var outbox = _tracker.GetOutbox(typeof(TestEntity)) as PostgreSqlOutbox;
-        var change = new EntityChange
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var (received, _) = await _queue.Reader.ReadAsync(cts.Token);
+
+        Assert.That(received.EntityId, Is.EqualTo("1"));
+        Assert.That(received.ChangeType, Is.EqualTo(ChangeType.Insert));
+    }
+
+    [Test]
+    public async Task FallbackPolling_DoesNotRedeliver_AlreadyPublishedChange()
+    {
+        var change = CreateChange(2);
+        await _outbox.WriteAsync(change);
+        await _outbox.MarkPublishedAsync(change.Id);
+
+        await _publisher.StartAsync();
+        await Task.Delay(700); // > 2× fallback interval
+
+        Assert.That(_queue.Reader.TryRead(out _), Is.False);
+    }
+
+    [Test]
+    public async Task FallbackPolling_MarksChangePublished_AfterDelivery()
+    {
+        var change = CreateChange(3);
+        await _outbox.WriteAsync(change);
+
+        await _publisher.StartAsync();
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await _queue.Reader.ReadAsync(cts.Token);
+
+        // Allow mark-published write to complete
+        await Task.Delay(200);
+
+        var stored = await _outbox.GetByIdAsync<TestEntity>(change.Id);
+        Assert.That(stored!.Published, Is.True);
+    }
+
+    [Test]
+    public async Task StopAsync_PreventsDelivery_OfSubsequentWrites()
+    {
+        await _publisher.StartAsync();
+        await _publisher.StopAsync();
+
+        await _outbox.WriteAsync(CreateChange(4));
+        await Task.Delay(700); // > 2× fallback interval
+
+        Assert.That(_queue.Reader.TryRead(out _), Is.False);
+    }
+
+    [Test]
+    public async Task FallbackPolling_DeliversBatch_OfMultipleChanges()
+    {
+        for (var i = 1; i <= 5; i++)
+            await _outbox.WriteAsync(CreateChange(i));
+
+        await _publisher.StartAsync();
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var received = new List<EntityChange>();
+        for (var i = 0; i < 5; i++)
         {
-            EntityType = typeof(TestEntity).AssemblyQualifiedName!,
-            EntityId = Guid.NewGuid().ToString(),
-            ChangeType = ChangeType.Insert,
-            Timestamp = DateTime.UtcNow
-        };
+            var (change, _) = await _queue.Reader.ReadAsync(cts.Token);
+            received.Add(change);
+        }
 
-        await outbox!.WriteAsync(change);
-
-        // Wait for notification and processing
-        await Task.Delay(3000);
-
-        // Verify the queue received the message
-        // (InMemoryQueue stores messages internally)
-        Assert.That(_queue, Is.Not.Null);
+        Assert.That(received, Has.Count.EqualTo(5));
+        Assert.That(received.Select(c => c.EntityId).Order(),
+            Is.EqualTo(new[] { "1", "2", "3", "4", "5" }));
     }
 }

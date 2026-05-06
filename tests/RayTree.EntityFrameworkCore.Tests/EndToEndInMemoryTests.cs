@@ -1,11 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
+using RayTree.Core.Tracking;
 using RayTree.EntityFrameworkCore.Interceptors;
-using RayTree.Models;
 using RayTree.Plugins;
 using RayTree.Plugins.Compressors.Gzip;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.Serializers.Json;
-using RayTree.Tracking;
 
 namespace RayTree.EntityFrameworkCore.Tests;
 
@@ -186,7 +187,7 @@ public class EndToEndInMemoryTests
     }
 
     [Test]
-    public async Task EfCore_TrackerDirectlyPublishesToQueue()
+    public async Task EfCore_OutboxPublisher_DeliversToQueue()
     {
         var tracker = new EntityChangeTracker();
         var queue = new InMemoryQueue();
@@ -199,21 +200,17 @@ public class EndToEndInMemoryTests
         tracker.RegisterSerializer(typeof(Product), serializer);
         tracker.RegisterCompressor(typeof(Product), compressor);
 
-        await tracker.TrackChangesAsync(new[]
-        {
-            new EntityChange
-            {
-                EntityType = typeof(Product).AssemblyQualifiedName!,
-                EntityId = "1",
-                ChangeType = ChangeType.Insert,
-                Timestamp = DateTime.UtcNow
-            }
-        });
+        tracker.PublisherOptions.PollingInterval = TimeSpan.FromMilliseconds(50);
+        await tracker.InitializeAsync();
+
+        await tracker.TrackInsertAsync(new Product { Id = 1, Name = "Widget" });
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var message = await queue.Reader.ReadAsync(cts.Token);
         Assert.That(message.Change.EntityId, Is.EqualTo("1"));
         Assert.That(message.Change.ChangeType, Is.EqualTo(ChangeType.Insert));
+
+        tracker.Dispose();
     }
 
     [Test]

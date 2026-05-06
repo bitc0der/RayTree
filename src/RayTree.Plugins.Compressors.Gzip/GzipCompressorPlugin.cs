@@ -1,6 +1,6 @@
 using System.IO.Compression;
 using System.IO.Pipelines;
-using RayTree.Plugins;
+using RayTree.Core.Plugins;
 
 namespace RayTree.Plugins.Compressors.Gzip;
 
@@ -29,6 +29,7 @@ public class GzipCompressorPlugin : IChangeCompressor
                 {
                     await gzip.WriteAsync(segment, cancellationToken);
                 }
+
                 reader.AdvanceTo(buffer.End);
                 result = await reader.ReadAsync(cancellationToken);
                 buffer = result.Buffer;
@@ -40,6 +41,7 @@ public class GzipCompressorPlugin : IChangeCompressor
                 {
                     await gzip.WriteAsync(segment, cancellationToken);
                 }
+
                 reader.AdvanceTo(buffer.End);
             }
         }
@@ -52,7 +54,8 @@ public class GzipCompressorPlugin : IChangeCompressor
         await reader.CompleteAsync();
     }
 
-    public async Task DecompressAsync(PipeReader reader, PipeWriter writer, CancellationToken cancellationToken = default)
+    public async Task DecompressAsync(PipeReader reader, PipeWriter writer,
+        CancellationToken cancellationToken = default)
     {
         using var ms = new MemoryStream();
         var result = await reader.ReadAsync(cancellationToken);
@@ -64,6 +67,7 @@ public class GzipCompressorPlugin : IChangeCompressor
             {
                 await ms.WriteAsync(segment, cancellationToken);
             }
+
             reader.AdvanceTo(buffer.End);
             result = await reader.ReadAsync(cancellationToken);
             buffer = result.Buffer;
@@ -75,6 +79,7 @@ public class GzipCompressorPlugin : IChangeCompressor
             {
                 await ms.WriteAsync(segment, cancellationToken);
             }
+
             reader.AdvanceTo(buffer.End);
         }
 

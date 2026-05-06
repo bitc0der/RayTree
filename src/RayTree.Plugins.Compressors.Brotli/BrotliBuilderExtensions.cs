@@ -1,12 +1,14 @@
-using Microsoft.Extensions.DependencyInjection;
-using RayTree.Plugins.Compressors.Brotli;
+using RayTree.Core.Plugins;
+using RayTree.Core.Tracking;
 
-namespace RayTree.Plugins;
+namespace RayTree.Plugins.Compressors.Brotli;
 
 public static class BrotliBuilderExtensions
 {
     public static IChangeTrackingBuilder UseBrotliCompressor(this IChangeTrackingBuilder builder)
     {
-        return builder.UseCompressor<IChangeCompressor>(_ => new BrotliCompressorPlugin());
+        return builder == null
+            ? throw new ArgumentNullException(nameof(builder))
+            : builder.UseCompressor<IChangeCompressor>(_ => new BrotliCompressorPlugin());
     }
 }

@@ -1,22 +1,9 @@
 using System.IO.Pipelines;
 using RabbitMQ.Client;
-using RayTree.Models;
-using RayTree.Plugins;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Publisher;
 
 namespace RayTree.Plugins.RabbitMQ;
-
-public class RabbitMqPublisherOptions
-{
-    public string HostName { get; set; } = "localhost";
-    public int Port { get; set; } = 5672;
-    public string UserName { get; set; } = "guest";
-    public string Password { get; set; } = "guest";
-    public string ExchangeName { get; set; } = "entity_changes";
-    public string RoutingKey { get; set; } = "change";
-    public bool DeclareExchange { get; set; } = true;
-    public string ExchangeType { get; set; } = "topic";
-    public bool Durable { get; set; } = true;
-}
 
 public class RabbitMqPublisher : IQueuePublisher, IDisposable
 {
@@ -27,7 +14,7 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 
     public RabbitMqPublisher(RabbitMqPublisherOptions options)
     {
-        _options = options;
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -38,12 +25,12 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 
     private IModel GetChannel()
     {
-        if (_channel != null && _channel.IsOpen)
+        if (_channel is { IsOpen: true })
             return _channel;
 
         lock (_lock)
         {
-            if (_channel != null && _channel.IsOpen)
+            if (_channel is { IsOpen: true })
                 return _channel;
 
             var factory = new ConnectionFactory
@@ -66,7 +53,10 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
         }
     }
 
-    public async Task PublishAsync(EntityChange change, PipeReader payload, CancellationToken cancellationToken = default)
+    public async Task PublishAsync(
+        EntityChange change,
+        PipeReader payload,
+        CancellationToken cancellationToken = default)
     {
         var channel = GetChannel();
 
@@ -100,6 +90,7 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
             {
                 await ms.WriteAsync(segment, cancellationToken);
             }
+
             reader.AdvanceTo(buffer.End);
             result = await reader.ReadAsync(cancellationToken);
             buffer = result.Buffer;
@@ -111,6 +102,7 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
             {
                 await ms.WriteAsync(segment, cancellationToken);
             }
+
             reader.AdvanceTo(buffer.End);
         }
 

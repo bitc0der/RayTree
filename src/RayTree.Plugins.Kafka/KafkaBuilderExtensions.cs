@@ -1,11 +1,13 @@
-using Microsoft.Extensions.DependencyInjection;
-using RayTree.Plugins.Kafka;
+using RayTree.Core.Plugins.Publisher;
+using RayTree.Core.Tracking;
 
-namespace RayTree.Plugins;
+namespace RayTree.Plugins.Kafka;
 
 public static class KafkaBuilderExtensions
 {
-    public static IChangeTrackingBuilder UseKafka(this IChangeTrackingBuilder builder, Action<KafkaPublisherOptions> configure)
+    public static IChangeTrackingBuilder UseKafka(
+        this IChangeTrackingBuilder builder,
+        Action<KafkaPublisherOptions> configure)
     {
         var options = new KafkaPublisherOptions();
         configure(options);

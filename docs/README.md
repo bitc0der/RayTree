@@ -4,111 +4,93 @@ A modular .NET 8.0 entity change tracking system with outbox pattern support, qu
 
 ## Features
 
-- **EF Core Integration** - Automatic change detection via `ISaveChangesInterceptor`
-- **Outbox Pattern** - Atomic writes within EF Core transactions, reliable distribution
-- **Dual Distribution** - PostgreSQL `NOTIFY/LISTEN` (low-latency) with fallback polling
-- **Per-Entity Plugins** - Override repository, outbox, queue, serializer, and compressor per entity type
+- **Outbox Pattern** - Reliable change distribution with at-least-once delivery guarantees
+- **Dual Distribution** - PostgreSQL `NOTIFY/LISTEN` (low-latency) with automatic fallback polling
+- **Per-Entity Plugins** - Override outbox, queue, serializer, and compressor per entity type
 - **Zero-Allocation Pipelines** - `System.IO.Pipelines` for serialization and compression
-- **Modular Plugins** - Each serializer and compressor in its own NuGet package
+- **Modular Plugins** - Each serializer and compressor in its own package
 - **In-Memory Testing** - Full in-memory implementation for development and testing
-- **Subscriber Framework** - Deduplication, error handling, dead-letter support
-- **Auto-Initialization** - Automatic database schema and queue initialization on `Build()` / `BuildAsync()`
+- **Auto-Initialization** - Automatic database schema initialization on `Build()` / `BuildAsync()`
 
 ## Quick Start
 
 ```csharp
-var builder = WebApplication.CreateBuilder(args);
+var builder = new ChangeTrackingBuilder();
 
-// 1. Add EF Core
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+builder.ForEntity<Product>()
+    .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
+    {
+        ConnectionString = connectionString
+        // OutboxTableName defaults to "product_outbox"
+    }))
+    .UseQueue(new InMemoryQueue())
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseCompressor(new GzipCompressorPlugin());
 
-// 2. Add change tracking with plugins
-builder.Services.AddChangeTracking(tracking =>
-{
-    // Register entity types
-    tracking.ForEntity<Product>()
-        .UsePostgreSqlOutbox(builder.Configuration.GetConnectionString("Default"), "products")
-        .UseRabbitMqQueue(builder.Configuration.GetConnectionString("RabbitMq"), "products", "product_exchange");
-
-    tracking.ForEntity<Order>()
-        .UsePostgreSqlOutbox(builder.Configuration.GetConnectionString("Default"), "orders")
-        .UseKafkaQueue(builder.Configuration.GetConnectionString("Kafka"), "orders");
-
-    // Global defaults
-    tracking.UseJsonSerializer();
-    tracking.UseGzipCompressor();
-});
-
-// 3. Add subscriber (optional - for consuming changes)
-builder.Services.AddChangeSubscriber(subscriber =>
-{
-    subscriber.ForEntity<Product>()
-        .FromRabbitMq("product_exchange", "product_queue")
-        .UseJsonSerializer()
-        .UseGzipCompressor()
-        .OnInsert(p => Console.WriteLine($"New product: {p.Name}"))
-        .OnUpdate(p => Console.WriteLine($"Updated product: {p.Name}"));
-});
-
-var app = builder.Build();
-
-// NOTE: Auto-initialization now happens automatically on Build() / BuildAsync()
-// No manual initialization step needed
-
-app.Run();
-```
-
-## Standalone Mode (no DI)
-
-```csharp
-var config = new ChangeTrackingConfiguration()
-    .UseInMemoryOutbox()
-    .UseInMemoryQueue()
-    .UseJsonSerializer()
-    .UseNoOpCompressor();
-
-// Build() automatically initializes storage and queues
-var tracker = config.Build();
-
-// For async contexts, use BuildAsync()
-// var tracker = await config.BuildAsync();
+// Build() automatically initializes database schema and starts publisher services
+var tracker = builder.Build();
 
 // Track changes manually
-await tracker.TrackChangesAsync(new[]
-{
-    new EntityChange
+await tracker.TrackInsertAsync(new Product { Id = 1, Name = "Widget" });
+await tracker.TrackUpdateAsync(new Product { Id = 1, Name = "Widget Pro" });
+await tracker.TrackDeleteAsync(new Product { Id = 1, Name = "Widget Pro" });
+```
+
+## Global Serializer / Compressor
+
+Set a serializer or compressor for all entity types at once using builder extension methods:
+
+```csharp
+var builder = new ChangeTrackingBuilder();
+builder.UseJsonSerializer();
+builder.UseGzipCompressor();
+
+builder.ForEntity<Product>()
+    .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
     {
-        EntityType = typeof(Product).AssemblyQualifiedName!,
-        EntityId = "1",
-        ChangeType = ChangeType.Insert,
-        Timestamp = DateTime.UtcNow
-    }
-});
+        ConnectionString = connectionString
+    }))
+    .UseQueue(new InMemoryQueue());
+
+var tracker = builder.Build();
 ```
 
 ## Auto-Initialization
 
-RayTree now automatically initializes database schemas and queues when you call `Build()` or `BuildAsync()`:
+`Build()` and `BuildAsync()` automatically call `tracker.InitializeAsync()`, which:
 
-- **Storage**: Creates source tables, outbox tables, triggers, and indexes (PostgreSQL)
-- **Queues**: Creates exchanges/queues (RabbitMQ), topics (Kafka), or no-op (InMemory)
-- **Idempotent**: Uses `IF NOT EXISTS` and `CREATE OR REPLACE` - safe to call multiple times
+- Creates outbox tables (`CREATE TABLE IF NOT EXISTS`)
+- Creates source tables if a repository is registered
+- Sets up PostgreSQL NOTIFY triggers if `UseNotificationChannel = true`
+- Starts one `OutboxPublisherService` per registered entity type
 
 ```csharp
-// Automatic initialization on Build()
-var tracker = config.Build(); // Initializes everything automatically
+// Sync (blocks until initialized)
+var tracker = builder.Build();
 
-// Or use async version
-var tracker = await config.BuildAsync(); // Same but async
+// Async
+var tracker = await builder.BuildAsync();
 ```
 
-### Disabling Auto-Init
-
-Auto-initialization is always enabled and happens automatically. If you need to control when initialization happens, use `Build()` without auto-init by manually calling `InitializeAsync()`:
+## In-Memory Mode (Testing)
 
 ```csharp
-var tracker = new EntityChangeTracker();
-// Register components...
-await tracker.InitializeAsync(); // Manual initialization
+var builder = new ChangeTrackingBuilder();
+builder.ForEntity<Product>()
+    .UseOutbox(new InMemoryOutbox())
+    .UseQueue(new InMemoryQueue())
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseCompressor(new GzipCompressorPlugin());
+
+var tracker = builder.Build();
+```
+
+## Cleanup
+
+`EntityChangeTracker` implements `IDisposable`. Disposing it stops all publisher services:
+
+```csharp
+using var tracker = builder.Build();
+// ... use tracker ...
+// Dispose() stops publisher services automatically
 ```
