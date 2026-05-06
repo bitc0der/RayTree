@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using System.Reflection;
 using System.Text.Json;
 using Npgsql;
@@ -47,7 +46,7 @@ public class NotificationBasedPublisher : IDisposable
         await using var cmd = new NpgsqlCommand($"LISTEN {_options.ChannelName}", _connection);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
 
-        _listenTask = ListenLoopAsync(_cts.Token);
+        _listenTask   = ListenLoopAsync(_cts.Token);
         _fallbackTask = FallbackPollingLoopAsync(_cts.Token);
     }
 
@@ -56,14 +55,10 @@ public class NotificationBasedPublisher : IDisposable
         _cts.Cancel();
 
         if (_listenTask != null)
-        {
             await Task.WhenAny(_listenTask, Task.Delay(5000, cancellationToken));
-        }
 
         if (_fallbackTask != null)
-        {
             await Task.WhenAny(_fallbackTask, Task.Delay(5000, cancellationToken));
-        }
 
         if (_connection != null)
         {
@@ -72,9 +67,7 @@ public class NotificationBasedPublisher : IDisposable
                 await using var cmd = new NpgsqlCommand($"UNLISTEN {_options.ChannelName}", _connection);
                 await cmd.ExecuteNonQueryAsync(CancellationToken.None);
             }
-            catch
-            {
-            }
+            catch { }
 
             await _connection.CloseAsync();
         }
@@ -88,10 +81,7 @@ public class NotificationBasedPublisher : IDisposable
             {
                 await _connection!.WaitAsync(cancellationToken);
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            catch (OperationCanceledException) { break; }
             catch (Exception)
             {
                 await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
@@ -108,19 +98,11 @@ public class NotificationBasedPublisher : IDisposable
                 await ProcessUnpublishedChangesAsync(cancellationToken);
                 await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
             }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            catch (OperationCanceledException) { break; }
             catch (Exception)
             {
-                try
-                {
-                    await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
-                }
-                catch
-                {
-                }
+                try { await Task.Delay(_options.FallbackPollingInterval, cancellationToken); }
+                catch { }
             }
         }
     }
@@ -137,8 +119,8 @@ public class NotificationBasedPublisher : IDisposable
                 var entityType = Type.GetType(payload.EntityType);
                 if (entityType == null) return;
 
-                var outbox = _tracker.GetOutbox(entityType);
-                var publisher = _tracker.GetPublisher(entityType);
+                var outbox     = _tracker.GetOutbox(entityType);
+                var publisher  = _tracker.GetPublisher(entityType);
                 var serializer = _tracker.GetSerializer(entityType);
                 var compressor = _tracker.GetCompressor(entityType);
 
@@ -148,9 +130,7 @@ public class NotificationBasedPublisher : IDisposable
                 await PublishChangeAsync(change, entityType, publisher, serializer, compressor, _cts.Token);
                 await outbox.MarkPublishedAsync(change.Id, _cts.Token);
             }
-            catch (Exception)
-            {
-            }
+            catch (Exception) { }
         });
     }
 
@@ -162,15 +142,15 @@ public class NotificationBasedPublisher : IDisposable
         IChangeCompressor compressor,
         CancellationToken ct)
     {
-        var serializePipe = new Pipe();
-        var compressPipe = new Pipe();
+        using var serialized = new MemoryStream();
+        await ((Task)SerializeMethod.MakeGenericMethod(entityType).Invoke(null, [serializer, change, serialized, ct])!);
+        serialized.Position = 0;
 
-        var serializeTask = (Task)SerializeMethod.MakeGenericMethod(entityType)
-            .Invoke(null, [serializer, change, serializePipe.Writer, ct])!;
-        var compressTask = compressor.CompressAsync(serializePipe.Reader, compressPipe.Writer, ct);
-        var publishTask = publisher.PublishAsync(change, compressPipe.Reader, ct);
+        using var compressed = new MemoryStream();
+        await compressor.CompressAsync(serialized, compressed, ct);
+        compressed.Position = 0;
 
-        await Task.WhenAll(serializeTask, compressTask, publishTask);
+        await publisher.PublishAsync(change, compressed, ct);
     }
 
     private async Task ProcessUnpublishedChangesAsync(CancellationToken cancellationToken)
@@ -179,23 +159,20 @@ public class NotificationBasedPublisher : IDisposable
         {
             if (cancellationToken.IsCancellationRequested) break;
 
-            var publisher = _tracker.GetPublisher(entityType);
+            var publisher  = _tracker.GetPublisher(entityType);
             var serializer = _tracker.GetSerializer(entityType);
             var compressor = _tracker.GetCompressor(entityType);
-            var changes = await GetUnpublishedAsync(outbox, entityType, 100, cancellationToken);
+            var changes    = await GetUnpublishedAsync(outbox, entityType, 100, cancellationToken);
 
             foreach (var change in changes)
             {
                 if (cancellationToken.IsCancellationRequested) break;
-
                 try
                 {
                     await PublishChangeAsync(change, entityType, publisher, serializer, compressor, cancellationToken);
                     await outbox.MarkPublishedAsync(change.Id, cancellationToken);
                 }
-                catch
-                {
-                }
+                catch { }
             }
         }
     }
@@ -205,38 +182,26 @@ public class NotificationBasedPublisher : IDisposable
 
     private static async Task<EntityChange?> GetByIdCoreAsync<TEntity>(IOutbox outbox, long id, CancellationToken ct)
         where TEntity : class
-    {
-        return await outbox.GetByIdAsync<TEntity>(id, ct);
-    }
+        => await outbox.GetByIdAsync<TEntity>(id, ct);
 
     private static Task<IReadOnlyList<EntityChange>> GetUnpublishedAsync(
-        IOutbox outbox,
-        Type entityType,
-        int batchSize,
-        CancellationToken ct)
-    {
-        return (Task<IReadOnlyList<EntityChange>>)GetUnpublishedMethod
+        IOutbox outbox, Type entityType, int batchSize, CancellationToken ct)
+        => (Task<IReadOnlyList<EntityChange>>)GetUnpublishedMethod
             .MakeGenericMethod(entityType)
             .Invoke(null, [outbox, batchSize, ct])!;
-    }
 
     private static async Task<IReadOnlyList<EntityChange>> GetUnpublishedCoreAsync<TEntity>(
-        IOutbox outbox,
-        int batchSize,
-        CancellationToken ct)
+        IOutbox outbox, int batchSize, CancellationToken ct)
         where TEntity : class
-    {
-        return await outbox.GetUnpublishedAsync<TEntity>(batchSize, ct);
-    }
+        => await outbox.GetUnpublishedAsync<TEntity>(batchSize, ct);
 
     private static Task SerializeCoreAsync<TEntity>(
         IChangeSerializer serializer,
         EntityChange<TEntity> change,
-        PipeWriter writer, CancellationToken ct)
+        Stream destination,
+        CancellationToken ct)
         where TEntity : class
-    {
-        return serializer.SerializeAsync(change, writer, ct);
-    }
+        => serializer.SerializeAsync(change, destination, ct);
 
     public static string GenerateNotifyTriggerFunction(string functionName, string channelName)
     {
@@ -265,9 +230,7 @@ public class NotificationBasedPublisher : IDisposable
     }
 
     public static string GenerateDropTrigger(string triggerName, string outboxTableName)
-    {
-        return $"DROP TRIGGER IF EXISTS {triggerName} ON {outboxTableName};";
-    }
+        => $"DROP TRIGGER IF EXISTS {triggerName} ON {outboxTableName};";
 
     public void Dispose()
     {

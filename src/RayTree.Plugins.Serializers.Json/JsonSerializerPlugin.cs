@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using System.Text.Json;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Serialization;
@@ -14,43 +13,19 @@ public class JsonSerializerPlugin : IChangeSerializer
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = false
     };
 
-    public async Task SerializeAsync<TEntity>(
+    public Task SerializeAsync<TEntity>(
         EntityChange<TEntity> change,
-        PipeWriter writer,
+        Stream destination,
         CancellationToken cancellationToken = default)
         where TEntity : class
-    {
-        await JsonSerializer.SerializeAsync(writer.AsStream(), change, DefaultOptions, cancellationToken);
-        await writer.FlushAsync(cancellationToken);
-        await writer.CompleteAsync();
-    }
+        => JsonSerializer.SerializeAsync(destination, change, DefaultOptions, cancellationToken);
 
     public async Task<EntityChange<TEntity>> DeserializeAsync<TEntity>(
-        PipeReader reader,
+        Stream source,
         CancellationToken cancellationToken = default)
         where TEntity : class
     {
-        var result = await reader.ReadAsync(cancellationToken);
-        var buffer = result.Buffer;
-
-        try
-        {
-            using var ms = new MemoryStream();
-            foreach (var segment in buffer)
-            {
-                await ms.WriteAsync(segment, cancellationToken);
-            }
-
-            ms.Position = 0;
-
-            var entityChange =
-                await JsonSerializer.DeserializeAsync<EntityChange<TEntity>>(ms, DefaultOptions, cancellationToken);
-            reader.AdvanceTo(buffer.End);
-            return entityChange ?? throw new InvalidOperationException("Deserialized entity change is null");
-        }
-        finally
-        {
-            await reader.CompleteAsync();
-        }
+        var result = await JsonSerializer.DeserializeAsync<EntityChange<TEntity>>(source, DefaultOptions, cancellationToken);
+        return result ?? throw new InvalidOperationException("Deserialized entity change is null");
     }
 }

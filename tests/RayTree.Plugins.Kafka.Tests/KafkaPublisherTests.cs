@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
 
@@ -60,27 +59,15 @@ public class KafkaPublisherTests
     }
 
     [Test]
-    public void KafkaPublisher_ReadPipeAsync_ProducesCorrectPayload()
+    public async Task KafkaPublisher_CopyStream_ProducesCorrectPayload()
     {
         var data = new byte[] { 1, 2, 3, 4, 5 };
-        var pipe = new Pipe();
-        pipe.Writer.WriteAsync(data).GetAwaiter().GetResult();
-        pipe.Writer.FlushAsync().GetAwaiter().GetResult();
-        pipe.Writer.CompleteAsync().GetAwaiter().GetResult();
+        using var source = new MemoryStream(data);
+        using var destination = new MemoryStream();
 
-        var readPipe = pipe.Reader;
-        var result = readPipe.ReadAsync().GetAwaiter().GetResult();
-        var buffer = result.Buffer;
+        await source.CopyToAsync(destination);
 
-        using var ms = new MemoryStream();
-        foreach (var segment in buffer)
-        {
-            ms.Write(segment.Span);
-        }
-        readPipe.AdvanceTo(buffer.End);
-        readPipe.CompleteAsync().GetAwaiter().GetResult();
-
-        Assert.That(ms.ToArray(), Is.EqualTo(data));
+        Assert.That(destination.ToArray(), Is.EqualTo(data));
     }
 
     [Test]

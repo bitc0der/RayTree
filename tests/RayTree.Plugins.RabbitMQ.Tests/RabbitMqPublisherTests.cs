@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using Moq;
 using RabbitMQ.Client;
 using RayTree.Core.Models;
@@ -72,27 +71,15 @@ public class RabbitMqPublisherTests
     }
 
     [Test]
-    public async Task ReadPipeAsync_ProducesCorrectPayload()
+    public async Task CopyStream_ProducesCorrectPayload()
     {
         var data = new byte[] { 1, 2, 3, 4, 5 };
-        var pipe = new Pipe();
-        await pipe.Writer.WriteAsync(data);
-        await pipe.Writer.FlushAsync();
-        await pipe.Writer.CompleteAsync();
+        using var source = new MemoryStream(data);
+        using var destination = new MemoryStream();
 
-        var reader = pipe.Reader;
-        var result = await reader.ReadAsync();
-        var buffer = result.Buffer;
+        await source.CopyToAsync(destination);
 
-        using var ms = new MemoryStream();
-        foreach (var segment in buffer)
-        {
-            await ms.WriteAsync(segment);
-        }
-        reader.AdvanceTo(buffer.End);
-        await reader.CompleteAsync();
-
-        Assert.That(ms.ToArray(), Is.EqualTo(data));
+        Assert.That(destination.ToArray(), Is.EqualTo(data));
     }
 
     [Test]
@@ -173,10 +160,7 @@ public class RabbitMqPublisherTests
             CorrelationId = Guid.NewGuid()
         };
 
-        var pipe = new Pipe();
-        await pipe.Writer.CompleteAsync();
-
-        Assert.DoesNotThrowAsync(async () => await publisher.PublishAsync(change, pipe.Reader));
+        Assert.DoesNotThrowAsync(async () => await publisher.PublishAsync(change, new MemoryStream()));
     }
 
     [Test]
@@ -199,12 +183,7 @@ public class RabbitMqPublisherTests
             CorrelationId = Guid.NewGuid()
         };
 
-        var pipe = new Pipe();
-        await pipe.Writer.WriteAsync(new byte[] { 0xAA, 0xBB, 0xCC });
-        await pipe.Writer.FlushAsync();
-        await pipe.Writer.CompleteAsync();
-
-        await publisher.PublishAsync(change, pipe.Reader);
+        await publisher.PublishAsync(change, new MemoryStream(new byte[] { 0xAA, 0xBB, 0xCC }));
 
         mockChannel.Verify(c => c.BasicPublish(
             It.IsAny<string>(),
@@ -238,12 +217,7 @@ public class RabbitMqPublisherTests
             CorrelationId = Guid.NewGuid()
         };
 
-        var pipe = new Pipe();
-        await pipe.Writer.WriteAsync(new byte[] { 1 });
-        await pipe.Writer.FlushAsync();
-        await pipe.Writer.CompleteAsync();
-
-        await publisher.PublishAsync(change, pipe.Reader);
+        await publisher.PublishAsync(change, new MemoryStream(new byte[] { 1 }));
 
         mockChannel.Verify(c => c.BasicPublish(
             "my_custom_exchange",

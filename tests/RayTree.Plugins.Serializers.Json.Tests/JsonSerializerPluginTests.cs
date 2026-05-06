@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
 
@@ -106,45 +105,26 @@ public class JsonSerializerPluginTests
     }
 
     [Test]
-    public async Task DeserializeAsync_EmptyData_Throws()
+    public void DeserializeAsync_EmptyData_Throws()
     {
         var plugin = new JsonSerializerPlugin();
-        var pipe = new Pipe();
-        await pipe.Writer.CompleteAsync();
 
         Assert.ThrowsAsync<System.Text.Json.JsonException>(async () =>
-            await plugin.DeserializeAsync<User>(pipe.Reader));
+            await plugin.DeserializeAsync<User>(new MemoryStream()));
     }
 
     private static async Task<byte[]> SerializeAndCaptureAsync<TEntity>(JsonSerializerPlugin plugin, EntityChange<TEntity> change)
         where TEntity : class
     {
-        var pipe = new Pipe();
-        await plugin.SerializeAsync(change, pipe.Writer);
-        return await ReadPipeDataAsync(pipe.Reader);
+        using var ms = new MemoryStream();
+        await plugin.SerializeAsync(change, ms);
+        return ms.ToArray();
     }
 
     private static async Task<EntityChange<TEntity>> DeserializeFromDataAsync<TEntity>(JsonSerializerPlugin plugin, byte[] data)
         where TEntity : class
     {
-        var pipe = new Pipe();
-        await pipe.Writer.WriteAsync(data);
-        await pipe.Writer.FlushAsync();
-        await pipe.Writer.CompleteAsync();
-        return await plugin.DeserializeAsync<TEntity>(pipe.Reader);
-    }
-
-    private static async Task<byte[]> ReadPipeDataAsync(PipeReader reader)
-    {
-        using var ms = new MemoryStream();
-        var result = await reader.ReadAsync();
-        foreach (var segment in result.Buffer)
-        {
-            await ms.WriteAsync(segment);
-        }
-        reader.AdvanceTo(result.Buffer.End);
-        await reader.CompleteAsync();
-        return ms.ToArray();
+        return await plugin.DeserializeAsync<TEntity>(new MemoryStream(data));
     }
 
     private static EntityChange<User> CreateTestChange() => new()

@@ -1,4 +1,3 @@
-using System.IO.Pipelines;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
 
@@ -128,25 +127,11 @@ public class MessagePackSerializerPluginTests
             State = new Order { Id = 42, Total = 199.99m }
         };
 
-        var pipe = new Pipe();
-        await plugin.SerializeAsync(original, pipe.Writer);
+        using var ms = new MemoryStream();
+        await plugin.SerializeAsync(original, ms);
+        ms.Position = 0;
 
-        var dataMs = new MemoryStream();
-        var readResult = await pipe.Reader.ReadAsync();
-        foreach (var segment in readResult.Buffer)
-        {
-            await dataMs.WriteAsync(segment);
-        }
-        pipe.Reader.AdvanceTo(readResult.Buffer.End);
-        await pipe.Reader.CompleteAsync();
-
-        var dataBytes = dataMs.ToArray();
-        var deserializePipe = new Pipe();
-        await deserializePipe.Writer.WriteAsync(dataBytes);
-        await deserializePipe.Writer.FlushAsync();
-        await deserializePipe.Writer.CompleteAsync();
-
-        var result = await plugin.DeserializeAsync<Order>(deserializePipe.Reader);
+        var result = await plugin.DeserializeAsync<Order>(ms);
 
         Assert.That(result.EntityId, Is.EqualTo("order-42"));
         Assert.That(result.ChangeType, Is.EqualTo(ChangeType.Insert));
@@ -158,32 +143,15 @@ public class MessagePackSerializerPluginTests
     private static async Task<byte[]> SerializeAndCaptureAsync<TEntity>(MessagePackSerializerPlugin plugin, EntityChange<TEntity> change)
         where TEntity : class
     {
-        var pipe = new Pipe();
-        await plugin.SerializeAsync(change, pipe.Writer);
-        return await ReadPipeDataAsync(pipe.Reader);
+        using var ms = new MemoryStream();
+        await plugin.SerializeAsync(change, ms);
+        return ms.ToArray();
     }
 
     private static async Task<EntityChange<TEntity>> DeserializeFromDataAsync<TEntity>(MessagePackSerializerPlugin plugin, byte[] data)
         where TEntity : class
     {
-        var pipe = new Pipe();
-        await pipe.Writer.WriteAsync(data);
-        await pipe.Writer.FlushAsync();
-        await pipe.Writer.CompleteAsync();
-        return await plugin.DeserializeAsync<TEntity>(pipe.Reader);
-    }
-
-    private static async Task<byte[]> ReadPipeDataAsync(PipeReader reader)
-    {
-        using var ms = new MemoryStream();
-        var result = await reader.ReadAsync();
-        foreach (var segment in result.Buffer)
-        {
-            await ms.WriteAsync(segment);
-        }
-        reader.AdvanceTo(result.Buffer.End);
-        await reader.CompleteAsync();
-        return ms.ToArray();
+        return await plugin.DeserializeAsync<TEntity>(new MemoryStream(data));
     }
 
     private static EntityChange<Order> CreateTestChange() => new()

@@ -1,10 +1,6 @@
-using System.IO;
-using System.IO.Pipelines;
-using System.Threading;
-using System.Threading.Tasks;
 using MessagePack;
-using RayTree.Models;
-using RayTree.Plugins;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Serialization;
 
 namespace RayTree.Plugins.Serializers.MsgPack;
 
@@ -12,57 +8,22 @@ public class MessagePackSerializerPlugin : IChangeSerializer
 {
     public string Name => "MessagePack";
 
-    public async Task SerializeAsync(EntityChange change, PipeWriter writer, CancellationToken cancellationToken = default)
+    public async Task SerializeAsync<TEntity>(
+        EntityChange<TEntity> change,
+        Stream destination,
+        CancellationToken cancellationToken = default)
+        where TEntity : class
     {
-        using var ms = new MemoryStream();
-        MessagePackSerializer.Serialize(ms, change);
-        var data = ms.ToArray();
-        await writer.WriteAsync(data, cancellationToken);
-        await writer.FlushAsync(cancellationToken);
-        await writer.CompleteAsync();
+        await MessagePackSerializer.Typeless.SerializeAsync(destination, change, cancellationToken: cancellationToken);
     }
 
-    public async Task SerializeAsync<TEntity>(EntityChange<TEntity> change, PipeWriter writer, CancellationToken cancellationToken = default)
+    public async Task<EntityChange<TEntity>> DeserializeAsync<TEntity>(
+        Stream source,
+        CancellationToken cancellationToken = default)
+        where TEntity : class
     {
-        using var ms = new MemoryStream();
-        MessagePackSerializer.Serialize(ms, change);
-        var data = ms.ToArray();
-        await writer.WriteAsync(data, cancellationToken);
-        await writer.FlushAsync(cancellationToken);
-        await writer.CompleteAsync();
-    }
-
-    public async Task<EntityChange> DeserializeAsync(PipeReader reader, string entityType, CancellationToken cancellationToken = default)
-    {
-        var result = await reader.ReadAsync(cancellationToken);
-        var buffer = result.Buffer;
-
-        using var ms = new MemoryStream();
-        foreach (var segment in buffer)
-        {
-            await ms.WriteAsync(segment, cancellationToken);
-        }
-        ms.Position = 0;
-
-        var entityChange = MessagePackSerializer.Deserialize<EntityChange>(ms);
-        reader.AdvanceTo(buffer.End);
-        return entityChange!;
-    }
-
-    public async Task<EntityChange<TEntity>> DeserializeAsync<TEntity>(PipeReader reader, CancellationToken cancellationToken = default)
-    {
-        var result = await reader.ReadAsync(cancellationToken);
-        var buffer = result.Buffer;
-
-        using var ms = new MemoryStream();
-        foreach (var segment in buffer)
-        {
-            await ms.WriteAsync(segment, cancellationToken);
-        }
-        ms.Position = 0;
-
-        var entityChange = MessagePackSerializer.Deserialize<EntityChange<TEntity>>(ms);
-        reader.AdvanceTo(buffer.End);
-        return entityChange!;
+        var result = await MessagePackSerializer.Typeless.DeserializeAsync(source, cancellationToken: cancellationToken)
+            as EntityChange<TEntity>;
+        return result ?? throw new InvalidOperationException("Deserialized entity change is null");
     }
 }

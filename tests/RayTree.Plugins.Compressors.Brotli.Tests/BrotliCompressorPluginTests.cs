@@ -1,5 +1,4 @@
 using System.IO.Compression;
-using System.IO.Pipelines;
 using System.Text;
 
 namespace RayTree.Plugins.Compressors.Brotli.Tests;
@@ -80,19 +79,15 @@ public class BrotliCompressorPluginTests
 
     private static async Task<byte[]> CompressAndCaptureAsync(BrotliCompressorPlugin compressor, byte[] data)
     {
-        var ms = new MemoryStream();
-        var pipeWriter = PipeWriter.Create(ms);
-        var readPipe = PipeReader.Create(new MemoryStream(data));
-        await compressor.CompressAsync(readPipe, pipeWriter);
-        return ms.ToArray();
+        using var output = new MemoryStream();
+        await compressor.CompressAsync(new MemoryStream(data), output);
+        return output.ToArray();
     }
 
     private static async Task<byte[]> DecompressAndCaptureAsync(BrotliCompressorPlugin compressor, byte[] data)
     {
-        var ms = new MemoryStream();
-        var pipeWriter = PipeWriter.Create(ms);
-        var readPipe = PipeReader.Create(new MemoryStream(data));
-        await compressor.DecompressAsync(readPipe, pipeWriter);
-        return ms.ToArray();
+        using var output = new MemoryStream();
+        await compressor.DecompressAsync(new MemoryStream(data), output);
+        return output.ToArray();
     }
 }
