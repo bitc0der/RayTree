@@ -60,7 +60,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
         {
             var functionName = $"notify_{_options.OutboxTableName}_change";
             var triggerFunctionDdl = NotificationBasedPublisher.GenerateNotifyTriggerFunction(
-                _options.OutboxTableName, _options.NotificationChannel);
+                functionName, _options.NotificationChannel);
             await ExecuteDdlDirectly(_options.ConnectionString, triggerFunctionDdl, cancellationToken);
 
             var triggerName = $"{_options.OutboxTableName}_notify_trigger";

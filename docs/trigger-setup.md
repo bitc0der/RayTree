@@ -1,150 +1,196 @@
-# Database Trigger Setup Guide
+# PostgreSQL NOTIFY/LISTEN Setup
 
-RayTree supports PostgreSQL `NOTIFY/LISTEN` for near-instant outbox change detection, as an alternative to (or alongside) periodic polling.
+RayTree supports PostgreSQL `NOTIFY/LISTEN` for near-instant outbox change detection alongside the default periodic fallback polling.
 
 ## How It Works
 
-1. A trigger on the outbox table fires on `INSERT`
-2. The trigger calls `pg_notify()` with the channel name and payload
-3. The `NotificationBasedPublisher` receives the notification and publishes the change
-4. If the LISTEN connection drops, fallback polling activates automatically
+1. A trigger on the outbox table fires `pg_notify()` on every `INSERT`
+2. `NotificationBasedPublisher` receives the notification and publishes the change immediately
+3. A fallback polling loop runs independently — it catches any changes missed if the LISTEN connection drops
 
-## Enable Notification Mode
+## Configuration
+
+### Step 1 — Enable the trigger on the outbox
+
+Set `UseNotificationChannel = true` (and optionally the channel name) when creating the outbox:
 
 ```csharp
-tracking.ForEntity<Product>()
-    .UsePostgreSqlOutbox(connectionString, "products", config =>
+// Directly
+var outbox = new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
+{
+    ConnectionString = connectionString,
+    OutboxTableName = "products_outbox",
+    UseNotificationChannel = true,
+    NotificationChannel = "products_notify"   // defaults to "entity_changes"
+});
+
+// Or using the extension methods
+var options = new PostgreSqlOutboxOptions
+{
+    ConnectionString = connectionString,
+    OutboxTableName = "products_outbox"
+};
+options.UseNotificationChannel("products_notify")
+       .WithFallbackPolling(TimeSpan.FromSeconds(30));
+```
+
+When `UseNotificationChannel = true`, calling `outbox.InitializeAsync()` (or `tracker.InitializeAsync()`) automatically creates the trigger function and attaches the trigger to the outbox table — no manual SQL required.
+
+### Step 2 — Create and start NotificationBasedPublisher
+
+`NotificationBasedPublisher` is a standalone component that holds its own persistent LISTEN connection:
+
+```csharp
+var publisher = new NotificationBasedPublisher(tracker, new NotificationBasedPublisherOptions
+{
+    ConnectionString = connectionString,
+    ChannelName = "products_notify",             // must match the outbox channel name
+    FallbackPollingInterval = TimeSpan.FromSeconds(30)
+});
+
+await publisher.StartAsync();
+
+// On shutdown:
+await publisher.StopAsync();
+publisher.Dispose();
+```
+
+`tracker` is the `EntityChangeTracker` that has the outbox, queue publisher, serializer, and compressor registered for each entity type. `NotificationBasedPublisher` uses it to resolve these per-entity dependencies when a notification arrives.
+
+### Step 3 — Wire into hosted service (ASP.NET Core)
+
+```csharp
+public class NotificationPublisherHostedService : IHostedService, IDisposable
+{
+    private readonly NotificationBasedPublisher _publisher;
+
+    public NotificationPublisherHostedService(EntityChangeTracker tracker, IConfiguration config)
     {
-        config.UseNotificationChannel("entity_changes");
-        config.WithFallbackPolling(TimeSpan.FromSeconds(30));
-    });
+        _publisher = new NotificationBasedPublisher(tracker, new NotificationBasedPublisherOptions
+        {
+            ConnectionString = config.GetConnectionString("Default")!,
+            ChannelName = "products_notify",
+            FallbackPollingInterval = TimeSpan.FromSeconds(30)
+        });
+    }
+
+    public Task StartAsync(CancellationToken ct) => _publisher.StartAsync(ct);
+    public Task StopAsync(CancellationToken ct) => _publisher.StopAsync(ct);
+    public void Dispose() => _publisher.Dispose();
+}
 ```
-
-## Trigger DDL
-
-### Generate Trigger Script
 
 ```csharp
-var tracker = serviceProvider.GetRequiredService<IEntityChangeTracker>();
-var triggerDdl = tracker.GenerateNotifyTriggerDdl<Product>("products_outbox");
-Console.WriteLine(triggerDdl);
+builder.Services.AddHostedService<NotificationPublisherHostedService>();
 ```
 
-### Manual Trigger Creation
+## NotificationBasedPublisherOptions
+
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `ConnectionString` | `string` | _(required)_ | Dedicated connection used for `LISTEN` |
+| `ChannelName` | `string` | `"entity_changes"` | PostgreSQL notification channel name — must match the outbox trigger |
+| `FallbackPollingInterval` | `TimeSpan` | `30s` | How often to scan for unpublished changes when no notification arrives |
+
+## Manual Trigger DDL
+
+If you need to create or drop the trigger outside of auto-initialization (e.g., in a migration script), use the static helpers on `NotificationBasedPublisher`:
+
+```csharp
+// Generate the PLPGSQL notify function
+string functionDdl = NotificationBasedPublisher.GenerateNotifyTriggerFunction(
+    functionName: "notify_products_outbox_change",
+    channelName:  "products_notify");
+
+// Generate the trigger that calls that function
+string triggerDdl = NotificationBasedPublisher.GenerateNotifyTrigger(
+    triggerName:     "products_outbox_notify_trigger",
+    outboxTableName: "products_outbox",
+    functionName:    "notify_products_outbox_change");
+
+// Drop the trigger (before re-creating it)
+string dropDdl = NotificationBasedPublisher.GenerateDropTrigger(
+    triggerName:     "products_outbox_notify_trigger",
+    outboxTableName: "products_outbox");
+```
+
+Resulting SQL (for reference):
 
 ```sql
--- Create the notify function (once per database)
-CREATE OR REPLACE FUNCTION notify_outbox_change()
+-- Trigger function
+CREATE OR REPLACE FUNCTION notify_products_outbox_change()
 RETURNS TRIGGER AS $$
 BEGIN
-    PERFORM pg_notify(
-        'entity_changes',
-        json_build_object(
-            'entity_type', NEW.entity_type,
-            'entity_id', NEW.entity_id,
-            'change_type', NEW.change_type,
-            'outbox_id', NEW.id
-        )::text
-    );
+    PERFORM pg_notify('products_notify', json_build_object(
+        'entity_type', NEW.entity_type,
+        'id',          NEW.id,
+        'change_type', NEW.change_type
+    )::text);
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Create trigger on each outbox table
+-- Trigger
 CREATE TRIGGER products_outbox_notify_trigger
     AFTER INSERT ON products_outbox
-    FOR EACH ROW
-    EXECUTE FUNCTION notify_outbox_change();
-```
+    FOR EACH ROW EXECUTE FUNCTION notify_products_outbox_change();
 
-### Drop Trigger
-
-```sql
+-- Drop (use before re-creating)
 DROP TRIGGER IF EXISTS products_outbox_notify_trigger ON products_outbox;
 ```
 
-## Configuration Options
+## Multiple Entity Types
 
-### Channel Name
-
-```csharp
-config.UseNotificationChannel("my_custom_channel");
-```
-
-Default: `"entity_changes"`
-
-Multiple publishers can listen on different channels for entity-type-specific routing.
-
-### Fallback Polling
+Each entity type can use its own channel, or they can share one:
 
 ```csharp
-config.WithFallbackPolling(
-    pollingInterval: TimeSpan.FromSeconds(30),
-    batchSize: 50);
+// Separate channels per entity
+var productOptions = new PostgreSqlOutboxOptions { ... }
+    .UseNotificationChannel("products_notify");
+
+var orderOptions = new PostgreSqlOutboxOptions { ... }
+    .UseNotificationChannel("orders_notify");
+
+// A publisher per channel
+var productPublisher = new NotificationBasedPublisher(tracker, new() { ChannelName = "products_notify", ... });
+var orderPublisher   = new NotificationBasedPublisher(tracker, new() { ChannelName = "orders_notify",   ... });
 ```
-
-Fallback polling activates when:
-- LISTEN connection is lost
-- Reconnection fails
-- No notifications received within the polling interval
-
-### Reconnection Behavior
-
-The `NotificationBasedPublisher` automatically:
-1. Attempts to reconnect with exponential backoff (1s, 2s, 4s, 8s, max 30s)
-2. On successful reconnect, scans the outbox table for missed entries
-3. Publishes any unpublished entries found during the gap
-4. Resumes LISTEN on the configured channel
 
 ## Monitoring
 
-### Check Trigger Status
+### Verify the trigger exists
 
 ```sql
-SELECT trigger_name, event_object_table
+SELECT trigger_name, event_object_table, action_statement
 FROM information_schema.triggers
-WHERE trigger_name LIKE '%notify%';
+WHERE event_object_table = 'products_outbox';
 ```
 
-### Check LISTEN Channels
+### Verify the function exists
 
 ```sql
-SELECT channel, payload
-FROM pg_notification_queue;
+\df notify_products_outbox_change
 ```
 
-### Verify Notifications
+### Test a notification manually
 
 ```sql
-LISTEN entity_changes;
-NOTIFY entity_changes, '{"test": true}';
--- Check pgAdmin or psql output for notification
+LISTEN products_notify;
+NOTIFY products_notify, '{"test": true}';
+-- psql prints: Asynchronous notification "products_notify" received from server process ...
 ```
 
 ## Troubleshooting
 
-### Not Receiving Notifications
+**Not receiving notifications**
+- Check that `UseNotificationChannel = true` was set before `InitializeAsync()` was called
+- Verify the channel name matches between the outbox options and `NotificationBasedPublisherOptions.ChannelName`
+- Confirm the trigger exists with the query above
+- Check PostgreSQL logs for trigger execution errors
 
-1. Verify the trigger exists:
-   ```sql
-   \d products_outbox
-   ```
-2. Verify the `pg_notify` function exists:
-   ```sql
-   \df notify_outbox_change
-   ```
-3. Check PostgreSQL logs for trigger errors
+**Changes delivered twice**
+- The fallback polling loop and the notification handler both call `MarkPublishedAsync` after delivery; a change is skipped if already marked published (`Published = true`), so duplicates should not occur in normal operation
+- If you see duplicates, check whether multiple `NotificationBasedPublisher` instances are listening on the same channel for the same entity type
 
-### High Polling Fallback Frequency
-
-If fallback polling activates too often:
-- Check network stability between app and PostgreSQL
-- Increase `WithFallbackPolling()` interval
-- Check PostgreSQL `max_connections` and connection pool settings
-
-### Missed Changes After Reconnect
-
-The publisher scans for unpublished entries on reconnect. Verify:
-- Outbox entries are not being deleted before publishing
-- `is_published` column is correctly set after publish
-- The notification channel name matches between trigger config and publisher config
+**Notification channel name mismatch**
+- The channel name in `PostgreSqlOutboxOptions.NotificationChannel` (used when creating the trigger) must exactly match `NotificationBasedPublisherOptions.ChannelName` (used for `LISTEN`)

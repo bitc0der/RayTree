@@ -235,13 +235,13 @@ public class NotificationBasedPublisher : IDisposable
         return serializer.SerializeAsync(change, writer, ct);
     }
 
-    public static string GenerateNotifyTriggerFunction(string outboxTableName, string functionName)
+    public static string GenerateNotifyTriggerFunction(string functionName, string channelName)
     {
         return $"""
                 CREATE OR REPLACE FUNCTION {functionName}()
                 RETURNS TRIGGER AS $$
                 BEGIN
-                    PERFORM pg_notify('entity_changes', json_build_object(
+                    PERFORM pg_notify('{channelName}', json_build_object(
                         'entity_type', NEW.entity_type,
                         'id', NEW.id,
                         'change_type', NEW.change_type
