@@ -41,7 +41,7 @@ public class InMemoryOutbox : IOutbox
         DateTime? since = null,
         int batchSize = 100,
         CancellationToken cancellationToken = default)
-        where  TEntity : class
+        where TEntity : class
     {
         var changes = _store.Values
             .OfType<EntityChange<TEntity>>()
@@ -61,6 +61,7 @@ public class InMemoryOutbox : IOutbox
         {
             change.Published = true;
         }
+
         return Task.CompletedTask;
     }
 

@@ -1,7 +1,6 @@
 using System.Text;
-using RayTree.Core.Outbox;
 
-namespace RayTree.Core.Plugins;
+namespace RayTree.Plugins.PostgreSQL.Outbox.Schema;
 
 public static class OutboxSchemaGenerator
 {
@@ -38,32 +37,14 @@ public static class OutboxSchemaGenerator
             foreach (var index in schema.Indexes)
             {
                 sb.AppendLine();
-                sb.Append($"CREATE INDEX IF NOT EXISTS {index.Name} ON {schema.OutboxTableName} ({string.Join(", ", index.Columns)})");
+                sb.Append(
+                    $"CREATE INDEX IF NOT EXISTS {index.Name} ON {schema.OutboxTableName} ({string.Join(", ", index.Columns)})");
 
                 if (!string.IsNullOrEmpty(index.Where))
                     sb.AppendLine($"\n    WHERE {index.Where};");
                 else
                     sb.AppendLine(";");
             }
-        }
-
-        return sb.ToString();
-    }
-
-    public static string GenerateDropTable(OutboxTableSchema schema)
-    {
-        return $"DROP TABLE IF EXISTS {schema.OutboxTableName};";
-    }
-
-    public static string GenerateAllCreateTables(IEnumerable<OutboxTableSchema> schemas, bool includeIndexes = true)
-    {
-        var sb = new StringBuilder();
-
-        foreach (var schema in schemas)
-        {
-            sb.AppendLine($"-- {schema.EntityTypeName} outbox table");
-            sb.AppendLine(GenerateCreateTable(schema, includeIndexes));
-            sb.AppendLine();
         }
 
         return sb.ToString();

@@ -1,9 +1,9 @@
-using Microsoft.Extensions.DependencyInjection;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
-using RayTree.Plugins.PostgreSQL;
+using RayTree.Plugins.PostgreSQL.Outbox;
+using RayTree.Plugins.PostgreSQL.Repository;
 
-namespace RayTree.Plugins;
+namespace RayTree.Plugins.PostgreSQL.Extensions;
 
 public static class PostgreSqlRepositoryExtensions
 {
@@ -12,13 +12,15 @@ public static class PostgreSqlRepositoryExtensions
         Action<PostgreSqlRepositoryOptions> configure)
         where TEntity : class
     {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
         var options = new PostgreSqlRepositoryOptions();
         configure(options);
 
         return builder.UseOutbox<IOutbox>(_ => new PostgreSqlOutbox<TEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = options.ConnectionString,
-            OutboxTableName = options.TableName + "_outbox"
+            ConnectionString = options.ConnectionString, OutboxTableName = options.TableName + "_outbox"
         }));
     }
 }

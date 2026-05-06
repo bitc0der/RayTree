@@ -5,6 +5,8 @@ using RayTree.Core.Tracking;
 using RayTree.Plugins;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.PostgreSQL;
+using RayTree.Plugins.PostgreSQL.Outbox;
+using RayTree.Plugins.PostgreSQL.Repository;
 using Testcontainers.PostgreSql;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;

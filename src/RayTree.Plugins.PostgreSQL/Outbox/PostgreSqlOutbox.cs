@@ -1,15 +1,14 @@
 using Npgsql;
 using RayTree.Core.Models;
-using RayTree.Core.Outbox;
-using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
-using RayTree.Distribution;
-using RayTree.Plugins;
+using RayTree.Plugins.PostgreSQL.Outbox.Notification;
+using RayTree.Plugins.PostgreSQL.Outbox.Schema;
 
-namespace RayTree.Plugins.PostgreSQL;
+namespace RayTree.Plugins.PostgreSQL.Outbox;
 
-public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
+public class PostgreSqlOutbox<TEntity> : IOutbox
+    where TEntity : class
 {
     private readonly PostgreSqlOutboxOptions _options;
     private readonly IReadOnlyList<EntityColumnMapper.PropertyColumn> _propertyColumns;
@@ -18,6 +17,8 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
 
     public PostgreSqlOutbox(PostgreSqlOutboxOptions options)
     {
+        ArgumentNullException.ThrowIfNull(options);
+
         if (string.IsNullOrWhiteSpace(options.OutboxTableName))
             options.OutboxTableName = EntityColumnMapper.ToSnakeCase(typeof(TEntity).Name) + "_outbox";
 
@@ -36,12 +37,12 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
             ? ", " + string.Join(", ", _propertyColumns.Select(c => "@" + c.ColumnName))
             : "";
         return $"""
-            INSERT INTO {_options.OutboxTableName}
-                (entity_id, change_type, timestamp, version, correlation_id, entity_type{extraCols})
-            VALUES
-                (@EntityId, @ChangeType, @Timestamp, @Version, @CorrelationId, @EntityType{extraParams})
-            RETURNING id
-            """;
+                INSERT INTO {_options.OutboxTableName}
+                    (entity_id, change_type, timestamp, version, correlation_id, entity_type{extraCols})
+                VALUES
+                    (@EntityId, @ChangeType, @Timestamp, @Version, @CorrelationId, @EntityType{extraParams})
+                RETURNING id
+                """;
     }
 
     private string BuildSelectColumns()
@@ -72,12 +73,14 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
             var dropTriggerDdl = NotificationBasedPublisher.GenerateDropTrigger(triggerName, _options.OutboxTableName);
             await ExecuteDdlDirectly(_options.ConnectionString, dropTriggerDdl, cancellationToken);
 
-            var triggerDdl = NotificationBasedPublisher.GenerateNotifyTrigger(triggerName, _options.OutboxTableName, functionName);
+            var triggerDdl =
+                NotificationBasedPublisher.GenerateNotifyTrigger(triggerName, _options.OutboxTableName, functionName);
             await ExecuteDdlDirectly(_options.ConnectionString, triggerDdl, cancellationToken);
         }
     }
 
-    private static async Task ExecuteDdlDirectly(string connectionString, string ddl, CancellationToken cancellationToken)
+    private static async Task ExecuteDdlDirectly(string connectionString, string ddl,
+        CancellationToken cancellationToken)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
@@ -128,15 +131,12 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
         await conn.OpenAsync(cancellationToken);
 
         await using var cmd = new NpgsqlCommand($"""
-            SELECT {_selectColumns}
-            FROM {_options.OutboxTableName}
-            WHERE published = FALSE
-            ORDER BY timestamp
-            LIMIT @BatchSize
-            """, conn)
-        {
-            Parameters = { new("BatchSize", batchSize) }
-        };
+                                                 SELECT {_selectColumns}
+                                                 FROM {_options.OutboxTableName}
+                                                 WHERE published = FALSE
+                                                 ORDER BY timestamp
+                                                 LIMIT @BatchSize
+                                                 """, conn) { Parameters = { new("BatchSize", batchSize) } };
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -161,10 +161,10 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
         await conn.OpenAsync(cancellationToken);
 
         var sql = $"""
-            SELECT {_selectColumns}
-            FROM {_options.OutboxTableName}
-            WHERE published = FALSE AND entity_type = @EntityType
-            """;
+                   SELECT {_selectColumns}
+                   FROM {_options.OutboxTableName}
+                   WHERE published = FALSE AND entity_type = @EntityType
+                   """;
 
         if (changeType.HasValue)
             sql += " AND change_type = @ChangeType";
@@ -189,20 +189,21 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
 
     public Task MarkPublishedAsync(long id, CancellationToken cancellationToken = default)
         => ExecuteNonQueryAsync($"""
-            UPDATE {_options.OutboxTableName}
-            SET published = TRUE
-            WHERE id = @Id
-            """, new NpgsqlParameter("Id", id), cancellationToken);
+                                 UPDATE {_options.OutboxTableName}
+                                 SET published = TRUE
+                                 WHERE id = @Id
+                                 """, new NpgsqlParameter("Id", id), cancellationToken);
 
-    public async Task<int> CleanupPublishedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken = default)
+    public async Task<int> CleanupPublishedAsync(TimeSpan retentionPeriod,
+        CancellationToken cancellationToken = default)
     {
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
         await using var cmd = new NpgsqlCommand($"""
-            DELETE FROM {_options.OutboxTableName}
-            WHERE published = TRUE AND timestamp < @Cutoff
-            """, conn)
+                                                 DELETE FROM {_options.OutboxTableName}
+                                                 WHERE published = TRUE AND timestamp < @Cutoff
+                                                 """, conn)
         {
             Parameters = { new("Cutoff", DateTime.UtcNow - retentionPeriod) }
         };
@@ -220,13 +221,10 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
         await conn.OpenAsync(cancellationToken);
 
         await using var cmd = new NpgsqlCommand($"""
-            SELECT {_selectColumns}
-            FROM {_options.OutboxTableName}
-            WHERE id = @Id
-            """, conn)
-        {
-            Parameters = { new("Id", id) }
-        };
+                                                 SELECT {_selectColumns}
+                                                 FROM {_options.OutboxTableName}
+                                                 WHERE id = @Id
+                                                 """, conn) { Parameters = { new("Id", id) } };
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
@@ -260,6 +258,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
                     col.Property.SetValue(entity, Convert.ChangeType(value, targetType));
                 }
             }
+
             change.State = entity;
         }
 

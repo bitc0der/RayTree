@@ -1,9 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
-using RayTree.Plugins.PostgreSQL;
+using RayTree.Plugins.PostgreSQL.Outbox;
 
-namespace RayTree.Plugins;
+namespace RayTree.Plugins.PostgreSQL.Extensions;
 
 public static class PostgreSqlBuilderExtensions
 {
@@ -11,6 +11,8 @@ public static class PostgreSqlBuilderExtensions
         this IServiceCollection services,
         Action<PostgreSqlOutboxOptions> configure) where TEntity : class
     {
+        ArgumentNullException.ThrowIfNull(services);
+
         var options = new PostgreSqlOutboxOptions();
         configure(options);
 
@@ -23,6 +25,8 @@ public static class PostgreSqlBuilderExtensions
         this IChangeTrackingBuilder builder,
         Func<Type, PostgreSqlOutboxOptions> configure)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         return builder.UseOutbox<IOutbox>(entityType =>
         {
             var options = configure(entityType);
@@ -35,6 +39,8 @@ public static class PostgreSqlBuilderExtensions
         this PostgreSqlOutboxOptions options,
         string channelName)
     {
+        ArgumentNullException.ThrowIfNull(options);
+
         options.UseNotificationChannel = true;
         options.NotificationChannel = channelName;
         return options;
@@ -44,6 +50,8 @@ public static class PostgreSqlBuilderExtensions
         this PostgreSqlOutboxOptions options,
         TimeSpan interval)
     {
+        ArgumentNullException.ThrowIfNull(options);
+
         options.FallbackPollingInterval = interval;
         return options;
     }

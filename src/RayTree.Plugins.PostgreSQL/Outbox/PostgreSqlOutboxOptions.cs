@@ -1,4 +1,4 @@
-namespace RayTree.Plugins.PostgreSQL;
+namespace RayTree.Plugins.PostgreSQL.Outbox;
 
 public class PostgreSqlOutboxOptions
 {

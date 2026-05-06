@@ -1,4 +1,4 @@
-﻿namespace RayTree.Distribution;
+﻿namespace RayTree.Plugins.PostgreSQL.Outbox.Notification;
 
 public class NotificationBasedPublisherOptions
 {

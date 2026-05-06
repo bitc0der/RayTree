@@ -1,4 +1,4 @@
-namespace RayTree.Core.Outbox;
+namespace RayTree.Plugins.PostgreSQL.Outbox.Schema;
 
 public class OutboxTableSchema
 {
@@ -25,8 +25,14 @@ public class OutboxTableSchema
                 new OutboxColumn { Name = "timestamp", Type = "TIMESTAMPTZ", IsNullable = false, Default = "NOW()" },
                 new OutboxColumn { Name = "published", Type = "BOOLEAN", IsNullable = false, Default = "FALSE" },
                 new OutboxColumn { Name = "version", Type = "INTEGER", IsNullable = false, Default = "1" },
-                new OutboxColumn { Name = "correlation_id", Type = "UUID", IsNullable = false, Default = "gen_random_uuid()" },
-                new OutboxColumn { Name = "entity_type", Type = "TEXT", IsNullable = false, Default = $"'{entityTypeName}'" }
+                new OutboxColumn
+                {
+                    Name = "correlation_id", Type = "UUID", IsNullable = false, Default = "gen_random_uuid()"
+                },
+                new OutboxColumn
+                {
+                    Name = "entity_type", Type = "TEXT", IsNullable = false, Default = $"'{entityTypeName}'"
+                }
             ],
             Indexes =
             [
@@ -38,52 +44,20 @@ public class OutboxTableSchema
                 },
                 new OutboxIndex
                 {
-                    Name = $"idx_{schemaName}_outbox_entity",
-                    Columns = ["entity_type", "published", "timestamp"]
+                    Name = $"idx_{schemaName}_outbox_entity", Columns = ["entity_type", "published", "timestamp"]
                 }
             ]
         };
     }
 
-    public void AddEntityPropertyColumn(string propertyName, string columnName, string columnType, bool isNullable = true)
+    public void AddEntityPropertyColumn(string propertyName, string columnName, string columnType,
+        bool isNullable = true)
     {
         EntityPropertyColumns.Add(new EntityPropertyColumn
         {
-            PropertyName = propertyName,
-            ColumnName = columnName,
-            ColumnType = columnType,
-            IsNullable = isNullable
+            PropertyName = propertyName, ColumnName = columnName, ColumnType = columnType, IsNullable = isNullable
         });
 
-        Columns.Add(new OutboxColumn
-        {
-            Name = columnName,
-            Type = columnType,
-            IsNullable = isNullable
-        });
+        Columns.Add(new OutboxColumn { Name = columnName, Type = columnType, IsNullable = isNullable });
     }
-}
-
-public class EntityPropertyColumn
-{
-    public string PropertyName { get; set; } = string.Empty;
-    public string ColumnName { get; set; } = string.Empty;
-    public string ColumnType { get; set; } = string.Empty;
-    public bool IsNullable { get; set; }
-}
-
-public class OutboxColumn
-{
-    public string Name { get; set; } = string.Empty;
-    public string Type { get; set; } = string.Empty;
-    public bool IsPrimaryKey { get; set; }
-    public bool IsNullable { get; set; }
-    public string? Default { get; set; }
-}
-
-public class OutboxIndex
-{
-    public string Name { get; set; } = string.Empty;
-    public List<string> Columns { get; set; } = new();
-    public string? Where { get; set; }
 }

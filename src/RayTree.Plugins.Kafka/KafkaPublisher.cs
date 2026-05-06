@@ -2,17 +2,8 @@ using System.IO.Pipelines;
 using Confluent.Kafka;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Publisher;
-using RayTree.Plugins;
 
 namespace RayTree.Plugins.Kafka;
-
-public class KafkaPublisherOptions
-{
-    public string BootstrapServers { get; set; } = "localhost:9092";
-    public string Topic { get; set; } = "entity_changes";
-    public string? Acks { get; set; }
-    public int? MessageMaxBytes { get; set; }
-}
 
 public class KafkaPublisher : IQueuePublisher, IDisposable
 {
@@ -22,7 +13,7 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
 
     public KafkaPublisher(KafkaPublisherOptions options)
     {
-        _options = options;
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -41,10 +32,7 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
             if (_producer != null)
                 return _producer;
 
-            var config = new ProducerConfig
-            {
-                BootstrapServers = _options.BootstrapServers
-            };
+            var config = new ProducerConfig { BootstrapServers = _options.BootstrapServers };
 
             if (_options.Acks != null)
             {
@@ -67,7 +55,8 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
         }
     }
 
-    public async Task PublishAsync(EntityChange change, PipeReader payload, CancellationToken cancellationToken = default)
+    public async Task PublishAsync(EntityChange change, PipeReader payload,
+        CancellationToken cancellationToken = default)
     {
         var producer = GetProducer();
 
@@ -103,6 +92,7 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
             {
                 await ms.WriteAsync(segment, cancellationToken);
             }
+
             reader.AdvanceTo(buffer.End);
             result = await reader.ReadAsync(cancellationToken);
             buffer = result.Buffer;
@@ -114,6 +104,7 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
             {
                 await ms.WriteAsync(segment, cancellationToken);
             }
+
             reader.AdvanceTo(buffer.End);
         }
 

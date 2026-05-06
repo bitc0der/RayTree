@@ -1,14 +1,14 @@
-using Microsoft.Extensions.DependencyInjection;
 using RayTree.Core.Plugins;
 using RayTree.Core.Tracking;
-using RayTree.Plugins.Compressors.Gzip;
 
-namespace RayTree.Plugins;
+namespace RayTree.Plugins.Compressors.Gzip;
 
 public static class GzipBuilderExtensions
 {
     public static IChangeTrackingBuilder UseGzipCompressor(this IChangeTrackingBuilder builder)
     {
-        return builder.UseCompressor<IChangeCompressor>(_ => new GzipCompressorPlugin());
+        return builder == null
+            ? throw new ArgumentNullException(nameof(builder))
+            : builder.UseCompressor<IChangeCompressor>(_ => new GzipCompressorPlugin());
     }
 }

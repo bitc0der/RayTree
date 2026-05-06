@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Text.RegularExpressions;
 
-namespace RayTree.Plugins.PostgreSQL;
+namespace RayTree.Plugins.PostgreSQL.Outbox;
 
 public static class EntityColumnMapper
 {
@@ -20,8 +20,10 @@ public static class EntityColumnMapper
                 continue;
             var isNullable = !prop.PropertyType.IsValueType || Nullable.GetUnderlyingType(prop.PropertyType) != null;
             var underlyingType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-            result.Add(new PropertyColumn(prop, "state_" + ToSnakeCase(prop.Name), ToPostgresType(underlyingType), isNullable));
+            result.Add(new PropertyColumn(prop, "state_" + ToSnakeCase(prop.Name), ToPostgresType(underlyingType),
+                isNullable));
         }
+
         return result;
     }
 

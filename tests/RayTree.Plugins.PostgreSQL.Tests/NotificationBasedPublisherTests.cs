@@ -1,9 +1,10 @@
 using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
-using RayTree.Distribution;
 using RayTree.Plugins.Compressors.Gzip;
 using RayTree.Plugins.InMemory;
+using RayTree.Plugins.PostgreSQL.Outbox;
+using RayTree.Plugins.PostgreSQL.Outbox.Notification;
 using RayTree.Plugins.Serializers.Json;
 using Testcontainers.PostgreSql;
 

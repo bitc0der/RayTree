@@ -1,9 +1,12 @@
 using Npgsql;
 using RayTree.Core.Plugins.Repository;
+using RayTree.Plugins.PostgreSQL.Outbox;
+using RayTree.Plugins.PostgreSQL.Repository.Schema;
 
-namespace RayTree.Plugins.PostgreSQL;
+namespace RayTree.Plugins.PostgreSQL.Repository;
 
-public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity : class
+public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
+    where TEntity : class
 {
     private readonly PostgreSqlRepositoryOptions _options;
 
@@ -23,7 +26,10 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity 
         await ExecuteDdlDirectly(_options.ConnectionString, sourceDdl, cancellationToken);
     }
 
-    private static async Task ExecuteDdlDirectly(string connectionString, string ddl, CancellationToken cancellationToken)
+    private static async Task ExecuteDdlDirectly(
+        string connectionString,
+        string ddl,
+        CancellationToken cancellationToken)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
@@ -33,6 +39,8 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity 
 
     public async Task InsertAsync(TEntity entity, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(entity);
+
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
@@ -43,6 +51,8 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity 
 
     public async Task UpdateAsync(TEntity entity, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(entity);
+
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
@@ -54,6 +64,8 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity 
 
     public async Task DeleteAsync(TEntity entity, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(entity);
+
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
@@ -65,6 +77,8 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity 
 
     public async Task<TEntity?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(id);
+
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
@@ -84,15 +98,19 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity 
 
     protected virtual object GetEntityId(TEntity entity)
     {
+        ArgumentNullException.ThrowIfNull(entity);
+
         var prop = typeof(TEntity).GetProperty("Id")
-            ?? throw new InvalidOperationException($"Entity type {typeof(TEntity).Name} has no Id property");
+                   ?? throw new InvalidOperationException($"Entity type {typeof(TEntity).Name} has no Id property");
 
         return prop.GetValue(entity)
-            ?? throw new InvalidOperationException($"Entity Id is null");
+               ?? throw new InvalidOperationException($"Entity Id is null");
     }
 
     protected virtual TEntity MapEntity(NpgsqlDataReader reader)
     {
+        ArgumentNullException.ThrowIfNull(reader);
+
         var entity = Activator.CreateInstance<TEntity>();
 
         for (var i = 0; i < reader.FieldCount; i++)

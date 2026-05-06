@@ -8,9 +8,8 @@ using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
-using RayTree.Plugins;
 
-namespace RayTree.Distribution;
+namespace RayTree.Plugins.PostgreSQL.Outbox.Notification;
 
 public class NotificationBasedPublisher : IDisposable
 {
@@ -21,19 +20,19 @@ public class NotificationBasedPublisher : IDisposable
     private Task? _listenTask;
     private Task? _fallbackTask;
 
-    private static readonly MethodInfo _getByIdMethod = typeof(NotificationBasedPublisher)
+    private static readonly MethodInfo GetByIdMethod = typeof(NotificationBasedPublisher)
         .GetMethod(nameof(GetByIdCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    private static readonly MethodInfo _getUnpublishedMethod = typeof(NotificationBasedPublisher)
+    private static readonly MethodInfo GetUnpublishedMethod = typeof(NotificationBasedPublisher)
         .GetMethod(nameof(GetUnpublishedCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    private static readonly MethodInfo _serializeMethod = typeof(NotificationBasedPublisher)
+    private static readonly MethodInfo SerializeMethod = typeof(NotificationBasedPublisher)
         .GetMethod(nameof(SerializeCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
     public NotificationBasedPublisher(EntityChangeTracker tracker, NotificationBasedPublisherOptions options)
     {
-        _tracker = tracker;
-        _options = options;
+        _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
+        _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
     public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
@@ -166,7 +165,7 @@ public class NotificationBasedPublisher : IDisposable
         var serializePipe = new Pipe();
         var compressPipe = new Pipe();
 
-        var serializeTask = (Task)_serializeMethod.MakeGenericMethod(entityType)
+        var serializeTask = (Task)SerializeMethod.MakeGenericMethod(entityType)
             .Invoke(null, [serializer, change, serializePipe.Writer, ct])!;
         var compressTask = compressor.CompressAsync(serializePipe.Reader, compressPipe.Writer, ct);
         var publishTask = publisher.PublishAsync(change, compressPipe.Reader, ct);
@@ -202,7 +201,7 @@ public class NotificationBasedPublisher : IDisposable
     }
 
     private static Task<EntityChange?> GetByIdAsync(IOutbox outbox, Type entityType, long id, CancellationToken ct)
-        => (Task<EntityChange?>)_getByIdMethod.MakeGenericMethod(entityType).Invoke(null, [outbox, id, ct])!;
+        => (Task<EntityChange?>)GetByIdMethod.MakeGenericMethod(entityType).Invoke(null, [outbox, id, ct])!;
 
     private static async Task<EntityChange?> GetByIdCoreAsync<TEntity>(IOutbox outbox, long id, CancellationToken ct)
         where TEntity : class
@@ -216,7 +215,7 @@ public class NotificationBasedPublisher : IDisposable
         int batchSize,
         CancellationToken ct)
     {
-        return (Task<IReadOnlyList<EntityChange>>)_getUnpublishedMethod
+        return (Task<IReadOnlyList<EntityChange>>)GetUnpublishedMethod
             .MakeGenericMethod(entityType)
             .Invoke(null, [outbox, batchSize, ct])!;
     }

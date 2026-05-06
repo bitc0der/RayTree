@@ -1,4 +1,4 @@
-namespace RayTree.Plugins.PostgreSQL;
+namespace RayTree.Plugins.PostgreSQL.Repository;
 
 public class PostgreSqlRepositoryOptions
 {
