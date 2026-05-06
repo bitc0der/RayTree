@@ -1,7 +1,7 @@
 using RayTree.Distribution;
-using RayTree.Tracking;
+using RayTree.Plugins;
 
-namespace RayTree.Plugins;
+namespace RayTree.Core.Tracking;
 
 public class ChangeTrackingBuilder : IChangeTrackingBuilder
 {
@@ -19,39 +19,44 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
     private Func<Type, IChangeCompressor>? _compressorFactory;
     private Func<Type, IRepository>? _repositoryFactory;
 
-    public IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox
+    public IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory)
+        where T : IOutbox
     {
-        _outboxFactory = factory;
+        _outboxFactory = factory ?? throw new ArgumentNullException(nameof(factory));
         return this;
     }
 
-    public IChangeTrackingBuilder UseQueue<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher
+    public IChangeTrackingBuilder UseQueue<T>(Func<Type, IQueuePublisher> factory)
+        where T : IQueuePublisher
     {
-        _queueFactory = factory;
+        _queueFactory = factory ?? throw new ArgumentNullException(nameof(factory));
         return this;
     }
 
-    public IChangeTrackingBuilder UseSerializer<T>(Func<Type, IChangeSerializer> factory) where T : IChangeSerializer
+    public IChangeTrackingBuilder UseSerializer<T>(Func<Type, IChangeSerializer> factory)
+        where T : IChangeSerializer
     {
-        _serializerFactory = factory;
+        _serializerFactory = factory ?? throw new ArgumentNullException(nameof(factory));
         return this;
     }
 
-    public IChangeTrackingBuilder UseCompressor<T>(Func<Type, IChangeCompressor> factory) where T : IChangeCompressor
+    public IChangeTrackingBuilder UseCompressor<T>(Func<Type, IChangeCompressor> factory)
+        where T : IChangeCompressor
     {
-        _compressorFactory = factory;
+        _compressorFactory = factory ?? throw new ArgumentNullException(nameof(factory));
         return this;
     }
 
-    public IChangeTrackingBuilder UseRepository<T>(Func<Type, IRepository> factory) where T : IRepository
+    public IChangeTrackingBuilder UseRepository<T>(Func<Type, IRepository> factory)
+        where T : IRepository
     {
-        _repositoryFactory = factory;
+        _repositoryFactory = factory ?? throw new ArgumentNullException(nameof(factory));
         return this;
     }
 
     public IChangeTrackingBuilder UsePublisherOptions(Action<OutboxPublisherOptions> configure)
     {
-        _publisherOptionsConfigure = configure;
+        _publisherOptionsConfigure = configure ?? throw new ArgumentNullException(nameof(configure));
         return this;
     }
 
@@ -61,10 +66,17 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
     }
 
     internal void AddOutboxOverride(Type entityType, IOutbox outbox) => _outboxOverrides[entityType] = outbox;
+
     internal void AddQueueOverride(Type entityType, IQueuePublisher queue) => _queueOverrides[entityType] = queue;
-    internal void AddSerializerOverride(Type entityType, IChangeSerializer serializer) => _serializerOverrides[entityType] = serializer;
-    internal void AddCompressorOverride(Type entityType, IChangeCompressor compressor) => _compressorOverrides[entityType] = compressor;
-    internal void AddRepositoryOverride(Type entityType, IRepository repository) => _repositoryOverrides[entityType] = repository;
+
+    internal void AddSerializerOverride(Type entityType, IChangeSerializer serializer) =>
+        _serializerOverrides[entityType] = serializer;
+
+    internal void AddCompressorOverride(Type entityType, IChangeCompressor compressor) =>
+        _compressorOverrides[entityType] = compressor;
+
+    internal void AddRepositoryOverride(Type entityType, IRepository repository) =>
+        _repositoryOverrides[entityType] = repository;
 
     public EntityChangeTracker Build()
     {
@@ -100,13 +112,16 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
             var queue = _queueOverrides.GetValueOrDefault(entityType) ?? _queueFactory?.Invoke(entityType)
                 ?? throw new InvalidOperationException($"No queue configured for {entityType.Name}");
 
-            var serializer = _serializerOverrides.GetValueOrDefault(entityType) ?? _serializerFactory?.Invoke(entityType)
-                ?? throw new InvalidOperationException($"No serializer configured for {entityType.Name}");
+            var serializer = _serializerOverrides.GetValueOrDefault(entityType) ??
+                             _serializerFactory?.Invoke(entityType)
+                             ?? throw new InvalidOperationException($"No serializer configured for {entityType.Name}");
 
-            var compressor = _compressorOverrides.GetValueOrDefault(entityType) ?? _compressorFactory?.Invoke(entityType)
-                ?? throw new InvalidOperationException($"No compressor configured for {entityType.Name}");
+            var compressor = _compressorOverrides.GetValueOrDefault(entityType) ??
+                             _compressorFactory?.Invoke(entityType)
+                             ?? throw new InvalidOperationException($"No compressor configured for {entityType.Name}");
 
-            var repository = _repositoryOverrides.GetValueOrDefault(entityType) ?? _repositoryFactory?.Invoke(entityType);
+            var repository = _repositoryOverrides.GetValueOrDefault(entityType) ??
+                             _repositoryFactory?.Invoke(entityType);
 
             tracker.RegisterOutbox(entityType, outbox);
             tracker.RegisterPublisher(entityType, queue);

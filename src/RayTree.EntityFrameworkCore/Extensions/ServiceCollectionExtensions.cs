@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using RayTree.Core.Tracking;
 using RayTree.EntityFrameworkCore.Interceptors;
 using RayTree.Tracking;
 

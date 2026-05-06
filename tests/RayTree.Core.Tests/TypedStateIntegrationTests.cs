@@ -1,4 +1,5 @@
 ﻿using System.IO.Pipelines;
+using RayTree.Core.Tracking;
 using RayTree.Models;
 using RayTree.Plugins;
 using RayTree.Plugins.Compressors.Brotli;

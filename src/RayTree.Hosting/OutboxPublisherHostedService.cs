@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Hosting;
+using RayTree.Core.Tracking;
 using RayTree.Distribution;
 using RayTree.Tracking;
 

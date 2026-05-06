@@ -2,6 +2,7 @@ using System.IO.Pipelines;
 using System.Reflection;
 using System.Text.Json;
 using Npgsql;
+using RayTree.Core.Tracking;
 using RayTree.Models;
 using RayTree.Plugins;
 using RayTree.Tracking;

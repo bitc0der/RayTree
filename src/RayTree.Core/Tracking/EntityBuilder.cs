@@ -1,4 +1,6 @@
-﻿namespace RayTree.Plugins;
+﻿using RayTree.Core.Tracking;
+
+namespace RayTree.Plugins;
 
 internal class EntityBuilder(ChangeTrackingBuilder parent, Type entityType)
     : IEntityBuilder

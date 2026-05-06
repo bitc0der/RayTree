@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations.Schema;
 using Npgsql;
+using RayTree.Core.Tracking;
 using RayTree.Models;
 using RayTree.Plugins;
 using RayTree.Plugins.InMemory;

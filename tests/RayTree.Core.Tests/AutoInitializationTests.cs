@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using NUnit.Framework;
 using Moq;
+using RayTree.Core.Tracking;
 using RayTree.Plugins;
 using RayTree.Plugins.InMemory;
 using RayTree.Tracking;

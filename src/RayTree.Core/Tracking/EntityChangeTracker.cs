@@ -3,8 +3,9 @@ using System.IO.Pipelines;
 using RayTree.Distribution;
 using RayTree.Models;
 using RayTree.Plugins;
+using RayTree.Tracking;
 
-namespace RayTree.Tracking;
+namespace RayTree.Core.Tracking;
 
 public sealed class EntityChangeTracker : IEntityChangeTracker
 {
