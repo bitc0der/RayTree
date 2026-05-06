@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using Confluent.Kafka;
-using RayTree.Models;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Publisher;
 using RayTree.Plugins;
 
 namespace RayTree.Plugins.Kafka;

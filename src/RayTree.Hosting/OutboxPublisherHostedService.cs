@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Hosting;
+using RayTree.Core.Distribution;
 using RayTree.Core.Tracking;
-using RayTree.Distribution;
-using RayTree.Tracking;
 
 namespace RayTree.Hosting;
 

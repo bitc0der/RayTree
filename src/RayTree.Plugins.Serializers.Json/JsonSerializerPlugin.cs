@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using System.Text.Json;
-using RayTree.Models;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Serialization;
 
 namespace RayTree.Plugins.Serializers.Json;
 

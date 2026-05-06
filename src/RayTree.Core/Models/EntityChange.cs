@@ -1,6 +1,6 @@
-using RayTree.Tracking;
+using RayTree.Core.Tracking;
 
-namespace RayTree.Models;
+namespace RayTree.Core.Models;
 
 public class EntityChange
 {

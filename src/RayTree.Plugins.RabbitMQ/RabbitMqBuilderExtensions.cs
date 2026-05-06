@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using RayTree.Core.Plugins.Publisher;
+using RayTree.Core.Tracking;
 using RayTree.Plugins.RabbitMQ;
 
 namespace RayTree.Plugins;

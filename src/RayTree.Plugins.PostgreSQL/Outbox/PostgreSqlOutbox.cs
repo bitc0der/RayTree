@@ -1,9 +1,11 @@
 using Npgsql;
+using RayTree.Core.Models;
+using RayTree.Core.Outbox;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Outbox;
+using RayTree.Core.Tracking;
 using RayTree.Distribution;
-using RayTree.Models;
-using RayTree.Outbox;
 using RayTree.Plugins;
-using RayTree.Tracking;
 
 namespace RayTree.Plugins.PostgreSQL;
 

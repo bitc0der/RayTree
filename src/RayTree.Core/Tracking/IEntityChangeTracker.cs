@@ -1,4 +1,4 @@
-namespace RayTree.Tracking;
+namespace RayTree.Core.Tracking;
 
 public interface IEntityChangeTracker : IDisposable
 {

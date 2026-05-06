@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using RayTree.Core.Plugins.Storage;
 using RayTree.Plugins;
 
 namespace RayTree.Plugins.PostgreSQL;

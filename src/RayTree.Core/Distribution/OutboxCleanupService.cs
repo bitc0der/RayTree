@@ -1,6 +1,6 @@
-using RayTree.Plugins;
+using RayTree.Core.Plugins.Outbox;
 
-namespace RayTree.Distribution;
+namespace RayTree.Core.Distribution;
 
 public sealed class OutboxCleanupService
 {
@@ -9,7 +9,7 @@ public sealed class OutboxCleanupService
 
     public OutboxCleanupService(IEnumerable<IOutbox> outboxes, TimeSpan? retentionPeriod = null)
     {
-        _outboxes = outboxes;
+        _outboxes = outboxes ?? throw new ArgumentNullException(nameof(outboxes));
         _retentionPeriod = retentionPeriod ?? TimeSpan.FromDays(7);
     }
 

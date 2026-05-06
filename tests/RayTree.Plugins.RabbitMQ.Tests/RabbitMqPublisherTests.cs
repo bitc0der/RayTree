@@ -1,8 +1,8 @@
 using System.IO.Pipelines;
 using Moq;
 using RabbitMQ.Client;
-using RayTree.Models;
-using RayTree.Tracking;
+using RayTree.Core.Models;
+using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.RabbitMQ.Tests;
 

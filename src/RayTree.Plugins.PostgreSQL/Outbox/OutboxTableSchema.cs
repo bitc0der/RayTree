@@ -1,6 +1,4 @@
-using RayTree.Models;
-
-namespace RayTree.Outbox;
+namespace RayTree.Core.Outbox;
 
 public class OutboxTableSchema
 {

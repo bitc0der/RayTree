@@ -1,4 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Tracking;
 using RayTree.Plugins.InMemory;
 
 namespace RayTree.Plugins;
@@ -47,7 +51,7 @@ public static class InMemoryBuilderExtensions
 
 public static class InMemorySubscriberExtensions
 {
-    public static IAsyncEnumerable<(RayTree.Models.EntityChange Change, byte[] Payload)> ConsumeFromInMemory(
+    public static IAsyncEnumerable<(EntityChange Change, byte[] Payload)> ConsumeFromInMemory(
         this InMemoryQueue queue, CancellationToken cancellationToken = default)
     {
         return queue.ConsumeAsync(cancellationToken);

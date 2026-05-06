@@ -1,11 +1,10 @@
 using System.ComponentModel.DataAnnotations.Schema;
 using Npgsql;
+using RayTree.Core.Models;
 using RayTree.Core.Tracking;
-using RayTree.Models;
 using RayTree.Plugins;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.PostgreSQL;
-using RayTree.Tracking;
 using Testcontainers.PostgreSql;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;

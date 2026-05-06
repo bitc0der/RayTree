@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using RayTree.Core.Plugins;
+using RayTree.Core.Tracking;
 using RayTree.Plugins.Compressors.Brotli;
 
 namespace RayTree.Plugins;

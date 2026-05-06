@@ -1,6 +1,6 @@
 using System.IO.Pipelines;
-using RayTree.Models;
-using RayTree.Tracking;
+using RayTree.Core.Models;
+using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.Kafka.Tests;
 

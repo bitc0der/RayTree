@@ -1,12 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
 using RayTree.EntityFrameworkCore.Interceptors;
-using RayTree.Models;
 using RayTree.Plugins;
 using RayTree.Plugins.Compressors.Gzip;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.Serializers.Json;
-using RayTree.Tracking;
 
 namespace RayTree.EntityFrameworkCore.Tests;
 

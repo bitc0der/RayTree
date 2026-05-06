@@ -2,8 +2,9 @@ using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Reflection;
 using ProtoBuf.Meta;
-using RayTree.Models;
-using RayTree.Tracking;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.Serializers.Protobuf;
 

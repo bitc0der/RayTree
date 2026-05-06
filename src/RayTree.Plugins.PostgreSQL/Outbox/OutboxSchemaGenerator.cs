@@ -1,7 +1,7 @@
 using System.Text;
-using RayTree.Outbox;
+using RayTree.Core.Outbox;
 
-namespace RayTree.Plugins;
+namespace RayTree.Core.Plugins;
 
 public static class OutboxSchemaGenerator
 {

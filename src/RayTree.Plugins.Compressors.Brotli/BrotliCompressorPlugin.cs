@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.IO.Pipelines;
+using RayTree.Core.Plugins;
 using RayTree.Plugins;
 
 namespace RayTree.Plugins.Compressors.Brotli;

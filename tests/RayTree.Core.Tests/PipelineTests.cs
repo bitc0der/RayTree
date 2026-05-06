@@ -1,9 +1,12 @@
 using System.IO.Pipelines;
-using RayTree.Models;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
+using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Tracking;
 using RayTree.Plugins;
 using RayTree.Plugins.Compressors.Gzip;
 using RayTree.Plugins.Serializers.Json;
-using RayTree.Tracking;
 
 namespace RayTree.Core.Tests;
 

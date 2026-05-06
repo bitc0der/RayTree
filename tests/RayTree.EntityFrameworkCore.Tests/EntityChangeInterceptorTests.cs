@@ -1,10 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Moq;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
 using RayTree.EntityFrameworkCore.Interceptors;
-using RayTree.Models;
 using RayTree.Plugins;
-using RayTree.Tracking;
 using RayTree.EntityFrameworkCore.Extensions;
 
 namespace RayTree.EntityFrameworkCore.Tests;

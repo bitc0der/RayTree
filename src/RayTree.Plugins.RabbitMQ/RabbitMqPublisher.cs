@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using RabbitMQ.Client;
-using RayTree.Models;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Publisher;
 
 namespace RayTree.Plugins.RabbitMQ;
 

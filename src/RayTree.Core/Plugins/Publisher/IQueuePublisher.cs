@@ -1,7 +1,7 @@
 using System.IO.Pipelines;
-using RayTree.Models;
+using RayTree.Core.Models;
 
-namespace RayTree.Plugins;
+namespace RayTree.Core.Plugins.Publisher;
 
 public interface IQueuePublisher
 {

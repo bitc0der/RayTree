@@ -1,11 +1,11 @@
 using System.IO.Pipelines;
-using RayTree.Plugins;
 
-namespace RayTree.Plugins;
+namespace RayTree.Core.Plugins.Compression;
 
 public class NoOpCompressorPlugin : IChangeCompressor
 {
     public string Name => "NoOp";
+
     public async Task CompressAsync(PipeReader reader, PipeWriter writer, CancellationToken cancellationToken = default)
     {
         var result = await reader.ReadAsync(cancellationToken);
@@ -29,6 +29,7 @@ public class NoOpCompressorPlugin : IChangeCompressor
             {
                 await writer.WriteAsync(segment, cancellationToken);
             }
+
             reader.AdvanceTo(buffer.End);
         }
 
@@ -37,7 +38,8 @@ public class NoOpCompressorPlugin : IChangeCompressor
         await reader.CompleteAsync();
     }
 
-    public async Task DecompressAsync(PipeReader reader, PipeWriter writer, CancellationToken cancellationToken = default)
+    public async Task DecompressAsync(PipeReader reader, PipeWriter writer,
+        CancellationToken cancellationToken = default)
     {
         var result = await reader.ReadAsync(cancellationToken);
         var buffer = result.Buffer;
@@ -60,6 +62,7 @@ public class NoOpCompressorPlugin : IChangeCompressor
             {
                 await writer.WriteAsync(segment, cancellationToken);
             }
+
             reader.AdvanceTo(buffer.End);
         }
 

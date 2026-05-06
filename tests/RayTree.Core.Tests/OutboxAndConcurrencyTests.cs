@@ -1,9 +1,9 @@
 using Moq;
+using RayTree.Core.Distribution;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
-using RayTree.Distribution;
-using RayTree.Models;
 using RayTree.Plugins;
-using RayTree.Tracking;
 
 namespace RayTree.Core.Tests;
 

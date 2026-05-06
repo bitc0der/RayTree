@@ -1,7 +1,7 @@
 using System.IO.Pipelines;
 using System.Text;
-using RayTree.Models;
-using RayTree.Tracking;
+using RayTree.Core.Models;
+using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.InMemory.Tests;
 

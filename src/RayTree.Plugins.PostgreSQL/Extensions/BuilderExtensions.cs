@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using RayTree.Core.Plugins.Outbox;
+using RayTree.Core.Tracking;
 using RayTree.Plugins.PostgreSQL;
 
 namespace RayTree.Plugins;

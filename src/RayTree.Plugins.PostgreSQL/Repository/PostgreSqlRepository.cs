@@ -1,4 +1,5 @@
 using Npgsql;
+using RayTree.Core.Plugins.Repository;
 
 namespace RayTree.Plugins.PostgreSQL;
 

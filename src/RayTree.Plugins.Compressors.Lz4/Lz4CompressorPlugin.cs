@@ -1,5 +1,6 @@
 using System.IO.Pipelines;
 using K4os.Compression.LZ4;
+using RayTree.Core.Plugins;
 using RayTree.Plugins;
 
 namespace RayTree.Plugins.Compressors.Lz4;

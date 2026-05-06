@@ -2,10 +2,9 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
-using RayTree.Models;
-using RayTree.Plugins;
-using RayTree.Tracking;
 
 namespace RayTree.EntityFrameworkCore.Interceptors;
 

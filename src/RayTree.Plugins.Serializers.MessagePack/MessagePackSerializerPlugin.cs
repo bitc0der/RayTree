@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using MessagePack;
-using RayTree.Models;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Serialization;
 
 namespace RayTree.Plugins.Serializers.MessagePack;
 

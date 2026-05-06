@@ -1,6 +1,6 @@
 using System.IO.Pipelines;
 
-namespace RayTree.Plugins;
+namespace RayTree.Core.Plugins;
 
 public interface IChangeCompressor
 {

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
-using RayTree.Models;
-using RayTree.Tracking;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins.Outbox;
+using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.InMemory;
 

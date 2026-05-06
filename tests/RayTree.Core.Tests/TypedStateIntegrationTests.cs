@@ -1,6 +1,8 @@
 ﻿using System.IO.Pipelines;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
-using RayTree.Models;
 using RayTree.Plugins;
 using RayTree.Plugins.Compressors.Brotli;
 using RayTree.Plugins.Compressors.Gzip;
@@ -8,7 +10,6 @@ using RayTree.Plugins.Compressors.Lz4;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.Serializers.Json;
 using RayTree.Plugins.Serializers.Protobuf;
-using RayTree.Tracking;
 
 namespace RayTree.Core.Tests;
 

@@ -1,7 +1,7 @@
-using RayTree.Models;
 using System.IO.Pipelines;
+using RayTree.Core.Models;
 
-namespace RayTree.Plugins;
+namespace RayTree.Core.Plugins.Serialization;
 
 public interface IChangeSerializer
 {

@@ -1,4 +1,4 @@
-namespace RayTree.Plugins;
+namespace RayTree.Core.Plugins.Storage;
 
 public interface IDdlExecutor
 {
