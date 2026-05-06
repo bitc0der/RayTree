@@ -26,7 +26,7 @@
 - [x] 4.2 Update `IChangeSerializer.DeserializeAsync` to restore typed `State` from serialized input
 - [x] 4.3 Update JSON serializer implementation (`RayTree.Plugins.Serializers.Json`) to handle typed `State`
 - [x] 4.4 Update MessagePack serializer implementation if applicable
-- [x] 4.5 Update Protobuf serializer implementation if applicable
+- [ ] 4.5 Update Protobuf serializer implementation if applicable
 - [ ] 4.6 Ensure compression pipeline (`IChangeCompressor`) correctly handles updated serialization output
 
 ## 5. Integration and Testing
