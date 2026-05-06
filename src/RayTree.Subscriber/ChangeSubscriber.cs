@@ -1,22 +1,12 @@
-using System.IO.Pipelines;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
-using RayTree.Plugins;
+using RayTree.Subscriber.Plugins.Deduplication;
 
 namespace RayTree.Subscriber;
 
 public delegate Task ChangeHandlerAsync(EntityChange change, byte[] payload, CancellationToken cancellationToken);
-
-public class SubscriberOptions
-{
-    public int MaxDegreeOfParallelism { get; set; } = Environment.ProcessorCount;
-    public TimeSpan DeduplicationRetention { get; set; } = TimeSpan.FromHours(24);
-    public int MaxRetries { get; set; } = 3;
-    public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(1);
-    public bool SkipOnFailure { get; set; }
-}
 
 public class ChangeSubscriber : IDisposable
 {
@@ -60,15 +50,14 @@ public class ChangeSubscriber : IDisposable
 
         _handlers[typeof(TEntity)].Add(new HandlerRegistration
         {
-            EntityType = typeof(TEntity),
-            ChangeType = changeType,
-            Handler = handler
+            EntityType = typeof(TEntity), ChangeType = changeType, Handler = handler
         });
 
         return this;
     }
 
-    public async Task ProcessMessageAsync(EntityChange change, byte[] payload, CancellationToken cancellationToken = default)
+    public async Task ProcessMessageAsync(EntityChange change, byte[] payload,
+        CancellationToken cancellationToken = default)
     {
         var entityType = Type.GetType(change.EntityType);
         if (entityType == null)
@@ -88,7 +77,8 @@ public class ChangeSubscriber : IDisposable
         }
     }
 
-    private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change, byte[] payload, CancellationToken ct)
+    private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change, byte[] payload,
+        CancellationToken ct)
     {
         var retries = 0;
         while (retries < _options.MaxRetries)
@@ -129,11 +119,4 @@ public class ChangeSubscriber : IDisposable
         _cts.Cancel();
         _cts.Dispose();
     }
-}
-
-internal class HandlerRegistration
-{
-    public Type EntityType { get; set; } = null!;
-    public ChangeType? ChangeType { get; set; }
-    public ChangeHandlerAsync Handler { get; set; } = null!;
 }

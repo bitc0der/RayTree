@@ -1,6 +1,6 @@
 using StackExchange.Redis;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Subscriber.Plugins.Deduplication;
 
 public class RedisDeduplicationStore : IDeduplicationStore, IDisposable
 {
@@ -9,7 +9,10 @@ public class RedisDeduplicationStore : IDeduplicationStore, IDisposable
     private readonly string _keyPrefix;
     private readonly TimeSpan _defaultTtl;
 
-    public RedisDeduplicationStore(string connectionString, string keyPrefix = "raytree:dedup:", TimeSpan? defaultTtl = null)
+    public RedisDeduplicationStore(
+        string connectionString,
+        string keyPrefix = "raytree:dedup:",
+        TimeSpan? defaultTtl = null)
     {
         _connection = ConnectionMultiplexer.Connect(connectionString);
         _database = _connection.GetDatabase();
@@ -17,7 +20,10 @@ public class RedisDeduplicationStore : IDeduplicationStore, IDisposable
         _defaultTtl = defaultTtl ?? TimeSpan.FromHours(24);
     }
 
-    public RedisDeduplicationStore(IConnectionMultiplexer connection, string keyPrefix = "raytree:dedup:", TimeSpan? defaultTtl = null)
+    public RedisDeduplicationStore(
+        IConnectionMultiplexer connection,
+        string keyPrefix = "raytree:dedup:",
+        TimeSpan? defaultTtl = null)
     {
         _connection = connection;
         _database = connection.GetDatabase();
