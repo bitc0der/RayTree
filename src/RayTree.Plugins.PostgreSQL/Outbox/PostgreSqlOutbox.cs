@@ -16,6 +16,9 @@ public class PostgreSqlOutbox<TEntity> : IOutbox where TEntity : class
 
     public PostgreSqlOutbox(PostgreSqlOutboxOptions options)
     {
+        if (string.IsNullOrWhiteSpace(options.OutboxTableName))
+            options.OutboxTableName = EntityColumnMapper.ToSnakeCase(typeof(TEntity).Name) + "_outbox";
+
         _options = options;
         _propertyColumns = EntityColumnMapper.GetColumns(typeof(TEntity));
         _insertSql = BuildInsertSql();

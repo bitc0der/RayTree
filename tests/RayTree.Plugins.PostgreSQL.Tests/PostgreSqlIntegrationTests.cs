@@ -301,6 +301,120 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     }
 }
 
+public class DefaultSourceTableNameTests
+{
+    [Test]
+    public void Constructor_WithNoTableName_DerivesSnakeCaseFromEntityType()
+    {
+        var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
+        _ = new PostgreSqlRepository<TestEntity>(options);
+        Assert.That(options.TableName, Is.EqualTo("test_entity"));
+    }
+
+    [Test]
+    public void Constructor_WithExplicitTableName_KeepsIt()
+    {
+        var options = new PostgreSqlRepositoryOptions
+        {
+            ConnectionString = "Host=localhost",
+            TableName = "my_custom_table"
+        };
+        _ = new PostgreSqlRepository<TestEntity>(options);
+        Assert.That(options.TableName, Is.EqualTo("my_custom_table"));
+    }
+}
+
+[NonParallelizable]
+public class DefaultSourceTableNameIntegrationTests : IAsyncDisposable
+{
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
+        .WithImage("postgres:16-alpine")
+        .Build();
+
+    [OneTimeSetUp]
+    public Task OneTimeSetUp() => _postgres.StartAsync();
+
+    public ValueTask DisposeAsync() => _postgres.DisposeAsync();
+
+    [Test]
+    public async Task InitializeAsync_WithNoTableName_CreatesTableWithDerivedName()
+    {
+        var repo = new PostgreSqlRepository<TestEntity>(new PostgreSqlRepositoryOptions
+        {
+            ConnectionString = _postgres.GetConnectionString()
+            // TableName intentionally omitted
+        });
+
+        await repo.InitializeAsync();
+
+        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand("""
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_name = 'test_entity'
+            """, conn);
+        var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        Assert.That(count, Is.EqualTo(1));
+    }
+}
+
+public class DefaultTableNameTests
+{
+    [Test]
+    public void Constructor_WithNoTableName_DerivesSnakeCasePlusOutbox()
+    {
+        var options = new PostgreSqlOutboxOptions { ConnectionString = "Host=localhost" };
+        _ = new PostgreSqlOutbox<TestEntity>(options);
+        Assert.That(options.OutboxTableName, Is.EqualTo("test_entity_outbox"));
+    }
+
+    [Test]
+    public void Constructor_WithExplicitTableName_KeepsIt()
+    {
+        var options = new PostgreSqlOutboxOptions
+        {
+            ConnectionString = "Host=localhost",
+            OutboxTableName = "my_custom_table"
+        };
+        _ = new PostgreSqlOutbox<TestEntity>(options);
+        Assert.That(options.OutboxTableName, Is.EqualTo("my_custom_table"));
+    }
+}
+
+[NonParallelizable]
+public class DefaultTableNameIntegrationTests : IAsyncDisposable
+{
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
+        .WithImage("postgres:16-alpine")
+        .Build();
+
+    [OneTimeSetUp]
+    public Task OneTimeSetUp() => _postgres.StartAsync();
+
+    public ValueTask DisposeAsync() => _postgres.DisposeAsync();
+
+    [Test]
+    public async Task InitializeAsync_WithNoTableName_CreatesTableWithDerivedName()
+    {
+        var outbox = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
+        {
+            ConnectionString = _postgres.GetConnectionString()
+            // OutboxTableName intentionally omitted
+        });
+
+        await outbox.InitializeAsync();
+
+        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand("""
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_name = 'test_entity_outbox'
+            """, conn);
+        var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
+        Assert.That(count, Is.EqualTo(1));
+    }
+}
+
 [Table("test_users")]
 public class TestUser
 {

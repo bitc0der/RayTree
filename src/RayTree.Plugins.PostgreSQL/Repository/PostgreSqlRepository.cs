@@ -8,6 +8,9 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity> where TEntity 
 
     public PostgreSqlRepository(PostgreSqlRepositoryOptions options)
     {
+        if (string.IsNullOrWhiteSpace(options.TableName))
+            options.TableName = EntityColumnMapper.ToSnakeCase(typeof(TEntity).Name);
+
         _options = options;
     }
 

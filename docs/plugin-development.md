@@ -1,109 +1,139 @@
 # Plugin Development Guide
 
-RayTree's plugin system allows you to implement custom providers for storage, outbox, queue publishing, serialization, and compression.
+RayTree's plugin system allows you to implement custom providers for outbox storage, queue publishing, serialization, and compression.
 
 ## Plugin Interfaces
 
 ### IOutbox
 
-Stores changes atomically within the same transaction as the entity save.
+Stores changes and tracks their publish state.
 
 ```csharp
 public interface IOutbox
 {
-    Task<long> WriteAsync(EntityChange change, CancellationToken ct = default);
-    Task<IEnumerable<EntityChange>> GetUnpublishedAsync(int batchSize, CancellationToken ct = default);
-    Task MarkAsPublishedAsync(long id, CancellationToken ct = default);
-    Task<int> DeleteOlderThanAsync(DateTime cutoff, CancellationToken ct = default);
+    Task InitializeAsync(CancellationToken cancellationToken = default);
+
+    Task WriteAsync<TEntity>(EntityChange<TEntity> change, CancellationToken cancellationToken = default)
+        where TEntity : class;
+
+    Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(
+        int batchSize,
+        CancellationToken cancellationToken = default)
+        where TEntity : class;
+
+    Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(
+        ChangeType? changeType = null,
+        DateTime? since = null,
+        int batchSize = 100,
+        CancellationToken cancellationToken = default)
+        where TEntity : class;
+
+    Task MarkPublishedAsync(long id, CancellationToken cancellationToken = default);
+
+    Task<int> CleanupPublishedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken = default);
+
+    Task<EntityChange<TEntity>?> GetByIdAsync<TEntity>(long id, CancellationToken cancellationToken = default)
+        where TEntity : class;
 }
 ```
 
 **Implementation notes:**
-- `WriteAsync` must return the auto-generated ID (use `RETURNING id` in PostgreSQL)
-- `GetUnpublishedAsync` should return entries ordered by timestamp, limited by `batchSize`
-- `MarkAsPublishedAsync` sets `is_published = true` for the given ID
+- `WriteAsync` should set `change.Id` to the auto-generated row ID (use `RETURNING id` in PostgreSQL)
+- `GetUnpublishedAsync` returns entries ordered by `Timestamp`, limited by `batchSize`
+- `MarkPublishedAsync` sets `Published = true` for the given ID
+- `CleanupPublishedAsync` deletes published rows older than `retentionPeriod` and returns the count deleted
 
 ### IRepository
 
-CRUD operations for entity persistence.
+CRUD operations for source entity persistence.
 
 ```csharp
-public interface IRepository<TEntity> where TEntity : class
+public interface IRepository<TEntity> : IRepository where TEntity : class
 {
-    Task<TEntity?> GetByIdAsync(object id, CancellationToken ct = default);
-    Task<IEnumerable<TEntity>> GetAllAsync(CancellationToken ct = default);
-    Task AddAsync(TEntity entity, CancellationToken ct = default);
-    Task UpdateAsync(TEntity entity, CancellationToken ct = default);
-    Task DeleteAsync(object id, CancellationToken ct = default);
+    Task InsertAsync(TEntity entity, CancellationToken cancellationToken = default);
+    Task UpdateAsync(TEntity entity, CancellationToken cancellationToken = default);
+    Task DeleteAsync(TEntity entity, CancellationToken cancellationToken = default);
+    Task<TEntity?> GetByIdAsync(object id, CancellationToken cancellationToken = default);
+}
+
+public interface IRepository
+{
+    Task InitializeAsync(CancellationToken cancellationToken = default);
 }
 ```
 
 ### IQueuePublisher
 
-Publishes serialized/compressed change messages to a message broker.
+Publishes serialized+compressed change messages to a message broker.
 
 ```csharp
-public interface IQueuePublisher : IDisposable
+public interface IQueuePublisher
 {
-    Task PublishAsync(EntityChange change, PipeReader data, CancellationToken ct = default);
+    Task InitializeAsync(CancellationToken cancellationToken = default);
+    Task PublishAsync(EntityChange change, PipeReader payload, CancellationToken cancellationToken = default);
 }
 ```
 
 **Implementation notes:**
-- The `PipeReader` contains the serialized + compressed data
-- Read from the pipe and publish to your broker
-- Dispose should clean up connections/channels
+- `payload` is a `PipeReader` containing the already-serialized and compressed data
+- Read from the pipe and write to your broker; do not buffer unnecessarily
 
 ### IChangeSerializer
 
-Serializes `EntityChange` + entity data into a byte stream.
+Serializes an `EntityChange<TEntity>` into a byte stream and deserializes it back.
 
 ```csharp
 public interface IChangeSerializer
 {
-    ValueTask SerializeAsync(EntityChange change, object entityData, PipeWriter writer, CancellationToken ct = default);
-    ValueTask<(EntityChange Change, object? EntityData)> DeserializeAsync(PipeReader reader, CancellationToken ct = default);
+    string Name { get; }
+
+    Task SerializeAsync<TEntity>(
+        EntityChange<TEntity> change,
+        PipeWriter destination,
+        CancellationToken cancellationToken = default)
+        where TEntity : class;
+
+    Task<EntityChange<TEntity>> DeserializeAsync<TEntity>(
+        PipeReader source,
+        CancellationToken cancellationToken = default)
+        where TEntity : class;
 }
 ```
 
 **Implementation notes:**
-- Write to `PipeWriter` directly - avoid intermediate buffers
-- `DeserializeAsync` should return the deserialized `EntityChange` and entity data
+- Write directly to `PipeWriter` — avoid intermediate `MemoryStream` allocations
+- Call `destination.Complete()` when done writing
 
 ### IChangeCompressor
 
-Compresses/decompresses byte streams.
+Compresses and decompresses byte streams.
 
 ```csharp
 public interface IChangeCompressor
 {
-    ValueTask CompressAsync(PipeReader source, PipeWriter destination, CancellationToken ct = default);
-    ValueTask DecompressAsync(PipeReader source, PipeWriter destination, CancellationToken ct = default);
-}
-```
-
-### IDeduplicationStore
-
-Prevents processing duplicate messages on the subscriber side.
-
-```csharp
-public interface IDeduplicationStore
-{
-    Task<bool> IsDuplicateAsync(string messageId, CancellationToken ct = default);
-    Task MarkAsProcessedAsync(string messageId, CancellationToken ct = default);
+    string Name { get; }
+    Task CompressAsync(PipeReader source, PipeWriter destination, CancellationToken cancellationToken = default);
+    Task DecompressAsync(PipeReader source, PipeWriter destination, CancellationToken cancellationToken = default);
 }
 ```
 
 ## Registration
 
-### Via Builder API
+### Via EntityBuilder (per-entity)
 
 ```csharp
-tracking.ForEntity<MyEntity>()
+builder.ForEntity<MyEntity>()
     .UseOutbox(new MyCustomOutbox(connectionString))
     .UseQueue(new MyCustomQueuePublisher(connectionString))
     .UseSerializer(new MyCustomSerializer())
     .UseCompressor(new MyCustomCompressor());
+```
+
+### Via factory (global default for all entity types)
+
+```csharp
+builder.UseSerializer<IChangeSerializer>(_ => new MyCustomSerializer());
+builder.UseCompressor<IChangeCompressor>(_ => new MyCustomCompressor());
 ```
 
 ### Extension Method Pattern
@@ -111,34 +141,28 @@ tracking.ForEntity<MyEntity>()
 Create extension methods for a fluent API:
 
 ```csharp
-public static class MyCustomOutboxExtensions
+public static class MyOutboxExtensions
 {
-    public static EntityConfigurationBuilder<T> UseMyCustomOutbox<T>(
-        this EntityConfigurationBuilder<T> builder,
+    public static IEntityBuilder UseMyCustomOutbox(
+        this IEntityBuilder builder,
         string connectionString)
-    {
-        return builder.UseOutbox(new MyCustomOutbox(connectionString));
-    }
+        => builder.UseOutbox(new MyCustomOutbox(connectionString));
 }
 ```
 
-## Pipeline Order
+## Publishing Pipeline
 
-The publishing pipeline processes changes in this order:
-
-```
-EntityChange → IChangeSerializer → IChangeCompressor → IQueuePublisher
-```
-
-The subscriber reverses this:
+Changes flow through the pipeline in this order:
 
 ```
-Message → IChangeCompressor (decompress) → IChangeSerializer (deserialize) → Handlers
+EntityChange<T> → IChangeSerializer.SerializeAsync → IChangeCompressor.CompressAsync → IQueuePublisher.PublishAsync
 ```
+
+All three stages run concurrently connected by `Pipe` instances — data flows from writer to reader without buffering the full payload.
 
 ## Testing Plugins
 
-Use the in-memory plugins for integration testing:
+Register plugins directly on `EntityChangeTracker` without using the builder:
 
 ```csharp
 var tracker = new EntityChangeTracker();
@@ -148,13 +172,22 @@ tracker.RegisterSerializer(typeof(MyEntity), new MyCustomSerializer());
 tracker.RegisterCompressor(typeof(MyEntity), new MyCustomCompressor());
 ```
 
-Verify your serializer round-trips correctly:
+Verify serializer round-trips:
 
 ```csharp
+var change = new EntityChange<MyEntity>
+{
+    EntityId   = "1",
+    ChangeType = ChangeType.Insert,
+    EntityType = typeof(MyEntity).FullName!,
+    State      = new MyEntity { Id = 1 }
+};
+
 var pipe = new Pipe();
-await serializer.SerializeAsync(change, entityData, pipe.Writer);
+await serializer.SerializeAsync(change, pipe.Writer);
 pipe.Writer.Complete();
 
-var (deserializedChange, deserializedData) = await serializer.DeserializeAsync(pipe.Reader);
-Assert.That(deserializedChange.EntityId, Is.EqualTo(change.EntityId));
+var deserialized = await serializer.DeserializeAsync<MyEntity>(pipe.Reader);
+Assert.That(deserialized.EntityId, Is.EqualTo(change.EntityId));
+Assert.That(deserialized.State!.Id, Is.EqualTo(1));
 ```
