@@ -50,28 +50,25 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
         }
     }
 
-    public async Task PublishAsync(EntityChange change, Stream payload, CancellationToken cancellationToken = default)
+    public Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
     {
-        var channel = GetChannel();
+        var channel    = GetChannel();
+        var routingKey = $"{_options.RoutingKey}.{envelope.EntityType}.{envelope.ChangeType.ToString().ToLower()}";
 
-        using var ms = new MemoryStream();
-        await payload.CopyToAsync(ms, cancellationToken);
-        var body = ms.ToArray();
-
-        var routingKey  = $"{_options.RoutingKey}.{change.EntityType}.{change.ChangeType.ToString().ToLower()}";
-        var properties  = channel.CreateBasicProperties();
+        var properties = channel.CreateBasicProperties();
         properties.ContentType = "application/octet-stream";
-        properties.MessageId   = change.CorrelationId.ToString();
-        properties.Timestamp   = new AmqpTimestamp((long)new DateTimeOffset(change.Timestamp).ToUnixTimeSeconds());
+        properties.MessageId   = envelope.CorrelationId.ToString();
+        properties.Timestamp   = new AmqpTimestamp((long)new DateTimeOffset(envelope.Timestamp).ToUnixTimeSeconds());
         properties.Headers     = new Dictionary<string, object?>
         {
-            ["entity_type"] = change.EntityType,
-            ["entity_id"]   = change.EntityId,
-            ["change_type"] = change.ChangeType.ToString(),
-            ["version"]     = change.Version
+            ["entity_type"] = envelope.EntityType,
+            ["entity_id"]   = envelope.EntityId,
+            ["change_type"] = envelope.ChangeType.ToString(),
+            ["version"]     = envelope.Version
         };
 
-        channel.BasicPublish(_options.ExchangeName, routingKey, false, properties, body);
+        channel.BasicPublish(_options.ExchangeName, routingKey, false, properties, envelope.Payload);
+        return Task.CompletedTask;
     }
 
     public void Dispose()

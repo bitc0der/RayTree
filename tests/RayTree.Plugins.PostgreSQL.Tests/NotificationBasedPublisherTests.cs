@@ -48,11 +48,11 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
         await _outbox.InitializeAsync();
 
         var builder = new ChangeTrackingBuilder();
-        builder.ForEntity<TestEntity>()
+        builder.ForEntity<TestEntity>(e => e
             .UseOutbox(_outbox)
             .UseQueue(_queue)
             .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new GzipCompressorPlugin());
+            .UseCompressor(new GzipCompressorPlugin()));
 
         _tracker = builder.Build();
 
@@ -106,7 +106,7 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
         await _publisher.StartAsync();
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var (received, _) = await _queue.Reader.ReadAsync(cts.Token);
+        var received = await _queue.Reader.ReadAsync(cts.Token);
 
         Assert.That(received.EntityId, Is.EqualTo("1"));
         Assert.That(received.ChangeType, Is.EqualTo(ChangeType.Insert));
@@ -170,11 +170,11 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
         await _publisher.StartAsync();
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var received = new List<EntityChange>();
+        var received = new List<MessageEnvelope>();
         for (var i = 0; i < 5; i++)
         {
-            var (change, _) = await _queue.Reader.ReadAsync(cts.Token);
-            received.Add(change);
+            var envelope = await _queue.Reader.ReadAsync(cts.Token);
+            received.Add(envelope);
         }
 
         Assert.That(received, Has.Count.EqualTo(5));

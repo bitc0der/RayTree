@@ -1,10 +1,10 @@
-﻿using RayTree.Core.Models;
+using RayTree.Core.Models;
 
 namespace RayTree.Plugins.InMemory;
 
 public static class InMemorySubscriberExtensions
 {
-    public static IAsyncEnumerable<(EntityChange Change, byte[] Payload)> ConsumeFromInMemory(
+    public static IAsyncEnumerable<MessageEnvelope> ConsumeFromInMemory(
         this InMemoryQueue queue,
         CancellationToken cancellationToken = default)
     {

@@ -54,10 +54,10 @@ public class ChangeTrackingConfiguration
         return this;
     }
 
-    public ChangeTrackingConfiguration ForEntity<TEntity>()
+    public ChangeTrackingConfiguration ForEntity<TEntity>(Action<IEntityBuilder> configure)
     {
         ThrowIfBuilt();
-        _builder.ForEntity<TEntity>();
+        _builder.ForEntity<TEntity>(configure);
         return this;
     }
 

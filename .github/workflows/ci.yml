@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  DOTNET_NOLOGO: 1
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+
+jobs:
+  # ── Build ──────────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore RayTree.sln
+
+      - name: Build
+        run: dotnet build RayTree.sln --no-restore -c Release
+
+  # ── Unit tests (no Docker) ─────────────────────────────────────────────────
+  # Note: GitHub Actions jobs do not share filesystem state, so each job must
+  # independently restore packages and build even though the 'build' job already
+  # compiled the solution.  The 'build' job serves as a fast fail-early gate for
+  # compilation errors; it does not produce shared artifacts consumed here.
+  unit-tests:
+    name: Unit Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore & build
+        run: |
+          dotnet restore RayTree.sln
+          dotnet build RayTree.sln --no-restore -c Release
+
+      - name: Test
+        run: |
+          for project in \
+            tests/RayTree.Core.Tests \
+            tests/RayTree.Plugins.InMemory.Tests \
+            tests/RayTree.Subscriber.Tests \
+            tests/RayTree.EntityFrameworkCore.Tests \
+            tests/RayTree.Plugins.Compressors.Brotli.Tests \
+            tests/RayTree.Plugins.Compressors.Gzip.Tests \
+            tests/RayTree.Plugins.Compressors.Lz4.Tests \
+            tests/RayTree.Plugins.Serializers.Json.Tests \
+            tests/RayTree.Plugins.Serializers.MessagePack.Tests \
+            tests/RayTree.Plugins.Serializers.Protobuf.Tests
+          do
+            dotnet test "$project" \
+              --no-build -c Release \
+              --logger "trx;LogFileName=results.trx" \
+              --results-directory "TestResults/$project"
+          done
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: TestResults/**/results.trx
+
+  # ── Integration tests (Testcontainers / Docker) ────────────────────────────
+  integration-tests:
+    name: Integration / ${{ matrix.name }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false          # run all brokers even if one fails
+      matrix:
+        include:
+          - name: PostgreSQL
+            projects: "tests/RayTree.Plugins.PostgreSQL.Tests"
+          - name: RabbitMQ
+            projects: "tests/RayTree.Plugins.RabbitMQ.Tests"
+          - name: Kafka
+            projects: "tests/RayTree.Plugins.Kafka.Tests"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore & build
+        run: |
+          dotnet restore RayTree.sln
+          dotnet build RayTree.sln --no-restore -c Release
+
+      - name: Test
+        run: |
+          for project in ${{ matrix.projects }}; do
+            dotnet test "$project" \
+              --no-build -c Release \
+              --logger "trx;LogFileName=results.trx" \
+              --results-directory "TestResults/$project"
+          done
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results-${{ matrix.name }}
+          path: TestResults/**/results.trx

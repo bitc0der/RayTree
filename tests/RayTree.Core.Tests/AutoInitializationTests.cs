@@ -20,12 +20,12 @@ public class AutoInitializationTests
         // Arrange
         var builder = new ChangeTrackingBuilder();
 
-        builder.ForEntity<AutoInitTestEntity>()
+        builder.ForEntity<AutoInitTestEntity>(e => e
             .UseRepository(new InMemoryRepository<AutoInitTestEntity>())
             .UseOutbox(new InMemoryOutbox())
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new GzipCompressorPlugin());
+            .UseCompressor(new GzipCompressorPlugin()));
 
         // Act
         var tracker = await builder.BuildAsync();
@@ -58,12 +58,12 @@ public class AutoInitializationTests
         // Arrange
         var builder = new ChangeTrackingBuilder();
 
-        builder.ForEntity<AutoInitTestEntity>()
+        builder.ForEntity<AutoInitTestEntity>(e => e
             .UseRepository(new InMemoryRepository<AutoInitTestEntity>())
             .UseOutbox(new InMemoryOutbox())
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new GzipCompressorPlugin());
+            .UseCompressor(new GzipCompressorPlugin()));
 
         // Act - should not throw
         var tracker = builder.Build();
@@ -83,12 +83,12 @@ public class AutoInitializationTests
 
         var builder = new ChangeTrackingBuilder();
 
-        builder.ForEntity<AutoInitTestEntity>()
+        builder.ForEntity<AutoInitTestEntity>(e => e
             .UseRepository(new InMemoryRepository<AutoInitTestEntity>())
             .UseOutbox(mockOutbox.Object)
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new GzipCompressorPlugin());
+            .UseCompressor(new GzipCompressorPlugin()));
 
         // Act
         var tracker = builder.Build();
@@ -108,12 +108,12 @@ public class AutoInitializationTests
 
         var builder = new ChangeTrackingBuilder();
 
-        builder.ForEntity<AutoInitTestEntity>()
+        builder.ForEntity<AutoInitTestEntity>(e => e
             .UseRepository(new InMemoryRepository<AutoInitTestEntity>())
             .UseOutbox(new InMemoryOutbox())
             .UseQueue(mockQueue.Object)
             .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new GzipCompressorPlugin());
+            .UseCompressor(new GzipCompressorPlugin()));
 
         // Act
         var tracker = builder.Build();

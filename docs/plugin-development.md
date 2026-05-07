@@ -1,6 +1,6 @@
 # Plugin Development Guide
 
-RayTree's plugin system allows you to implement custom providers for outbox storage, queue publishing, serialization, and compression.
+RayTree's plugin system allows you to implement custom providers for outbox storage, queue publishing/consuming, serialization, and compression.
 
 ## Plugin Interfaces
 
@@ -64,23 +64,40 @@ public interface IRepository
 
 ### IQueuePublisher
 
-Publishes serialized+compressed change messages to a message broker.
+Publishes a `MessageEnvelope` to a message broker. The envelope is the only thing that crosses the queue boundary — it contains change metadata plus the already-serialized and compressed entity state as `byte[] Payload`.
 
 ```csharp
 public interface IQueuePublisher
 {
     Task InitializeAsync(CancellationToken cancellationToken = default);
-    Task PublishAsync(EntityChange change, PipeReader payload, CancellationToken cancellationToken = default);
+    Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default);
 }
 ```
 
 **Implementation notes:**
-- `payload` is a `PipeReader` containing the already-serialized and compressed data
-- Read from the pipe and write to your broker; do not buffer unnecessarily
+- `InitializeAsync` should create the broker-side infrastructure (exchange, topic, queue) if it does not exist
+- `Payload` is already compressed; write it to the broker as-is without re-encoding
+
+### IQueueConsumer
+
+Receives `MessageEnvelope` messages from a broker and exposes them as an async stream.
+
+```csharp
+public interface IQueueConsumer
+{
+    Task InitializeAsync(CancellationToken cancellationToken = default);
+    IAsyncEnumerable<MessageEnvelope> ConsumeAsync(CancellationToken cancellationToken = default);
+}
+```
+
+**Implementation notes:**
+- `InitializeAsync` opens the connection and sets up the subscription
+- `ConsumeAsync` must be called after `InitializeAsync`
+- All broker operations (consume + ack) must run on the same thread for brokers with native single-thread requirements (e.g., Confluent.Kafka); use a dedicated background thread with a `Channel<MessageEnvelope>` buffer
 
 ### IChangeSerializer
 
-Serializes an `EntityChange<TEntity>` into a byte stream and deserializes it back.
+Serializes an `EntityChange<TEntity>` (including its typed `State`) into a byte stream and deserializes it back.
 
 ```csharp
 public interface IChangeSerializer
@@ -89,20 +106,16 @@ public interface IChangeSerializer
 
     Task SerializeAsync<TEntity>(
         EntityChange<TEntity> change,
-        PipeWriter destination,
+        Stream destination,
         CancellationToken cancellationToken = default)
         where TEntity : class;
 
     Task<EntityChange<TEntity>> DeserializeAsync<TEntity>(
-        PipeReader source,
+        Stream source,
         CancellationToken cancellationToken = default)
         where TEntity : class;
 }
 ```
-
-**Implementation notes:**
-- Write directly to `PipeWriter` — avoid intermediate `MemoryStream` allocations
-- Call `destination.Complete()` when done writing
 
 ### IChangeCompressor
 
@@ -112,9 +125,31 @@ Compresses and decompresses byte streams.
 public interface IChangeCompressor
 {
     string Name { get; }
-    Task CompressAsync(PipeReader source, PipeWriter destination, CancellationToken cancellationToken = default);
-    Task DecompressAsync(PipeReader source, PipeWriter destination, CancellationToken cancellationToken = default);
+    Task CompressAsync(Stream source, Stream destination, CancellationToken cancellationToken = default);
+    Task DecompressAsync(Stream source, Stream destination, CancellationToken cancellationToken = default);
 }
+```
+
+## Publishing Pipeline
+
+Changes flow through the pipeline in this order on the **publisher side**:
+
+```
+EntityChange<T>
+  → IChangeSerializer.SerializeAsync   (writes entity state to a MemoryStream)
+  → IChangeCompressor.CompressAsync    (compresses into another MemoryStream)
+  → MessageEnvelope { Payload = compressed bytes }
+  → IQueuePublisher.PublishAsync       (sends envelope to broker)
+```
+
+On the **subscriber side** the envelope is received and the stages reverse:
+
+```
+MessageEnvelope
+  → IChangeCompressor.DecompressAsync  (expands Payload)
+  → IChangeSerializer.DeserializeAsync<TEntity>
+  → EntityChange<TEntity> { State = typed entity }
+  → ChangeHandlerAsync<TEntity>(change, cancellationToken)
 ```
 
 ## Registration
@@ -124,7 +159,7 @@ public interface IChangeCompressor
 ```csharp
 builder.ForEntity<MyEntity>()
     .UseOutbox(new MyCustomOutbox(connectionString))
-    .UseQueue(new MyCustomQueuePublisher(connectionString))
+    .UseQueue(new MyCustomQueuePublisher(brokerOptions))
     .UseSerializer(new MyCustomSerializer())
     .UseCompressor(new MyCustomCompressor());
 ```
@@ -138,8 +173,6 @@ builder.UseCompressor<IChangeCompressor>(_ => new MyCustomCompressor());
 
 ### Extension Method Pattern
 
-Create extension methods for a fluent API:
-
 ```csharp
 public static class MyOutboxExtensions
 {
@@ -149,16 +182,6 @@ public static class MyOutboxExtensions
         => builder.UseOutbox(new MyCustomOutbox(connectionString));
 }
 ```
-
-## Publishing Pipeline
-
-Changes flow through the pipeline in this order:
-
-```
-EntityChange<T> → IChangeSerializer.SerializeAsync → IChangeCompressor.CompressAsync → IQueuePublisher.PublishAsync
-```
-
-All three stages run concurrently connected by `Pipe` instances — data flows from writer to reader without buffering the full payload.
 
 ## Testing Plugins
 
@@ -170,6 +193,7 @@ tracker.RegisterOutbox(typeof(MyEntity), new InMemoryOutbox());
 tracker.RegisterPublisher(typeof(MyEntity), new InMemoryQueue());
 tracker.RegisterSerializer(typeof(MyEntity), new MyCustomSerializer());
 tracker.RegisterCompressor(typeof(MyEntity), new MyCustomCompressor());
+await tracker.InitializeAsync();
 ```
 
 Verify serializer round-trips:
@@ -183,11 +207,11 @@ var change = new EntityChange<MyEntity>
     State      = new MyEntity { Id = 1 }
 };
 
-var pipe = new Pipe();
-await serializer.SerializeAsync(change, pipe.Writer);
-pipe.Writer.Complete();
+using var stream = new MemoryStream();
+await serializer.SerializeAsync(change, stream);
+stream.Position = 0;
 
-var deserialized = await serializer.DeserializeAsync<MyEntity>(pipe.Reader);
-Assert.That(deserialized.EntityId, Is.EqualTo(change.EntityId));
-Assert.That(deserialized.State!.Id, Is.EqualTo(1));
+var deserialized = await serializer.DeserializeAsync<MyEntity>(stream);
+Assert.That(deserialized.EntityId,    Is.EqualTo(change.EntityId));
+Assert.That(deserialized.State!.Id,   Is.EqualTo(1));
 ```

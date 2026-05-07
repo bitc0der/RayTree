@@ -1,6 +1,7 @@
 using System.Reflection;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
+
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
@@ -132,9 +133,19 @@ public class OutboxPublisherService : IDisposable
 
         using var compressed = new MemoryStream();
         await compressor.CompressAsync(serialized, compressed, ct);
-        compressed.Position = 0;
 
-        await publisher.PublishAsync(change, compressed, ct);
+        var envelope = new MessageEnvelope
+        {
+            EntityType    = change.EntityType,
+            EntityId      = change.EntityId,
+            ChangeType    = change.ChangeType,
+            CorrelationId = change.CorrelationId,
+            Version       = change.Version,
+            Timestamp     = change.Timestamp,
+            Payload       = compressed.ToArray()
+        };
+
+        await publisher.PublishAsync(envelope, ct);
     }
 
     private Task SerializeAsync(IChangeSerializer serializer, EntityChange change, Stream destination, CancellationToken ct)
