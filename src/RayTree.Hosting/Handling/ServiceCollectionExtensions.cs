@@ -2,8 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using RayTree.Core.Handling;
-using RayTree.Subscriber;
-using RayTree.Subscriber.Plugins.Deduplication;
+using RayTree.Core.Plugins.Deduplication;
 
 namespace RayTree.Hosting.Handling;
 

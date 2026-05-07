@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace RayTree.Subscriber.Plugins.Deduplication;
+namespace RayTree.Core.Plugins.Deduplication;
 
 public class InMemoryDeduplicationStore : IDeduplicationStore
 {

@@ -1,7 +1,6 @@
 using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Serialization;
-using RayTree.Subscriber;
-using RayTree.Subscriber.Plugins.Deduplication;
 
 namespace RayTree.Core.Handling;
 

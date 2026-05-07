@@ -1,4 +1,4 @@
-namespace RayTree.Subscriber.Plugins.Deduplication;
+namespace RayTree.Core.Plugins.Deduplication;
 
 public interface IDeduplicationStore
 {

@@ -2,10 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using RayTree.Core.Handling;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
+using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
-using RayTree.Subscriber;
-using RayTree.Subscriber.Plugins.Deduplication;
 
 namespace RayTree.Hosting.Handling;
 

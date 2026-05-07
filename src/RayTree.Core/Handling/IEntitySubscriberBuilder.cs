@@ -1,10 +1,9 @@
-using RayTree.Core.Handling;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Core.Handling;
 
 /// <summary>
 /// Fluent builder scoped to a single entity type on the subscriber side.

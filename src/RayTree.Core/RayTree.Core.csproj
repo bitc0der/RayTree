@@ -3,9 +3,6 @@
     <Description>Core abstractions and engine for entity change tracking with outbox pattern</Description>
     <PackageTags>change-tracking;outbox;event-sourcing</PackageTags>
   </PropertyGroup>
-  <ItemGroup>
-    <Folder Include="Handling\Plugins\" />
-  </ItemGroup>
 
 
 </Project>

@@ -1,4 +1,4 @@
-using RayTree.Subscriber;
+using RayTree.Core.Handling;
 
 namespace RayTree.Plugins.RabbitMQ;
 
