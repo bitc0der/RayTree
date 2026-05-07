@@ -201,11 +201,20 @@ public class InMemoryQueueTests
         };
         var payloadData = "test payload"u8.ToArray();
 
-        await queue.PublishAsync(change, new MemoryStream(payloadData));
+        await queue.PublishAsync(new MessageEnvelope
+        {
+            EntityType = change.EntityType,
+            EntityId = change.EntityId,
+            ChangeType = change.ChangeType,
+            CorrelationId = change.CorrelationId,
+            Version = change.Version,
+            Timestamp = change.Timestamp,
+            Payload = payloadData
+        });
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var message = await queue.Reader.ReadAsync(cts.Token);
-        Assert.That(message.Change.EntityId, Is.EqualTo("1"));
+        Assert.That(message.EntityId, Is.EqualTo("1"));
         Assert.That(message.Payload, Is.EqualTo(payloadData));
     }
 
@@ -216,21 +225,21 @@ public class InMemoryQueueTests
         var payloadData1 = Encoding.UTF8.GetBytes("payload1");
         var payloadData2 = Encoding.UTF8.GetBytes("payload2");
 
-        await queue.PublishAsync(new EntityChange { EntityId = "1" }, new MemoryStream(payloadData1));
-        await queue.PublishAsync(new EntityChange { EntityId = "2" }, new MemoryStream(payloadData2));
+        await queue.PublishAsync(new MessageEnvelope { EntityId = "1", Payload = payloadData1 });
+        await queue.PublishAsync(new MessageEnvelope { EntityId = "2", Payload = payloadData2 });
 
-        var messages = new List<(EntityChange Change, byte[] Payload)>();
+        var messages = new List<MessageEnvelope>();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
 
-        await foreach (var msg in queue.ConsumeAsync(cts.Token))
+        await foreach (var envelope in queue.ConsumeAsync(cts.Token))
         {
-            messages.Add(msg);
+            messages.Add(envelope);
             if (messages.Count == 2) break;
         }
 
         Assert.That(messages, Has.Count.EqualTo(2));
-        Assert.That(messages[0].Change.EntityId, Is.EqualTo("1"));
-        Assert.That(messages[1].Change.EntityId, Is.EqualTo("2"));
+        Assert.That(messages[0].EntityId, Is.EqualTo("1"));
+        Assert.That(messages[1].EntityId, Is.EqualTo("2"));
     }
 
     [Test]

@@ -1,3 +1,4 @@
+using System.Reflection;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
@@ -18,6 +19,12 @@ public class ChangeSubscriber : IDisposable
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
     private readonly CancellationTokenSource _cts = new();
+
+    // Reflection helper: DeserializeCoreAsync<TEntity>(serializer, stream, ct) → Task<EntityChange>
+    private static readonly MethodInfo DeserializeMethod =
+        typeof(ChangeSubscriber).GetMethod(
+            nameof(DeserializeCoreAsync),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
 
     public ChangeSubscriber(IDeduplicationStore? dedupStore = null, SubscriberOptions? options = null)
     {
@@ -67,32 +74,114 @@ public class ChangeSubscriber : IDisposable
         return this;
     }
 
-    private async Task ProcessMessageAsync(EntityChange change, byte[] payload, CancellationToken cancellationToken)
+    // -------------------------------------------------------------------------
+    // Core consume loop
+    // -------------------------------------------------------------------------
+
+    public async Task ConsumeFromConsumerAsync(IQueueConsumer consumer,
+        CancellationToken cancellationToken = default)
     {
-        var entityType = ResolveType(change.EntityType);
+        await foreach (var envelope in consumer.ConsumeAsync(cancellationToken))
+            await ProcessMessageAsync(envelope, cancellationToken);
+    }
+
+    public async Task ConsumeFromQueueAsync<TQueue>(
+        TQueue queue,
+        Func<TQueue, CancellationToken, IAsyncEnumerable<MessageEnvelope>> reader,
+        CancellationToken cancellationToken = default)
+    {
+        await foreach (var envelope in reader(queue, cancellationToken))
+            await ProcessMessageAsync(envelope, cancellationToken);
+    }
+
+    // -------------------------------------------------------------------------
+    // Message processing
+    // -------------------------------------------------------------------------
+
+    public async Task ProcessMessageAsync(MessageEnvelope envelope,
+        CancellationToken cancellationToken = default)
+    {
+        var entityType = ResolveType(envelope.EntityType);
         if (entityType == null)
             return;
 
-        if (!await _dedupStore.TryMarkProcessedAsync(change.CorrelationId.ToString(), cancellationToken))
+        if (!await _dedupStore.TryMarkProcessedAsync(envelope.CorrelationId.ToString(), cancellationToken))
             return;
 
         if (!_handlers.TryGetValue(entityType, out var handlers) || handlers.Count == 0)
             return;
 
         var matchingHandlers = handlers
-            .Where(h => h.ChangeType == null || h.ChangeType == change.ChangeType)
+            .Where(h => h.ChangeType == null || h.ChangeType == envelope.ChangeType)
             .ToList();
 
+        if (matchingHandlers.Count == 0)
+            return;
+
+        // Deserialize the envelope payload back into a typed EntityChange so handlers
+        // receive the full entity state. Falls back to meta-only when no serializer is
+        // registered for this entity type.
+        var change = await DeserializeEnvelopeAsync(envelope, entityType, cancellationToken);
+
         foreach (var registration in matchingHandlers)
-            await InvokeWithRetryAsync(registration, change, payload, cancellationToken);
+            await InvokeWithRetryAsync(registration, change, envelope.Payload, cancellationToken);
     }
 
-    public async Task ConsumeFromConsumerAsync(IQueueConsumer consumer,
-        CancellationToken cancellationToken = default)
+    // -------------------------------------------------------------------------
+    // Deserialization
+    // -------------------------------------------------------------------------
+
+    private async Task<EntityChange> DeserializeEnvelopeAsync(
+        MessageEnvelope envelope, Type entityType, CancellationToken ct)
     {
-        await foreach (var (change, payload) in consumer.ConsumeAsync(cancellationToken))
-            await ProcessMessageAsync(change, payload, cancellationToken);
+        if (!_serializers.TryGetValue(entityType, out var serializer))
+        {
+            // No serializer registered — return a meta-only EntityChange.
+            return new EntityChange
+            {
+                EntityType    = envelope.EntityType,
+                EntityId      = envelope.EntityId,
+                ChangeType    = envelope.ChangeType,
+                CorrelationId = envelope.CorrelationId,
+                Version       = envelope.Version,
+                Timestamp     = envelope.Timestamp
+            };
+        }
+
+        using var payloadStream      = new MemoryStream(envelope.Payload);
+        using var decompressedStream = new MemoryStream();
+
+        if (_compressors.TryGetValue(entityType, out var compressor))
+            await compressor.DecompressAsync(payloadStream, decompressedStream, ct);
+        else
+            await payloadStream.CopyToAsync(decompressedStream, ct);
+
+        decompressedStream.Position = 0;
+        return await InvokeDeserializeAsync(serializer, entityType, decompressedStream, ct);
     }
+
+    /// <summary>
+    /// Invokes <see cref="DeserializeCoreAsync{TEntity}"/> via reflection so that the
+    /// generic serializer method is called with the correct runtime entity type.
+    /// </summary>
+    private static Task<EntityChange> InvokeDeserializeAsync(
+        IChangeSerializer serializer, Type entityType, Stream source, CancellationToken ct)
+        => (Task<EntityChange>)DeserializeMethod
+            .MakeGenericMethod(entityType)
+            .Invoke(null, [serializer, source, ct])!;
+
+    // Return type is Task<EntityChange> so the cast in InvokeDeserializeAsync works at runtime.
+    // EntityChange<TEntity> is implicitly upcasted to EntityChange in the async return.
+    private static async Task<EntityChange> DeserializeCoreAsync<TEntity>(
+        IChangeSerializer serializer,
+        Stream source,
+        CancellationToken ct)
+        where TEntity : class
+        => await serializer.DeserializeAsync<TEntity>(source, ct);
+
+    // -------------------------------------------------------------------------
+    // Retry / invocation
+    // -------------------------------------------------------------------------
 
     private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change,
         byte[] payload, CancellationToken ct)
@@ -118,6 +207,10 @@ public class ChangeSubscriber : IDisposable
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
 
     private static Type? ResolveType(string typeName)
     {

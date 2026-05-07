@@ -160,7 +160,16 @@ public class RabbitMqPublisherTests
             CorrelationId = Guid.NewGuid()
         };
 
-        Assert.DoesNotThrowAsync(async () => await publisher.PublishAsync(change, new MemoryStream()));
+        Assert.DoesNotThrowAsync(async () => await publisher.PublishAsync(new MessageEnvelope
+        {
+            EntityType = change.EntityType,
+            EntityId = change.EntityId,
+            ChangeType = change.ChangeType,
+            CorrelationId = change.CorrelationId,
+            Version = change.Version,
+            Timestamp = change.Timestamp,
+            Payload = Array.Empty<byte>()
+        }));
     }
 
     [Test]
@@ -183,7 +192,16 @@ public class RabbitMqPublisherTests
             CorrelationId = Guid.NewGuid()
         };
 
-        await publisher.PublishAsync(change, new MemoryStream(new byte[] { 0xAA, 0xBB, 0xCC }));
+        await publisher.PublishAsync(new MessageEnvelope
+        {
+            EntityType = change.EntityType,
+            EntityId = change.EntityId,
+            ChangeType = change.ChangeType,
+            CorrelationId = change.CorrelationId,
+            Version = change.Version,
+            Timestamp = change.Timestamp,
+            Payload = new byte[] { 0xAA, 0xBB, 0xCC }
+        });
 
         mockChannel.Verify(c => c.BasicPublish(
             It.IsAny<string>(),
@@ -217,7 +235,16 @@ public class RabbitMqPublisherTests
             CorrelationId = Guid.NewGuid()
         };
 
-        await publisher.PublishAsync(change, new MemoryStream(new byte[] { 1 }));
+        await publisher.PublishAsync(new MessageEnvelope
+        {
+            EntityType = change.EntityType,
+            EntityId = change.EntityId,
+            ChangeType = change.ChangeType,
+            CorrelationId = change.CorrelationId,
+            Version = change.Version,
+            Timestamp = change.Timestamp,
+            Payload = new byte[] { 1 }
+        });
 
         mockChannel.Verify(c => c.BasicPublish(
             "my_custom_exchange",

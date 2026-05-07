@@ -148,9 +148,19 @@ public class NotificationBasedPublisher : IDisposable
 
         using var compressed = new MemoryStream();
         await compressor.CompressAsync(serialized, compressed, ct);
-        compressed.Position = 0;
 
-        await publisher.PublishAsync(change, compressed, ct);
+        var envelope = new MessageEnvelope
+        {
+            EntityType    = change.EntityType,
+            EntityId      = change.EntityId,
+            ChangeType    = change.ChangeType,
+            CorrelationId = change.CorrelationId,
+            Version       = change.Version,
+            Timestamp     = change.Timestamp,
+            Payload       = compressed.ToArray()
+        };
+
+        await publisher.PublishAsync(envelope, ct);
     }
 
     private async Task ProcessUnpublishedChangesAsync(CancellationToken cancellationToken)

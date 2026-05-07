@@ -7,24 +7,20 @@ namespace RayTree.Plugins.InMemory;
 
 public class InMemoryQueue : IQueuePublisher, IQueueConsumer, IDisposable
 {
-    private readonly Channel<(EntityChange Change, byte[] Payload)> _channel =
-        Channel.CreateUnbounded<(EntityChange, byte[])>();
+    private readonly Channel<MessageEnvelope> _channel =
+        Channel.CreateUnbounded<MessageEnvelope>();
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public ChannelReader<(EntityChange Change, byte[] Payload)> Reader => _channel.Reader;
+    public ChannelReader<MessageEnvelope> Reader => _channel.Reader;
 
-    public async Task PublishAsync(EntityChange change, Stream payload, CancellationToken cancellationToken = default)
-    {
-        using var ms = new MemoryStream();
-        await payload.CopyToAsync(ms, cancellationToken);
-        await _channel.Writer.WriteAsync((change, ms.ToArray()), cancellationToken);
-    }
+    public async Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
+        => await _channel.Writer.WriteAsync(envelope, cancellationToken);
 
-    public IAsyncEnumerable<(EntityChange Change, byte[] Payload)> ConsumeAsync(CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<MessageEnvelope> ConsumeAsync(CancellationToken cancellationToken = default)
         => _channel.Reader.ReadAllAsync(cancellationToken);
 
-    public void Complete() => _channel.Writer.Complete();
+    public void Complete() => _channel.Writer.TryComplete();
 
-    public void Dispose() => _channel.Writer.Complete();
+    public void Dispose() => _channel.Writer.TryComplete();
 }

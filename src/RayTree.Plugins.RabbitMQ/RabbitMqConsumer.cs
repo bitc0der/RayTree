@@ -13,8 +13,8 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
     private readonly RabbitMqConsumerOptions _options;
     private IConnection? _connection;
     private IModel? _channel;
-    private readonly Channel<(EntityChange Change, byte[] Payload)> _buffer =
-        Channel.CreateUnbounded<(EntityChange, byte[])>();
+    private readonly Channel<MessageEnvelope> _buffer =
+        Channel.CreateUnbounded<MessageEnvelope>();
 
     public RabbitMqConsumer(RabbitMqConsumerOptions options)
     {
@@ -55,9 +55,8 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
     {
         try
         {
-            var change  = ParseEntityChange(ea.BasicProperties);
-            var payload = ea.Body.ToArray();
-            await _buffer.Writer.WriteAsync((change, payload));
+            var envelope = ParseEnvelope(ea.BasicProperties, ea.Body.ToArray());
+            await _buffer.Writer.WriteAsync(envelope);
             _channel!.BasicAck(ea.DeliveryTag, multiple: false);
         }
         catch
@@ -66,15 +65,14 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         }
     }
 
-    public IAsyncEnumerable<(EntityChange Change, byte[] Payload)> ConsumeAsync(
-        CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<MessageEnvelope> ConsumeAsync(CancellationToken cancellationToken = default)
         => _buffer.Reader.ReadAllAsync(cancellationToken);
 
-    private static EntityChange ParseEntityChange(IBasicProperties props)
+    private static MessageEnvelope ParseEnvelope(IBasicProperties props, byte[] body)
     {
         var headers = props.Headers ?? new Dictionary<string, object?>();
 
-        return new EntityChange
+        return new MessageEnvelope
         {
             EntityType    = GetHeader(headers, "entity_type"),
             EntityId      = GetHeader(headers, "entity_id"),
@@ -83,7 +81,8 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
             CorrelationId = Guid.TryParse(props.MessageId, out var g) ? g : Guid.Empty,
             Timestamp     = props.Timestamp.UnixTime > 0
                 ? DateTimeOffset.FromUnixTimeSeconds(props.Timestamp.UnixTime).UtcDateTime
-                : DateTime.UtcNow
+                : DateTime.UtcNow,
+            Payload       = body
         };
     }
 

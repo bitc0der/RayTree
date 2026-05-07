@@ -1,3 +1,4 @@
+using System.Text;
 using Confluent.Kafka;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Publisher;
@@ -50,26 +51,22 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
         }
     }
 
-    public async Task PublishAsync(EntityChange change, Stream payload, CancellationToken cancellationToken = default)
+    public async Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
     {
         var producer = GetProducer();
 
-        using var ms = new MemoryStream();
-        await payload.CopyToAsync(ms, cancellationToken);
-        var body = ms.ToArray();
-
         var message = new Message<string, byte[]>
         {
-            Key   = $"{change.EntityType}:{change.EntityId}",
-            Value = body,
+            Key   = $"{envelope.EntityType}:{envelope.EntityId}",
+            Value = envelope.Payload,
             Headers = new Headers
             {
-                new("entity_type",    System.Text.Encoding.UTF8.GetBytes(change.EntityType)),
-                new("entity_id",      System.Text.Encoding.UTF8.GetBytes(change.EntityId)),
-                new("change_type",    System.Text.Encoding.UTF8.GetBytes(change.ChangeType.ToString())),
-                new("correlation_id", change.CorrelationId.ToByteArray()),
-                new("version",        System.Text.Encoding.UTF8.GetBytes(change.Version.ToString())),
-                new("timestamp",      System.Text.Encoding.UTF8.GetBytes(change.Timestamp.ToString("O")))
+                new("entity_type",    Encoding.UTF8.GetBytes(envelope.EntityType)),
+                new("entity_id",      Encoding.UTF8.GetBytes(envelope.EntityId)),
+                new("change_type",    Encoding.UTF8.GetBytes(envelope.ChangeType.ToString())),
+                new("correlation_id", envelope.CorrelationId.ToByteArray()),
+                new("version",        Encoding.UTF8.GetBytes(envelope.Version.ToString())),
+                new("timestamp",      Encoding.UTF8.GetBytes(envelope.Timestamp.ToString("O")))
             }
         };
 

@@ -35,17 +35,17 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
         return Task.CompletedTask;
     }
 
-    public async IAsyncEnumerable<(EntityChange Change, byte[] Payload)> ConsumeAsync(
+    public async IAsyncEnumerable<MessageEnvelope> ConsumeAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // All Confluent.Kafka operations (Consume + Commit) must run on the same thread.
-        // A dedicated background thread polls and buffers results via an unbounded channel.
-        // We link the caller's token with _disposeCts so Dispose() can stop the poll loop
-        // before freeing native memory, preventing AccessViolationException.
+        // A dedicated background thread polls and buffers envelopes via an unbounded channel.
+        // Linking with _disposeCts ensures Dispose() can drain the poll loop before freeing
+        // native memory, preventing AccessViolationException.
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
         var linkedToken = linkedCts.Token;
 
-        var channel = Channel.CreateUnbounded<(EntityChange, byte[])>(
+        var channel = Channel.CreateUnbounded<MessageEnvelope>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
 
         _pollTask = Task.Run(() =>
@@ -66,12 +66,12 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
                     if (result?.Message == null) continue;
 
-                    EntityChange change;
-                    try   { change = ParseEntityChange(result.Message); }
+                    MessageEnvelope envelope;
+                    try   { envelope = ParseEnvelope(result.Message); }
                     catch { _consumer!.Commit(result); continue; }
 
                     _consumer!.Commit(result);
-                    channel.Writer.TryWrite((change, result.Message.Value));
+                    channel.Writer.TryWrite(envelope);
                 }
             }
             finally
@@ -84,9 +84,9 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
             yield return item;
     }
 
-    private static EntityChange ParseEntityChange(Message<string, byte[]> message)
+    private static MessageEnvelope ParseEnvelope(Message<string, byte[]> message)
     {
-        return new EntityChange
+        return new MessageEnvelope
         {
             EntityType    = GetHeader(message.Headers, "entity_type"),
             EntityId      = GetHeader(message.Headers, "entity_id"),
@@ -94,8 +94,8 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
             CorrelationId = TryParseGuid(GetHeaderBytes(message.Headers, "correlation_id")),
             Version       = int.TryParse(GetHeader(message.Headers, "version"), out var v) ? v : 0,
             Timestamp     = DateTime.TryParse(GetHeader(message.Headers, "timestamp"), out var ts)
-                ? ts
-                : DateTime.UtcNow
+                ? ts : DateTime.UtcNow,
+            Payload       = message.Value
         };
     }
 

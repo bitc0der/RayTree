@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
-using RayTree.Plugins.Compressors.Gzip;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.Serializers.Json;
 using RayTree.Subscriber;
@@ -169,8 +168,16 @@ public class InMemoryEndToEndTests
         await firstArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Manually publish the same change again (same CorrelationId)
-        using var ms = new MemoryStream();
-        await _queue.PublishAsync(change, ms);
+        await _queue.PublishAsync(new MessageEnvelope
+        {
+            EntityType    = change.EntityType,
+            EntityId      = change.EntityId,
+            ChangeType    = change.ChangeType,
+            CorrelationId = change.CorrelationId,
+            Version       = change.Version,
+            Timestamp     = change.Timestamp,
+            Payload       = Array.Empty<byte>()
+        });
         await Task.Delay(300); // give time for second delivery attempt
 
         Assert.That(invokeCount, Is.EqualTo(1), "Handler must not be invoked for duplicate CorrelationId");
@@ -189,7 +196,7 @@ public class InMemoryEndToEndTests
             .ConsumeEntity<Order>()
             .UseInMemoryQueue<Order>(_queue)
             .UseSerializer<Order>(new JsonSerializerPlugin())
-            .UseCompressor<Order>(new GzipCompressorPlugin())
+            .UseCompressor<Order>(new NoOpCompressorPlugin()) // must match the tracker's compressor
             .OnInsert<Order>((change, _, _) =>
             {
                 tcs.TrySetResult(change);

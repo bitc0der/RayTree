@@ -103,7 +103,7 @@ public class EndToEndTests
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var message = await queue.Reader.ReadAsync(cts.Token);
-        Assert.That(message.Change.ChangeType, Is.EqualTo(ChangeType.Insert));
+        Assert.That(message.ChangeType, Is.EqualTo(ChangeType.Insert));
 
         tracker.Dispose();
     }
