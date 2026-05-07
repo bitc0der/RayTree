@@ -4,17 +4,20 @@ namespace RayTree.Plugins.Kafka;
 
 public static class KafkaSubscriberExtensions
 {
-    public static ChangeSubscriberConfiguration UseKafka<TEntity>(
-        this ChangeSubscriberConfiguration config,
+    /// <summary>
+    /// Configures a <see cref="KafkaConsumer"/> as the queue source for this entity type.
+    /// </summary>
+    public static IEntitySubscriberBuilder<TEntity> UseKafka<TEntity>(
+        this IEntitySubscriberBuilder<TEntity> builder,
         Action<KafkaConsumerOptions> configure)
         where TEntity : class
     {
-        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
         var options = new KafkaConsumerOptions();
         configure(options);
-        return config.UseQueue<TEntity>(new KafkaConsumer(options));
+        return builder.UseQueue(new KafkaConsumer(options));
     }
 
     public static KafkaConsumerOptions WithTopic(this KafkaConsumerOptions options, string topic)

@@ -64,9 +64,11 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
         return this;
     }
 
-    public IEntityBuilder ForEntity<TEntity>()
+    public IChangeTrackingBuilder ForEntity<TEntity>(Action<IEntityBuilder> configure)
     {
-        return new EntityBuilder(this, typeof(TEntity));
+        ArgumentNullException.ThrowIfNull(configure);
+        configure(new EntityBuilder(this, typeof(TEntity)));
+        return this;
     }
 
     internal void AddOutboxOverride(Type entityType, IOutbox outbox) => _outboxOverrides[entityType] = outbox;

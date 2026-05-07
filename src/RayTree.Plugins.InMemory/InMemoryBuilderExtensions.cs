@@ -13,7 +13,7 @@ public static class InMemoryBuilderExtensions
         {
             ArgumentNullException.ThrowIfNull(builder);
 
-            builder.ForEntity<TEntity>().UseOutbox(new InMemoryOutbox());
+            builder.ForEntity<TEntity>(e => e.UseOutbox(new InMemoryOutbox()));
 
             return builder;
         }
@@ -21,7 +21,7 @@ public static class InMemoryBuilderExtensions
         public IChangeTrackingBuilder UseInMemoryOutbox<TEntity>()
             where TEntity : class
         {
-            builder.ForEntity<TEntity>().UseOutbox(new InMemoryOutbox());
+            builder.ForEntity<TEntity>(e => e.UseOutbox(new InMemoryOutbox()));
 
             return builder;
         }
@@ -29,7 +29,7 @@ public static class InMemoryBuilderExtensions
         public IChangeTrackingBuilder UseInMemoryQueue<TEntity>()
             where TEntity : class
         {
-            builder.ForEntity<TEntity>().UseQueue(new InMemoryQueue());
+            builder.ForEntity<TEntity>(e => e.UseQueue(new InMemoryQueue()));
 
             return builder;
         }
@@ -42,14 +42,11 @@ public static class InMemoryBuilderExtensions
             ArgumentNullException.ThrowIfNull(serializer);
             ArgumentNullException.ThrowIfNull(compressor);
 
-            var outbox = new InMemoryOutbox();
-            var queue = new InMemoryQueue();
-
-            builder.ForEntity<TEntity>()
-                .UseOutbox(outbox)
-                .UseQueue(queue)
+            builder.ForEntity<TEntity>(e => e
+                .UseOutbox(new InMemoryOutbox())
+                .UseQueue(new InMemoryQueue())
                 .UseSerializer(serializer)
-                .UseCompressor(compressor);
+                .UseCompressor(compressor));
 
             return builder;
         }

@@ -2,15 +2,19 @@ using RayTree.Plugins.InMemory;
 
 namespace RayTree.Subscriber;
 
-public static class InMemorySubscriberConfigurationExtensions
+public static class InMemorySubscriberExtensions
 {
-    public static ChangeSubscriberConfiguration UseInMemoryQueue<TEntity>(
-        this ChangeSubscriberConfiguration config,
+    /// <summary>
+    /// Configures an <see cref="InMemoryQueue"/> as the queue source for this entity type.
+    /// Pass the same <see cref="InMemoryQueue"/> instance used on the publisher side.
+    /// </summary>
+    public static IEntitySubscriberBuilder<TEntity> UseInMemoryQueue<TEntity>(
+        this IEntitySubscriberBuilder<TEntity> builder,
         InMemoryQueue queue)
         where TEntity : class
     {
-        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(queue);
-        return config.UseQueue<TEntity>(queue);
+        return builder.UseQueue(queue);
     }
 }

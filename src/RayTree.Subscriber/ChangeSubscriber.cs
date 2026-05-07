@@ -23,6 +23,7 @@ public class ChangeSubscriber : IDisposable
     private readonly Dictionary<Type, IChangeSerializer> _serializers = new();
     private readonly Dictionary<Type, IChangeCompressor> _compressors = new();
     private readonly Dictionary<Type, IQueueConsumer> _queues = new();
+    private readonly Dictionary<Type, SubscriberOptions> _entityOptions = new();
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
     private readonly CancellationTokenSource _cts = new();
@@ -45,6 +46,25 @@ public class ChangeSubscriber : IDisposable
     {
         _handlers[typeof(TEntity)] = new List<HandlerRegistration>();
         return this;
+    }
+
+    /// <summary>
+    /// Registers a full entity configuration in one call. Used internally by
+    /// <see cref="EntitySubscriberBuilder{TEntity}"/> to apply resolved global + per-entity
+    /// settings. Any null argument means "use global default / already registered value".
+    /// </summary>
+    internal void RegisterEntity<TEntity>(
+        IQueueConsumer?    queue,
+        IChangeSerializer? serializer,
+        IChangeCompressor? compressor,
+        SubscriberOptions? options)
+        where TEntity : class
+    {
+        _handlers.TryAdd(typeof(TEntity), new List<HandlerRegistration>());
+        if (queue      != null) _queues[typeof(TEntity)]       = queue;
+        if (serializer != null) _serializers[typeof(TEntity)]  = serializer;
+        if (compressor != null) _compressors[typeof(TEntity)]  = compressor;
+        if (options    != null) _entityOptions[typeof(TEntity)] = options;
     }
 
     public ChangeSubscriber RegisterQueue<TEntity>(IQueueConsumer consumer)
@@ -198,10 +218,13 @@ public class ChangeSubscriber : IDisposable
     /// Invokes the handler with up to <see cref="SubscriberOptions.MaxRetries"/> retry
     /// attempts after the initial call.  With <c>MaxRetries = N</c> the handler may be
     /// called at most <c>N + 1</c> times total (1 initial + N retries).
+    /// Per-entity options registered via <see cref="RegisterEntity{TEntity}"/> take
+    /// precedence over the global options supplied to the constructor.
     /// </summary>
     private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change,
         CancellationToken ct)
     {
+        var options = _entityOptions.GetValueOrDefault(registration.EntityType) ?? _options;
         var attempt = 0;
         while (true)
         {
@@ -212,14 +235,14 @@ public class ChangeSubscriber : IDisposable
             }
             catch (Exception)
             {
-                if (attempt >= _options.MaxRetries)
+                if (attempt >= options.MaxRetries)
                 {
-                    if (_options.SkipOnFailure) return;
+                    if (options.SkipOnFailure) return;
                     throw;
                 }
 
                 attempt++;
-                await Task.Delay(_options.RetryDelay * attempt, ct);
+                await Task.Delay(options.RetryDelay * attempt, ct);
             }
         }
     }

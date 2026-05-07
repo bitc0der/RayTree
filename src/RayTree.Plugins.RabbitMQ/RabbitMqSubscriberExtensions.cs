@@ -4,17 +4,20 @@ namespace RayTree.Plugins.RabbitMQ;
 
 public static class RabbitMqSubscriberExtensions
 {
-    public static ChangeSubscriberConfiguration UseRabbitMq<TEntity>(
-        this ChangeSubscriberConfiguration config,
+    /// <summary>
+    /// Configures a <see cref="RabbitMqConsumer"/> as the queue source for this entity type.
+    /// </summary>
+    public static IEntitySubscriberBuilder<TEntity> UseRabbitMq<TEntity>(
+        this IEntitySubscriberBuilder<TEntity> builder,
         Action<RabbitMqConsumerOptions> configure)
         where TEntity : class
     {
-        ArgumentNullException.ThrowIfNull(config);
+        ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
         var options = new RabbitMqConsumerOptions();
         configure(options);
-        return config.UseQueue<TEntity>(new RabbitMqConsumer(options));
+        return builder.UseQueue(new RabbitMqConsumer(options));
     }
 
     public static RabbitMqConsumerOptions WithQueue(

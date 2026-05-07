@@ -1,4 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
@@ -187,27 +186,27 @@ public class InMemoryEndToEndTests
     }
 
     [Test]
-    public async Task ChangeSubscriberConfiguration_Build_AppliesOptionsAndDedup()
+    public async Task ChangeSubscriberBuilder_Build_AppliesOptionsAndDedup()
     {
-        // Verifies the deferred-build path: options + dedup store are passed through Build()
+        // Verifies the deferred-build path via the new fluent builder API.
         var tcs = new TaskCompletionSource<EntityChange>();
 
-        var config = new ChangeSubscriberConfiguration(new ServiceCollection())
-            .ConsumeEntity<Order>()
-            .UseInMemoryQueue<Order>(_queue)
-            .UseSerializer<Order>(new JsonSerializerPlugin())
-            .UseCompressor<Order>(new NoOpCompressorPlugin()) // must match the tracker's compressor
-            .OnInsert<Order>((change, _) =>
+        var subscriber = new ChangeSubscriberBuilder()
+            .UseOptions(opt =>
             {
-                tcs.TrySetResult(change);
-                return Task.CompletedTask;
-            });
-
-        var subscriber = config.Build(options: new SubscriberOptions
-        {
-            MaxRetries    = 1,
-            SkipOnFailure = true
-        });
+                opt.MaxRetries    = 1;
+                opt.SkipOnFailure = true;
+            })
+            .ForEntity<Order>(e => e
+                .UseInMemoryQueue(_queue)
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()) // must match tracker's compressor
+                .OnInsert((change, _) =>
+                {
+                    tcs.TrySetResult(change);
+                    return Task.CompletedTask;
+                }))
+            .Build();
 
         var cts     = new CancellationTokenSource();
         var consume = Task.Run(() => subscriber.ConsumeFromConsumerAsync(_queue, cts.Token));

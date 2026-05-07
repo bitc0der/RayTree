@@ -35,7 +35,7 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
     public async Task SetUp()
     {
         var builder = new ChangeTrackingBuilder();
-        builder.ForEntity<TestEntity>()
+        builder.ForEntity<TestEntity>(e => e
             .UseOutbox(new PostgreSqlOutbox<TestEntity>(new()
             {
                 ConnectionString = _postgres.GetConnectionString(),
@@ -43,7 +43,7 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
             }))
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())
-            .UseCompressor(new RayTree.Plugins.Compressors.Gzip.GzipCompressorPlugin());
+            .UseCompressor(new RayTree.Plugins.Compressors.Gzip.GzipCompressorPlugin()));
 
         _tracker = builder.Build();
     }
@@ -212,7 +212,7 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     public async Task SetUp()
     {
         var builder = new ChangeTrackingBuilder();
-        builder.ForEntity<TestUser>()
+        builder.ForEntity<TestUser>(e => e
             .UseRepository(new PostgreSqlRepository<TestUser>(new()
             {
                 ConnectionString = _postgres.GetConnectionString(),
@@ -225,7 +225,7 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
             }))
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())
-            .UseCompressor(new RayTree.Plugins.Compressors.Gzip.GzipCompressorPlugin());
+            .UseCompressor(new RayTree.Plugins.Compressors.Gzip.GzipCompressorPlugin()));
 
         _tracker = builder.Build();
     }

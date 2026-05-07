@@ -26,11 +26,11 @@ public class ChangeTrackingBuilderTests
         builder.UseSerializer<IChangeSerializer>(_ => serializer);
         builder.UseCompressor<IChangeCompressor>(_ => compressor);
 
-        builder.ForEntity<object>()
+        builder.ForEntity<object>(e => e
             .UseOutbox(outbox)
             .UseQueue(queue)
             .UseSerializer(serializer)
-            .UseCompressor(compressor);
+            .UseCompressor(compressor));
 
         var tracker = builder.Build();
 
@@ -48,23 +48,39 @@ public class ChangeTrackingBuilderTests
         builder.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
         builder.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin());
 
-        builder.ForEntity<object>()
+        builder.ForEntity<object>(e => e
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new NoOpCompressorPlugin());
+            .UseCompressor(new NoOpCompressorPlugin()));
 
         Assert.Throws<InvalidOperationException>(() => builder.Build());
     }
 
     [Test]
-    public void ForEntity_ReturnsEntityBuilder_ForChainedConfiguration()
+    public void ForEntity_ReturnsSelf_ForFluentChaining()
     {
         var builder = new ChangeTrackingBuilder();
 
-        var entityBuilder = builder.ForEntity<object>();
+        // ForEntity now returns the parent builder (IChangeTrackingBuilder), not IEntityBuilder,
+        // enabling chaining of multiple entity registrations on the same builder instance.
+        var result = builder.ForEntity<object>(e => e.UseOutbox(new InMemoryOutbox()));
 
-        Assert.That(entityBuilder, Is.Not.Null);
-        Assert.That(entityBuilder.UseOutbox(new InMemoryOutbox()), Is.SameAs(entityBuilder));
+        Assert.That(result, Is.SameAs(builder));
+    }
+
+    [Test]
+    public void ForEntity_Callback_ReceivesEntityBuilder()
+    {
+        var builder = new ChangeTrackingBuilder();
+        IEntityBuilder? capturedEntityBuilder = null;
+
+        builder.ForEntity<object>(e =>
+        {
+            capturedEntityBuilder = e;
+            e.UseOutbox(new InMemoryOutbox());
+        });
+
+        Assert.That(capturedEntityBuilder, Is.Not.Null);
     }
 
     [Test]
@@ -76,17 +92,17 @@ public class ChangeTrackingBuilderTests
         builder.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
         builder.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin());
 
-        builder.ForEntity<string>()
-            .UseOutbox(new InMemoryOutbox())
-            .UseQueue(new InMemoryQueue())
-            .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new NoOpCompressorPlugin());
-
-        builder.ForEntity<int>()
-            .UseOutbox(new InMemoryOutbox())
-            .UseQueue(new InMemoryQueue())
-            .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new NoOpCompressorPlugin());
+        builder
+            .ForEntity<string>(e => e
+                .UseOutbox(new InMemoryOutbox())
+                .UseQueue(new InMemoryQueue())
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()))
+            .ForEntity<int>(e => e
+                .UseOutbox(new InMemoryOutbox())
+                .UseQueue(new InMemoryQueue())
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()));
 
         var tracker = builder.Build();
 
