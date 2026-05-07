@@ -222,6 +222,120 @@ public class InMemoryEndToEndTests
     }
 
     // -------------------------------------------------------------------------
+    // No-serializer fallback
+    // -------------------------------------------------------------------------
+
+    [Test]
+    public async Task NoSerializer_HandlerReceivesTypedChangeWithNullState()
+    {
+        // Subscriber has NO serializer registered — it should still receive a typed
+        // EntityChange<Order> (so the cast succeeds) but with State == null.
+        var tcs = new TaskCompletionSource<EntityChange<Order>>();
+
+        var subscriber = new ChangeSubscriber();
+        subscriber.RegisterQueue<Order>(_queue);
+        // Note: no UseSerializer call — exercising the Activator.CreateInstance fallback path.
+        subscriber.OnChange<Order>(ChangeType.Insert, (change, _) =>
+        {
+            tcs.TrySetResult(change);
+            return Task.CompletedTask;
+        });
+
+        var cts     = new CancellationTokenSource();
+        var consume = Task.Run(() => subscriber.ConsumeFromConsumerAsync(_queue, cts.Token));
+
+        await _tracker.TrackInsertAsync(new Order { Id = 55, Total = 9.99m });
+
+        var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.That(received.EntityId,   Is.EqualTo("55"));
+        Assert.That(received.ChangeType, Is.EqualTo(ChangeType.Insert));
+        Assert.That(received.State,      Is.Null, "State must be null when no serializer is registered");
+
+        cts.Cancel();
+        subscriber.Dispose();
+    }
+
+    // -------------------------------------------------------------------------
+    // Retry semantics
+    // -------------------------------------------------------------------------
+
+    [Test]
+    public async Task InvokeWithRetry_HandlerSucceedsAfterRetries()
+    {
+        // With MaxRetries = 2 the handler may be called up to 3 times total
+        // (1 initial + 2 retries).  Here it succeeds on the 3rd attempt.
+        var attempts = 0;
+        var succeeded = new TaskCompletionSource<bool>();
+
+        var subscriber = new ChangeSubscriber(options: new SubscriberOptions
+        {
+            MaxRetries = 2,
+            RetryDelay = TimeSpan.FromMilliseconds(10)
+        });
+        subscriber
+            .UseSerializer<Order>(new JsonSerializerPlugin())
+            .RegisterQueue<Order>(_queue)
+            .OnChange<Order>(null, (_, _) =>
+            {
+                var n = Interlocked.Increment(ref attempts);
+                if (n < 3) throw new InvalidOperationException("transient");
+                succeeded.TrySetResult(true);
+                return Task.CompletedTask;
+            });
+
+        var cts     = new CancellationTokenSource();
+        var consume = Task.Run(() => subscriber.ConsumeFromConsumerAsync(_queue, cts.Token));
+
+        await _tracker.TrackInsertAsync(new Order { Id = 10, Total = 1m });
+
+        await succeeded.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.That(attempts, Is.EqualTo(3));
+
+        cts.Cancel();
+        subscriber.Dispose();
+    }
+
+    [Test]
+    public async Task InvokeWithRetry_MaxRetries1_ExhaustedWithSkipOnFailure_DoesNotThrow()
+    {
+        // MaxRetries = 1 → 2 total attempts. Both fail. SkipOnFailure = true → no exception.
+        var attempts = 0;
+        var secondAttempt = new TaskCompletionSource<bool>();
+
+        var subscriber = new ChangeSubscriber(options: new SubscriberOptions
+        {
+            MaxRetries    = 1,
+            RetryDelay    = TimeSpan.FromMilliseconds(10),
+            SkipOnFailure = true
+        });
+        subscriber
+            .UseSerializer<Order>(new JsonSerializerPlugin())
+            .RegisterQueue<Order>(_queue)
+            .OnChange<Order>(null, (_, _) =>
+            {
+                var n = Interlocked.Increment(ref attempts);
+                if (n == 2) secondAttempt.TrySetResult(true);
+                throw new InvalidOperationException("always fails");
+            });
+
+        var cts     = new CancellationTokenSource();
+        var consume = Task.Run(() => subscriber.ConsumeFromConsumerAsync(_queue, cts.Token));
+
+        await _tracker.TrackInsertAsync(new Order { Id = 20, Total = 2m });
+
+        // Wait for the second (final) attempt, then give the consume loop a moment to
+        // confirm it did NOT throw (if it did, consumeTask would be faulted).
+        await secondAttempt.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(200);
+
+        Assert.That(attempts,     Is.EqualTo(2), "Should attempt exactly 1 initial + 1 retry");
+        Assert.That(consume.IsFaulted, Is.False, "SkipOnFailure must prevent exception from bubbling");
+
+        cts.Cancel();
+        subscriber.Dispose();
+    }
+
+    // -------------------------------------------------------------------------
     // Test entity
     // -------------------------------------------------------------------------
     private class Order

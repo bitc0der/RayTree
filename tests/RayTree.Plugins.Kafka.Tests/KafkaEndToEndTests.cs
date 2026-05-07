@@ -10,8 +10,8 @@ namespace RayTree.Plugins.Kafka.Tests;
 
 /// <summary>
 /// Full pipeline tests: EntityChangeTracker → KafkaPublisher → KafkaConsumer → ChangeSubscriber → handler.
-/// Each test starts the subscriber first, waits for partition assignment, then publishes, to avoid
-/// race conditions between offset-reset and message arrival timing.
+/// Each test starts the subscriber first, polls <see cref="KafkaConsumer.IsAssigned"/> until the
+/// broker has acknowledged the subscription, then publishes — avoiding the flaky fixed-delay approach.
 /// </summary>
 [NonParallelizable]
 public class KafkaEndToEndTests : IAsyncDisposable
@@ -51,8 +51,24 @@ public class KafkaEndToEndTests : IAsyncDisposable
         Topic            = topic,
         GroupId          = groupId,
         FromEarliest     = true,
-        PollTimeoutMs    = 200
+        PollTimeoutMs    = 200   // short poll for fast test feedback
     });
+
+    /// <summary>
+    /// Polls <see cref="KafkaConsumer.IsAssigned"/> until the broker has acknowledged the
+    /// consumer's subscription (partition assignment is underway).  This replaces the old
+    /// fixed <c>Task.Delay(3s)</c> and is both faster and more reliable on slow CI runners.
+    /// </summary>
+    private static async Task WaitForAssignmentAsync(KafkaConsumer consumer,
+        TimeSpan? timeout = null)
+    {
+        using var cts = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(15));
+        while (!consumer.IsAssigned)
+        {
+            cts.Token.ThrowIfCancellationRequested();
+            await Task.Delay(100, cts.Token);
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Tests
@@ -79,8 +95,8 @@ public class KafkaEndToEndTests : IAsyncDisposable
         using var cts   = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
 
-        // Allow partition assignment to settle before publishing
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        // Wait until the broker has acknowledged the subscription before publishing.
+        await WaitForAssignmentAsync(consumer);
 
         var tracker = BuildTracker(topic);
         await tracker.InitializeAsync();
@@ -116,7 +132,7 @@ public class KafkaEndToEndTests : IAsyncDisposable
         using var cts   = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await WaitForAssignmentAsync(consumer);
 
         var tracker = BuildTracker(topic);
         await tracker.InitializeAsync();
@@ -155,7 +171,7 @@ public class KafkaEndToEndTests : IAsyncDisposable
         using var cts   = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
 
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        await WaitForAssignmentAsync(consumer);
 
         var tracker = BuildTracker(topic);
         await tracker.InitializeAsync();

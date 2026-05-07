@@ -35,6 +35,10 @@ jobs:
         run: dotnet build RayTree.sln --no-restore -c Release
 
   # ── Unit tests (no Docker) ─────────────────────────────────────────────────
+  # Note: GitHub Actions jobs do not share filesystem state, so each job must
+  # independently restore packages and build even though the 'build' job already
+  # compiled the solution.  The 'build' job serves as a fast fail-early gate for
+  # compilation errors; it does not produce shared artifacts consumed here.
   unit-tests:
     name: Unit Tests
     needs: build

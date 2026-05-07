@@ -194,11 +194,16 @@ public class ChangeSubscriber : IDisposable
     // Retry / invocation
     // -------------------------------------------------------------------------
 
+    /// <summary>
+    /// Invokes the handler with up to <see cref="SubscriberOptions.MaxRetries"/> retry
+    /// attempts after the initial call.  With <c>MaxRetries = N</c> the handler may be
+    /// called at most <c>N + 1</c> times total (1 initial + N retries).
+    /// </summary>
     private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change,
         CancellationToken ct)
     {
-        var retries = 0;
-        while (retries < _options.MaxRetries)
+        var attempt = 0;
+        while (true)
         {
             try
             {
@@ -207,14 +212,14 @@ public class ChangeSubscriber : IDisposable
             }
             catch (Exception)
             {
-                retries++;
-                if (retries >= _options.MaxRetries)
+                if (attempt >= _options.MaxRetries)
                 {
                     if (_options.SkipOnFailure) return;
                     throw;
                 }
 
-                await Task.Delay(_options.RetryDelay * retries, ct);
+                attempt++;
+                await Task.Delay(_options.RetryDelay * attempt, ct);
             }
         }
     }

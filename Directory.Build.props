@@ -8,7 +8,7 @@
     <WarningsAsErrors>nullable</WarningsAsErrors>
 
     <VersionPrefix>1.0.0</VersionPrefix>
-    <VersionSuffix></VersionSuffix>
+    <VersionSuffix>pre-release</VersionSuffix>
     <Authors>RayTree</Authors>
     <Copyright>Copyright bitc0der © 2026</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -19,9 +19,4 @@
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
-    <EmbedUntrackedSources>true</EmbedUntrackedSources>
-  </PropertyGroup>
 </Project>

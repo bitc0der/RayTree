@@ -14,6 +14,15 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
     private readonly CancellationTokenSource _disposeCts = new();
     private IConsumer<string, byte[]>? _consumer;
     private Task? _pollTask;
+    private volatile bool _assigned;
+
+    /// <summary>
+    /// Returns <see langword="true"/> once the poll loop has made at least one successful
+    /// call to <c>Consume()</c>, which indicates that the Kafka broker has acknowledged the
+    /// subscription and partition assignment is underway.  Tests can poll this property
+    /// instead of using a fixed <see cref="Task.Delay"/> before publishing.
+    /// </summary>
+    public bool IsAssigned => _assigned;
 
     public KafkaConsumer(KafkaConsumerOptions options)
     {
@@ -38,6 +47,10 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
     public async IAsyncEnumerable<MessageEnvelope> ConsumeAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        if (_consumer == null)
+            throw new InvalidOperationException(
+                $"{nameof(InitializeAsync)} must be called before {nameof(ConsumeAsync)}.");
+
         // All Confluent.Kafka operations (Consume + Commit) must run on the same thread.
         // A dedicated background thread polls and buffers envelopes via an unbounded channel.
         // Linking with _disposeCts ensures Dispose() can drain the poll loop before freeing
@@ -59,10 +72,19 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                     try
                     {
                         result = _consumer!.Consume(timeout);
+                        // First successful poll — subscription is active.
+                        if (!_assigned) _assigned = true;
                     }
                     catch (OperationCanceledException) { break; }
                     catch (ObjectDisposedException)    { break; }
-                    catch                              { continue; }
+                    catch (KafkaException ex) when (ex.Error.IsFatal)
+                    {
+                        // Fatal broker/network errors cannot be recovered; surface them to
+                        // all ConsumeAsync callers via the channel completion exception.
+                        channel.Writer.TryComplete(ex);
+                        return;
+                    }
+                    catch { continue; }
 
                     if (result?.Message == null) continue;
 
