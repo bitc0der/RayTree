@@ -115,14 +115,11 @@ You can track changes manually even with the EF Core interceptor configured:
 ```csharp
 var tracker = serviceProvider.GetRequiredService<IEntityChangeTracker>();
 
-await tracker.TrackChangesAsync(new[]
-{
-    new EntityChange
-    {
-        EntityType = typeof(ExternalEntity).AssemblyQualifiedName!,
-        EntityId = "ext-1",
-        ChangeType = ChangeType.Update,
-        Timestamp = DateTime.UtcNow
-    }
-});
+// Typed convenience methods capture the full entity state in EntityChange<T>.State
+await tracker.TrackInsertAsync(new ExternalEntity { Id = 1, Name = "New" });
+await tracker.TrackUpdateAsync(new ExternalEntity { Id = 1, Name = "Updated" });
+await tracker.TrackDeleteAsync(new ExternalEntity { Id = 1, Name = "Updated" });
+
+// Generic overload when the change type is determined at runtime
+await tracker.TrackChangeAsync(entity, ChangeType.Update);
 ```

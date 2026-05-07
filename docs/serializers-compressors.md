@@ -144,7 +144,7 @@ tracking.ForEntity<Product>()
 
 ## Important: Subscriber Must Match Publisher
 
-The subscriber configuration must use the same serializer and compressor as the publisher:
+The subscriber configuration must use the same serializer and compressor as the publisher. The publisher serializes and compresses into `MessageEnvelope.Payload`; the subscriber decompresses and deserializes in the reverse order.
 
 ```csharp
 // Publisher
@@ -153,8 +153,16 @@ tracking.ForEntity<Product>()
     .UseBrotliCompressor();
 
 // Subscriber (must match!)
-subscriber.ForEntity<Product>()
-    .FromRabbitMq("exchange", "queue")
-    .UseProtobufSerializer()  // Same as publisher
-    .UseBrotliCompressor();    // Same as publisher
+builder.Services
+    .AddChangeSubscriber(configuration)
+    .ConsumeEntity<Product>()
+    .UseQueue<Product>(myConsumer)
+    .UseSerializer<Product>(new ProtobufSerializerPlugin())   // same as publisher
+    .UseCompressor<Product>(new BrotliCompressorPlugin())     // same as publisher
+    .OnInsert<Product>(async (change, ct) =>
+    {
+        var product = change.State; // typed Product
+    });
 ```
+
+If no serializer is registered on the subscriber, `change.State` will be `null` and only the metadata fields (EntityId, ChangeType, CorrelationId, etc.) are available.

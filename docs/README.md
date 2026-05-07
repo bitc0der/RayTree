@@ -85,6 +85,61 @@ builder.ForEntity<Product>()
 var tracker = builder.Build();
 ```
 
+## Subscribing to Changes
+
+`RayTree.Subscriber` receives `MessageEnvelope` messages from any `IQueueConsumer`, deserializes the entity state, and dispatches to typed handlers. The subscriber is the mirror of the publisher — use the same serializer and compressor on both sides.
+
+```csharp
+var queue = new InMemoryQueue(); // or KafkaConsumer / RabbitMqConsumer
+
+var subscriber = new ChangeSubscriber();
+subscriber
+    .RegisterQueue<Product>(queue)
+    .UseSerializer<Product>(new JsonSerializerPlugin())
+    .UseCompressor<Product>(new GzipCompressorPlugin())
+    .OnInsert<Product>(async (change, ct) =>
+    {
+        var product = change.State;   // fully-typed Product
+        Console.WriteLine($"Inserted: {product?.Name}");
+    })
+    .OnUpdate<Product>(async (change, ct) =>
+        Console.WriteLine($"Updated: {change.EntityId}"))
+    .OnDelete<Product>(async (change, ct) =>
+        Console.WriteLine($"Deleted: {change.EntityId}"));
+
+// Start consuming (blocks until cancellation)
+await subscriber.ConsumeFromConsumerAsync(queue, cancellationToken);
+```
+
+### ASP.NET Core (DI)
+
+`AddChangeSubscriber` registers `ChangeSubscriber` as a singleton and starts `ChangeSubscriberHostedService` automatically:
+
+```csharp
+builder.Services
+    .AddChangeSubscriber(builder.Configuration)
+    .ConsumeEntity<Product>()
+    .UseInMemoryQueue<Product>(orderQueue)
+    .UseSerializer<Product>(new JsonSerializerPlugin())
+    .UseCompressor<Product>(new GzipCompressorPlugin())
+    .OnInsert<Product>(async (change, ct) =>
+        Console.WriteLine($"New product: {change.State?.Name}"))
+    .UseRedisDeduplication("localhost:6379");
+```
+
+`appsettings.json`:
+```json
+{
+  "ChangeTracking": {
+    "Subscriber": {
+      "MaxRetries": 3,
+      "RetryDelay": "00:00:01",
+      "SkipOnFailure": false
+    }
+  }
+}
+```
+
 ## Cleanup
 
 `EntityChangeTracker` implements `IDisposable`. Disposing it stops all publisher services:

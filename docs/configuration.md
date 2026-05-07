@@ -143,13 +143,95 @@ var tracker = config.Build();
 ## Tracking Changes
 
 ```csharp
-// Typed convenience methods
+// Typed convenience methods — State is captured automatically
 await tracker.TrackInsertAsync(new Product { Id = 1, Name = "Widget" });
 await tracker.TrackUpdateAsync(new Product { Id = 1, Name = "Widget Pro" });
 await tracker.TrackDeleteAsync(new Product { Id = 1, Name = "Widget Pro" });
 
 // Generic overload (when change type is dynamic)
 await tracker.TrackChangeAsync(entity, ChangeType.Insert);
+```
+
+## ChangeSubscriberConfiguration
+
+Configure the subscriber side using a fluent builder that mirrors the publisher's API. The builder produces a `ChangeSubscriber` via `Build()`.
+
+```csharp
+var subscriber = new ChangeSubscriberConfiguration(services)
+    .ConsumeEntity<Order>()
+    .UseQueue<Order>(myConsumer)              // IQueueConsumer for Order messages
+    .UseSerializer<Order>(new JsonSerializerPlugin())
+    .UseCompressor<Order>(new GzipCompressorPlugin())
+    .OnInsert<Order>(async (change, ct) =>
+    {
+        var order = change.State;             // fully-typed Order
+        Console.WriteLine($"New order: {order?.Id}");
+    })
+    .OnUpdate<Order>(async (change, ct) => { /* ... */ })
+    .OnDelete<Order>(async (change, ct) => { /* ... */ })
+    .Build(options: new SubscriberOptions
+    {
+        MaxRetries    = 3,         // retry attempts after initial failure
+        RetryDelay    = TimeSpan.FromSeconds(1),
+        SkipOnFailure = false      // re-throw after retries exhausted
+    });
+
+await subscriber.ConsumeFromConsumerAsync(myConsumer, cancellationToken);
+```
+
+### Broker-specific queue helpers
+
+```csharp
+// Kafka
+config.UseKafkaConsumer<Order>(new KafkaConsumerOptions
+{
+    BootstrapServers = "localhost:9092",
+    Topic            = "orders",
+    GroupId          = "my-service"
+});
+
+// RabbitMQ
+config.UseRabbitMqConsumer<Order>(new RabbitMqConsumerOptions
+{
+    HostName  = "localhost",
+    QueueName = "orders"
+});
+
+// InMemory (testing)
+config.UseInMemoryQueue<Order>(inMemoryQueue);
+```
+
+### ASP.NET Core (DI)
+
+`AddChangeSubscriber` registers `ChangeSubscriber` as a singleton and `ChangeSubscriberHostedService` as a hosted service. Options are bound from `IConfiguration` section `ChangeTracking:Subscriber`:
+
+```csharp
+builder.Services
+    .AddChangeSubscriber(builder.Configuration)
+    .ConsumeEntity<Order>()
+    .UseInMemoryQueue<Order>(orderQueue)
+    .UseSerializer<Order>(new JsonSerializerPlugin())
+    .UseCompressor<Order>(new GzipCompressorPlugin())
+    .OnInsert<Order>(async (change, ct) =>
+        Console.WriteLine($"New order: {change.State?.Id}"))
+    .UseRedisDeduplication("localhost:6379");
+```
+
+### Deduplication
+
+Every processed `CorrelationId` is recorded so duplicate deliveries (at-least-once brokers) are silently dropped.
+
+| Store | Package | When to use |
+|---|---|---|
+| `InMemoryDeduplicationStore` | built-in | Single-process, testing |
+| `RedisDeduplicationStore` | `RayTree.Subscriber` | Multiple subscriber instances |
+
+```csharp
+// Redis
+config.UseRedisDeduplication("localhost:6379");
+
+// Custom
+config.UseDeduplicationStore(new MyCustomStore());
 ```
 
 ## Cleanup
