@@ -17,7 +17,7 @@ The system SHALL automatically initialize storage schemas (source tables, outbox
 
 #### Scenario: Detect registered entities and publishers
 - **WHEN** the system performs initialization
-- **THEN** it SHALL discover entity types via `EntityChangeTracker.GetOutboxes()` and publishers via `GetPublishers()`
+- **THEN** it SHALL discover entity types and outboxes via `EntityChangeTracker.GetOutboxes()` and call `GetPublisher(entityType)` for each to initialize queue infrastructure
 
 ### Requirement: Queue initialization interface
 The system SHALL add `InitializeAsync()` method to `IQueuePublisher` interface for queue infrastructure setup.

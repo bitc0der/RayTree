@@ -50,16 +50,18 @@ builder.Services
     .UseQueue<Order>(orderQueue)
     .UseSerializer<Order>(new JsonSerializerPlugin())
     .UseCompressor<Order>(new GzipCompressorPlugin())
-    .OnInsert<Order>(async (change, payload, ct) =>
+    .OnInsert<Order>(async (change, ct) =>
     {
-        Console.WriteLine($"New order: {change.EntityId}");
+        // change.State is the fully-typed Order after insertion
+        Console.WriteLine($"New order: {change.EntityId}, total: {change.State?.Total}");
     })
-    .OnUpdate<Order>(async (change, payload, ct) =>
+    .OnUpdate<Order>(async (change, ct) =>
     {
         Console.WriteLine($"Order updated: {change.EntityId}");
     })
-    .OnDelete<Order>(async (change, payload, ct) =>
+    .OnDelete<Order>(async (change, ct) =>
     {
+        // change.State holds the Order state before deletion
         Console.WriteLine($"Order deleted: {change.EntityId}");
     })
     .UseRedisDeduplication("localhost:6379");
