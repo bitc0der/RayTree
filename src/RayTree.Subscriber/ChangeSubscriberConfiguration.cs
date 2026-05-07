@@ -39,20 +39,21 @@ public class ChangeSubscriberConfiguration
         return this;
     }
 
-    public ChangeSubscriberConfiguration OnChange<T>(ChangeType? changeType, ChangeHandlerAsync handler)
+    public ChangeSubscriberConfiguration OnChange<T>(ChangeType? changeType, ChangeHandlerAsync<T> handler)
+        where T : class
     {
         ThrowIfBuilt();
         _configurers.Add(s => s.OnChange<T>(changeType, handler));
         return this;
     }
 
-    public ChangeSubscriberConfiguration OnInsert<T>(ChangeHandlerAsync handler)
+    public ChangeSubscriberConfiguration OnInsert<T>(ChangeHandlerAsync<T> handler) where T : class
         => OnChange<T>(ChangeType.Insert, handler);
 
-    public ChangeSubscriberConfiguration OnUpdate<T>(ChangeHandlerAsync handler)
+    public ChangeSubscriberConfiguration OnUpdate<T>(ChangeHandlerAsync<T> handler) where T : class
         => OnChange<T>(ChangeType.Update, handler);
 
-    public ChangeSubscriberConfiguration OnDelete<T>(ChangeHandlerAsync handler)
+    public ChangeSubscriberConfiguration OnDelete<T>(ChangeHandlerAsync<T> handler) where T : class
         => OnChange<T>(ChangeType.Delete, handler);
 
     public ChangeSubscriberConfiguration UseQueue<T>(IQueueConsumer consumer)

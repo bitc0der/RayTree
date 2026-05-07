@@ -78,7 +78,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
-            .OnChange<Order>(ChangeType.Insert, (change, _, _) =>
+            .OnChange<Order>(ChangeType.Insert, (change, _) =>
             {
                 tcs.TrySetResult(change);
                 return Task.CompletedTask;
@@ -116,7 +116,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
-            .OnChange<Order>(ChangeType.Update, (change, _, _) =>
+            .OnChange<Order>(ChangeType.Update, (change, _) =>
             {
                 tcs.TrySetResult(change);
                 return Task.CompletedTask;
@@ -156,7 +156,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
-            .OnChange<Order>(changeType: null, (change, _, _) =>
+            .OnChange<Order>(changeType: null, (change, _) =>
             {
                 lock (received) received.Add(change);
                 if (received.Count == 3) allReceived.TrySetResult(true);

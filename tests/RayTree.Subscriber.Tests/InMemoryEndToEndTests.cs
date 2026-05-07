@@ -60,7 +60,7 @@ public class InMemoryEndToEndTests
         var tcs = new TaskCompletionSource<EntityChange>();
 
         var (subscriber, cts, _) = StartSubscriber(s =>
-            s.OnChange<Order>(ChangeType.Insert, (change, _, _) =>
+            s.OnChange<Order>(ChangeType.Insert, (change, _) =>
             {
                 tcs.TrySetResult(change);
                 return Task.CompletedTask;
@@ -82,7 +82,7 @@ public class InMemoryEndToEndTests
         var tcs = new TaskCompletionSource<EntityChange>();
 
         var (subscriber, cts, _) = StartSubscriber(s =>
-            s.OnChange<Order>(ChangeType.Update, (change, _, _) =>
+            s.OnChange<Order>(ChangeType.Update, (change, _) =>
             {
                 tcs.TrySetResult(change);
                 return Task.CompletedTask;
@@ -104,7 +104,7 @@ public class InMemoryEndToEndTests
         var tcs = new TaskCompletionSource<EntityChange>();
 
         var (subscriber, cts, _) = StartSubscriber(s =>
-            s.OnChange<Order>(ChangeType.Delete, (change, _, _) =>
+            s.OnChange<Order>(ChangeType.Delete, (change, _) =>
             {
                 tcs.TrySetResult(change);
                 return Task.CompletedTask;
@@ -127,7 +127,7 @@ public class InMemoryEndToEndTests
         var allThree = new TaskCompletionSource<bool>();
 
         var (subscriber, cts, _) = StartSubscriber(s =>
-            s.OnChange<Order>(changeType: null, (change, _, _) =>
+            s.OnChange<Order>(changeType: null, (change, _) =>
             {
                 lock (received) received.Add(change.ChangeType);
                 if (received.Count == 3) allThree.TrySetResult(true);
@@ -155,7 +155,7 @@ public class InMemoryEndToEndTests
         var firstArrived = new TaskCompletionSource<bool>();
 
         var (subscriber, cts, _) = StartSubscriber(s =>
-            s.OnChange<Order>(ChangeType.Insert, (_, _, _) =>
+            s.OnChange<Order>(ChangeType.Insert, (_, _) =>
             {
                 Interlocked.Increment(ref invokeCount);
                 firstArrived.TrySetResult(true);
@@ -197,7 +197,7 @@ public class InMemoryEndToEndTests
             .UseInMemoryQueue<Order>(_queue)
             .UseSerializer<Order>(new JsonSerializerPlugin())
             .UseCompressor<Order>(new NoOpCompressorPlugin()) // must match the tracker's compressor
-            .OnInsert<Order>((change, _, _) =>
+            .OnInsert<Order>((change, _) =>
             {
                 tcs.TrySetResult(change);
                 return Task.CompletedTask;

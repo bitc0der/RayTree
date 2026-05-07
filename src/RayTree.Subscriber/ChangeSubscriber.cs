@@ -8,7 +8,14 @@ using RayTree.Subscriber.Plugins.Deduplication;
 
 namespace RayTree.Subscriber;
 
-public delegate Task ChangeHandlerAsync(EntityChange change, byte[] payload, CancellationToken cancellationToken);
+/// <summary>
+/// Handler invoked when an entity change arrives. <paramref name="change"/> carries the fully
+/// deserialised entity state in <see cref="EntityChange{TEntity}.State"/>.
+/// </summary>
+public delegate Task ChangeHandlerAsync<TEntity>(
+    EntityChange<TEntity> change,
+    CancellationToken cancellationToken)
+    where TEntity : class;
 
 public class ChangeSubscriber : IDisposable
 {
@@ -59,7 +66,8 @@ public class ChangeSubscriber : IDisposable
         return this;
     }
 
-    public ChangeSubscriber OnChange<TEntity>(ChangeType? changeType, ChangeHandlerAsync handler)
+    public ChangeSubscriber OnChange<TEntity>(ChangeType? changeType, ChangeHandlerAsync<TEntity> handler)
+        where TEntity : class
     {
         if (!_handlers.ContainsKey(typeof(TEntity)))
             _handlers[typeof(TEntity)] = new List<HandlerRegistration>();
@@ -68,7 +76,9 @@ public class ChangeSubscriber : IDisposable
         {
             EntityType = typeof(TEntity),
             ChangeType = changeType,
-            Handler    = handler
+            // Wrap the typed handler into a non-generic Func for internal storage.
+            // The EntityChange passed here is always EntityChange<TEntity> from deserialization.
+            Handler = (change, ct) => handler((EntityChange<TEntity>)change, ct)
         });
 
         return this;
@@ -124,7 +134,7 @@ public class ChangeSubscriber : IDisposable
         var change = await DeserializeEnvelopeAsync(envelope, entityType, cancellationToken);
 
         foreach (var registration in matchingHandlers)
-            await InvokeWithRetryAsync(registration, change, envelope.Payload, cancellationToken);
+            await InvokeWithRetryAsync(registration, change, cancellationToken);
     }
 
     // -------------------------------------------------------------------------
@@ -136,16 +146,17 @@ public class ChangeSubscriber : IDisposable
     {
         if (!_serializers.TryGetValue(entityType, out var serializer))
         {
-            // No serializer registered — return a meta-only EntityChange.
-            return new EntityChange
-            {
-                EntityType    = envelope.EntityType,
-                EntityId      = envelope.EntityId,
-                ChangeType    = envelope.ChangeType,
-                CorrelationId = envelope.CorrelationId,
-                Version       = envelope.Version,
-                Timestamp     = envelope.Timestamp
-            };
+            // No serializer registered — create a typed EntityChange<TEntity> with State = null.
+            // Using the generic type is required so the handler's (EntityChange<TEntity>) cast succeeds.
+            var metaChange = (EntityChange)Activator.CreateInstance(
+                typeof(EntityChange<>).MakeGenericType(entityType))!;
+            metaChange.EntityType    = envelope.EntityType;
+            metaChange.EntityId      = envelope.EntityId;
+            metaChange.ChangeType    = envelope.ChangeType;
+            metaChange.CorrelationId = envelope.CorrelationId;
+            metaChange.Version       = envelope.Version;
+            metaChange.Timestamp     = envelope.Timestamp;
+            return metaChange;
         }
 
         using var payloadStream      = new MemoryStream(envelope.Payload);
@@ -184,14 +195,14 @@ public class ChangeSubscriber : IDisposable
     // -------------------------------------------------------------------------
 
     private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change,
-        byte[] payload, CancellationToken ct)
+        CancellationToken ct)
     {
         var retries = 0;
         while (retries < _options.MaxRetries)
         {
             try
             {
-                await registration.Handler(change, payload, ct);
+                await registration.Handler(change, ct);
                 return;
             }
             catch (Exception)
