@@ -1,11 +1,13 @@
 using Microsoft.Extensions.DependencyInjection;
+using RayTree.Core.Handling;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
+using RayTree.Subscriber;
 using RayTree.Subscriber.Plugins.Deduplication;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Hosting.Handling;
 
 public class ChangeSubscriberConfiguration
 {
@@ -68,12 +70,6 @@ public class ChangeSubscriberConfiguration
     {
         ThrowIfBuilt();
         _services.AddSingleton<IDeduplicationStore>(store);
-        return this;
-    }
-
-    public ChangeSubscriberConfiguration UseRedisDeduplication(string connectionString)
-    {
-        _services.AddSingleton<IDeduplicationStore>(new RedisDeduplicationStore(connectionString));
         return this;
     }
 

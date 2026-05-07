@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
+using RayTree.Core.Handling;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Hosting.Handling;
 
 public class ChangeSubscriberHostedService : IHostedService
 {

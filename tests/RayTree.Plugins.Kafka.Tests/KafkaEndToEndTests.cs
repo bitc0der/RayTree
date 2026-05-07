@@ -1,9 +1,9 @@
+using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.Serializers.Json;
-using RayTree.Subscriber;
 using Testcontainers.Kafka;
 
 namespace RayTree.Plugins.Kafka.Tests;

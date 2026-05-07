@@ -1,3 +1,4 @@
+using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
@@ -5,7 +6,7 @@ using RayTree.Plugins.InMemory;
 using RayTree.Plugins.Serializers.Json;
 using RayTree.Subscriber;
 
-namespace RayTree.Subscriber.Tests;
+namespace RayTree.Core.Tests;
 
 /// <summary>
 /// Full pipeline tests: EntityChangeTracker → InMemoryQueue (publisher) → ChangeSubscriber → handler.

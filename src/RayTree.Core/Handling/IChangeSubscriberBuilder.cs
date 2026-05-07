@@ -1,8 +1,9 @@
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Subscriber;
 using RayTree.Subscriber.Plugins.Deduplication;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Core.Handling;
 
 /// <summary>
 /// Fluent builder for the subscriber side.  Global settings — serializer, compressor, retry
@@ -22,9 +23,6 @@ public interface IChangeSubscriberBuilder
 
     /// <summary>Registers a custom deduplication store shared by all entity consumers.</summary>
     IChangeSubscriberBuilder UseDeduplicationStore(IDeduplicationStore store);
-
-    /// <summary>Registers a Redis-backed deduplication store.</summary>
-    IChangeSubscriberBuilder UseRedisDeduplication(string connectionString);
 
     /// <summary>
     /// Configures a single entity type via a scoped callback.  The callback receives an

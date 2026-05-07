@@ -4,9 +4,10 @@ using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
+using RayTree.Subscriber;
 using RayTree.Subscriber.Plugins.Deduplication;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Core.Handling;
 
 /// <summary>
 /// Handler invoked when an entity change arrives. <paramref name="change"/> carries the fully

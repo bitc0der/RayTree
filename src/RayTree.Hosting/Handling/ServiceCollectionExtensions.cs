@@ -1,10 +1,11 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using RayTree.Core.Handling;
+using RayTree.Subscriber;
 using RayTree.Subscriber.Plugins.Deduplication;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Hosting.Handling;
 
 public static class ServiceCollectionExtensions
 {

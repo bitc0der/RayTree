@@ -1,8 +1,9 @@
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Subscriber;
 using RayTree.Subscriber.Plugins.Deduplication;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Core.Handling;
 
 /// <summary>
 /// Standalone fluent builder that produces a <see cref="ChangeSubscriber"/> with global
@@ -11,8 +12,8 @@ namespace RayTree.Subscriber;
 /// </summary>
 public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
 {
-    private IChangeSerializer?  _globalSerializer;
-    private IChangeCompressor?  _globalCompressor;
+    private IChangeSerializer? _globalSerializer;
+    private IChangeCompressor? _globalCompressor;
     private IDeduplicationStore? _dedupStore;
     private readonly SubscriberOptions _globalOptions = new();
     private readonly List<Action<ChangeSubscriber>> _entityApplicators = new();
@@ -55,15 +56,6 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     }
 
     /// <inheritdoc/>
-    public IChangeSubscriberBuilder UseRedisDeduplication(string connectionString)
-    {
-        ArgumentNullException.ThrowIfNull(connectionString);
-        ThrowIfBuilt();
-        _dedupStore = new RedisDeduplicationStore(connectionString);
-        return this;
-    }
-
-    /// <inheritdoc/>
     public IChangeSubscriberBuilder ForEntity<TEntity>(Action<IEntitySubscriberBuilder<TEntity>> configure)
         where TEntity : class
     {
@@ -88,12 +80,12 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     /// </param>
     public ChangeSubscriber Build(
         IDeduplicationStore? dedupStoreOverride = null,
-        SubscriberOptions?   optionsOverride    = null)
+        SubscriberOptions? optionsOverride = null)
     {
         _built = true;
         var effectiveDedupStore = dedupStoreOverride ?? _dedupStore;
-        var effectiveOptions    = optionsOverride    ?? _globalOptions;
-        var subscriber          = new ChangeSubscriber(effectiveDedupStore, effectiveOptions);
+        var effectiveOptions = optionsOverride ?? _globalOptions;
+        var subscriber = new ChangeSubscriber(effectiveDedupStore, effectiveOptions);
 
         foreach (var apply in _entityApplicators)
             apply(subscriber);
@@ -102,13 +94,13 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     }
 
     /// <summary>Exposes the global serializer to <see cref="EntitySubscriberBuilder{TEntity}"/>.</summary>
-    internal IChangeSerializer?  GlobalSerializer => _globalSerializer;
+    internal IChangeSerializer? GlobalSerializer => _globalSerializer;
 
     /// <summary>Exposes the global compressor to <see cref="EntitySubscriberBuilder{TEntity}"/>.</summary>
-    internal IChangeCompressor?  GlobalCompressor => _globalCompressor;
+    internal IChangeCompressor? GlobalCompressor => _globalCompressor;
 
     /// <summary>Exposes the global options to <see cref="EntitySubscriberBuilder{TEntity}"/> for copying.</summary>
-    internal SubscriberOptions   GlobalOptions    => _globalOptions;
+    internal SubscriberOptions GlobalOptions => _globalOptions;
 
     // Explicit interface implementation so the IChangeSubscriberBuilder.Build() call
     // uses the parameterless overload without leaking the override parameters on the interface.
