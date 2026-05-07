@@ -86,16 +86,17 @@ public async Task ChangeTracking_Works_InMemory()
 
     // Subscriber side
     var received = new TaskCompletionSource<EntityChange<Product>>();
-    var subscriber = new ChangeSubscriber();
-    subscriber
-        .RegisterQueue<Product>(queue)
-        .UseSerializer<Product>(serializer)
-        .UseCompressor<Product>(compressor)
-        .OnChange<Product>(ChangeType.Insert, (change, _) =>
-        {
-            received.TrySetResult(change);
-            return Task.CompletedTask;
-        });
+    var subscriber = new ChangeSubscriberBuilder()
+        .UseSerializer(serializer)
+        .UseCompressor(compressor)
+        .ForEntity<Product>(e => e
+            .UseInMemoryQueue(queue)
+            .OnChange(ChangeType.Insert, (change, _) =>
+            {
+                received.TrySetResult(change);
+                return Task.CompletedTask;
+            }))
+        .Build();
 
     using var cts     = new CancellationTokenSource();
     var consumeTask   = Task.Run(() => subscriber.ConsumeFromConsumerAsync(queue, cts.Token));
@@ -121,11 +122,11 @@ var orderQueue = new InMemoryQueue();
 builder.Services
     .AddChangeTracking(builder.Configuration, tracking =>
     {
-        tracking.ForEntity<Order>()
+        tracking.ForEntity<Order>(e => e
             .UseOutbox(new InMemoryOutbox())
             .UseQueue(orderQueue)
             .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new NoOpCompressorPlugin());
+            .UseCompressor(new NoOpCompressorPlugin()));
     });
 ```
 
@@ -134,14 +135,14 @@ builder.Services
 ```csharp
 builder.Services
     .AddChangeSubscriber(builder.Configuration)
-    .ConsumeEntity<Order>()
-    .UseInMemoryQueue<Order>(orderQueue)   // same instance as publisher
-    .UseSerializer<Order>(new JsonSerializerPlugin())
-    .UseCompressor<Order>(new NoOpCompressorPlugin())
-    .OnInsert<Order>(async (change, ct) =>
-    {
-        Console.WriteLine($"New order: {change.EntityId}, total: {change.State?.Total}");
-    });
+    .ForEntity<Order>(e => e
+        .UseInMemoryQueue(orderQueue)   // same instance as publisher
+        .UseSerializer(new JsonSerializerPlugin())
+        .UseCompressor(new NoOpCompressorPlugin())
+        .OnInsert(async (change, ct) =>
+        {
+            Console.WriteLine($"New order: {change.EntityId}, total: {change.State?.Total}");
+        }));
 ```
 
 `ChangeSubscriberHostedService` starts the consume loop automatically when the host starts.
@@ -151,9 +152,9 @@ builder.Services
 Use an in-memory outbox for testing while targeting a real broker:
 
 ```csharp
-tracking.ForEntity<Product>()
+tracking.ForEntity<Product>(e => e
     .UseOutbox(new InMemoryOutbox())
     .UseQueue(new RabbitMqPublisher(rabbitOptions))
     .UseSerializer(new JsonSerializerPlugin())
-    .UseCompressor(new GzipCompressorPlugin());
+    .UseCompressor(new GzipCompressorPlugin()));
 ```

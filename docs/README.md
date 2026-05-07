@@ -17,7 +17,7 @@ A modular .NET 8.0 entity change tracking system with outbox pattern support, qu
 ```csharp
 var builder = new ChangeTrackingBuilder();
 
-builder.ForEntity<Product>()
+builder.ForEntity<Product>(e => e
     .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
     {
         ConnectionString = connectionString
@@ -25,7 +25,7 @@ builder.ForEntity<Product>()
     }))
     .UseQueue(new InMemoryQueue())
     .UseSerializer(new JsonSerializerPlugin())
-    .UseCompressor(new GzipCompressorPlugin());
+    .UseCompressor(new GzipCompressorPlugin()));
 
 // Build() automatically initializes database schema and starts publisher services
 var tracker = builder.Build();
@@ -38,19 +38,20 @@ await tracker.TrackDeleteAsync(new Product { Id = 1, Name = "Widget Pro" });
 
 ## Global Serializer / Compressor
 
-Set a serializer or compressor for all entity types at once using builder extension methods:
+Set a serializer or compressor for all entity types at once using builder extension methods. Per-entity calls inside `ForEntity` override the global default:
 
 ```csharp
 var builder = new ChangeTrackingBuilder();
 builder.UseJsonSerializer();
 builder.UseGzipCompressor();
 
-builder.ForEntity<Product>()
+builder.ForEntity<Product>(e => e
     .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
     {
         ConnectionString = connectionString
     }))
-    .UseQueue(new InMemoryQueue());
+    .UseQueue(new InMemoryQueue()));
+// Inherits JsonSerializer + GzipCompressor from global defaults
 
 var tracker = builder.Build();
 ```
@@ -76,36 +77,38 @@ var tracker = await builder.BuildAsync();
 
 ```csharp
 var builder = new ChangeTrackingBuilder();
-builder.ForEntity<Product>()
+
+builder.ForEntity<Product>(e => e
     .UseOutbox(new InMemoryOutbox())
     .UseQueue(new InMemoryQueue())
     .UseSerializer(new JsonSerializerPlugin())
-    .UseCompressor(new GzipCompressorPlugin());
+    .UseCompressor(new GzipCompressorPlugin()));
 
 var tracker = builder.Build();
 ```
 
 ## Subscribing to Changes
 
-`RayTree.Subscriber` receives `MessageEnvelope` messages from any `IQueueConsumer`, deserializes the entity state, and dispatches to typed handlers. The subscriber is the mirror of the publisher — use the same serializer and compressor on both sides.
+`RayTree.Subscriber` receives `MessageEnvelope` messages from any `IQueueConsumer`, deserializes the entity state, and dispatches to typed handlers. Use `ChangeSubscriberBuilder` to configure global defaults and per-entity overrides. The subscriber is the mirror of the publisher — use the same serializer and compressor on both sides.
 
 ```csharp
 var queue = new InMemoryQueue(); // or KafkaConsumer / RabbitMqConsumer
 
-var subscriber = new ChangeSubscriber();
-subscriber
-    .RegisterQueue<Product>(queue)
-    .UseSerializer<Product>(new JsonSerializerPlugin())
-    .UseCompressor<Product>(new GzipCompressorPlugin())
-    .OnInsert<Product>(async (change, ct) =>
-    {
-        var product = change.State;   // fully-typed Product
-        Console.WriteLine($"Inserted: {product?.Name}");
-    })
-    .OnUpdate<Product>(async (change, ct) =>
-        Console.WriteLine($"Updated: {change.EntityId}"))
-    .OnDelete<Product>(async (change, ct) =>
-        Console.WriteLine($"Deleted: {change.EntityId}"));
+var subscriber = new ChangeSubscriberBuilder()
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseCompressor(new GzipCompressorPlugin())
+    .ForEntity<Product>(e => e
+        .UseQueue(queue)
+        .OnInsert(async (change, ct) =>
+        {
+            var product = change.State;   // fully-typed Product
+            Console.WriteLine($"Inserted: {product?.Name}");
+        })
+        .OnUpdate(async (change, ct) =>
+            Console.WriteLine($"Updated: {change.EntityId}"))
+        .OnDelete(async (change, ct) =>
+            Console.WriteLine($"Deleted: {change.EntityId}")))
+    .Build();
 
 // Start consuming (blocks until cancellation)
 await subscriber.ConsumeFromConsumerAsync(queue, cancellationToken);
@@ -113,18 +116,18 @@ await subscriber.ConsumeFromConsumerAsync(queue, cancellationToken);
 
 ### ASP.NET Core (DI)
 
-`AddChangeSubscriber` registers `ChangeSubscriber` as a singleton and starts `ChangeSubscriberHostedService` automatically:
+`AddChangeSubscriber` registers `ChangeSubscriber` as a singleton and starts `ChangeSubscriberHostedService` automatically. It returns `IChangeSubscriberBuilder`, so entity registrations chain directly off the call:
 
 ```csharp
 builder.Services
     .AddChangeSubscriber(builder.Configuration)
-    .ConsumeEntity<Product>()
-    .UseInMemoryQueue<Product>(orderQueue)
-    .UseSerializer<Product>(new JsonSerializerPlugin())
-    .UseCompressor<Product>(new GzipCompressorPlugin())
-    .OnInsert<Product>(async (change, ct) =>
-        Console.WriteLine($"New product: {change.State?.Name}"))
-    .UseRedisDeduplication("localhost:6379");
+    .UseRedisDeduplication("localhost:6379")
+    .ForEntity<Product>(e => e
+        .UseInMemoryQueue(productQueue)
+        .UseSerializer(new JsonSerializerPlugin())
+        .UseCompressor(new GzipCompressorPlugin())
+        .OnInsert(async (change, ct) =>
+            Console.WriteLine($"New product: {change.State?.Name}")));
 ```
 
 `appsettings.json`:
