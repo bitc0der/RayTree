@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading.Channels;
 using Confluent.Kafka;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Consumer;
@@ -10,7 +11,9 @@ namespace RayTree.Plugins.Kafka;
 public class KafkaConsumer : IQueueConsumer, IDisposable
 {
     private readonly KafkaConsumerOptions _options;
+    private readonly CancellationTokenSource _disposeCts = new();
     private IConsumer<string, byte[]>? _consumer;
+    private Task? _pollTask;
 
     public KafkaConsumer(KafkaConsumerOptions options)
     {
@@ -35,26 +38,50 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
     public async IAsyncEnumerable<(EntityChange Change, byte[] Payload)> ConsumeAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var timeout = TimeSpan.FromMilliseconds(_options.PollTimeoutMs);
+        // All Confluent.Kafka operations (Consume + Commit) must run on the same thread.
+        // A dedicated background thread polls and buffers results via an unbounded channel.
+        // We link the caller's token with _disposeCts so Dispose() can stop the poll loop
+        // before freeing native memory, preventing AccessViolationException.
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
+        var linkedToken = linkedCts.Token;
 
-        while (!cancellationToken.IsCancellationRequested)
+        var channel = Channel.CreateUnbounded<(EntityChange, byte[])>(
+            new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+
+        _pollTask = Task.Run(() =>
         {
-            ConsumeResult<string, byte[]>? result;
+            var timeout = TimeSpan.FromMilliseconds(_options.PollTimeoutMs);
             try
             {
-                result = await Task.Run(() => _consumer!.Consume(timeout), cancellationToken);
+                while (!linkedToken.IsCancellationRequested)
+                {
+                    ConsumeResult<string, byte[]>? result;
+                    try
+                    {
+                        result = _consumer!.Consume(timeout);
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch (ObjectDisposedException)    { break; }
+                    catch                              { continue; }
+
+                    if (result?.Message == null) continue;
+
+                    EntityChange change;
+                    try   { change = ParseEntityChange(result.Message); }
+                    catch { _consumer!.Commit(result); continue; }
+
+                    _consumer!.Commit(result);
+                    channel.Writer.TryWrite((change, result.Message.Value));
+                }
             }
-            catch (OperationCanceledException)
+            finally
             {
-                yield break;
+                channel.Writer.TryComplete();
             }
+        });
 
-            if (result?.Message == null) continue;
-
-            var change = ParseEntityChange(result.Message);
-            yield return (change, result.Message.Value);
-            _consumer!.Commit(result);
-        }
+        await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken))
+            yield return item;
     }
 
     private static EntityChange ParseEntityChange(Message<string, byte[]> message)
@@ -94,7 +121,14 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
     public void Dispose()
     {
+        // Signal the poll loop to stop, then wait for it to exit before freeing
+        // the native librdkafka handle — prevents AccessViolationException.
+        _disposeCts.Cancel();
+        var waitMs = _options.PollTimeoutMs * 2 + 200;
+        _pollTask?.Wait(TimeSpan.FromMilliseconds(waitMs));
+
         _consumer?.Close();
         _consumer?.Dispose();
+        _disposeCts.Dispose();
     }
 }

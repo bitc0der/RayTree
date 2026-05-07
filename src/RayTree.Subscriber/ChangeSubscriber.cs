@@ -67,10 +67,9 @@ public class ChangeSubscriber : IDisposable
         return this;
     }
 
-    public async Task ProcessMessageAsync(EntityChange change, byte[] payload,
-        CancellationToken cancellationToken = default)
+    private async Task ProcessMessageAsync(EntityChange change, byte[] payload, CancellationToken cancellationToken)
     {
-        var entityType = Type.GetType(change.EntityType);
+        var entityType = ResolveType(change.EntityType);
         if (entityType == null)
             return;
 
@@ -92,15 +91,6 @@ public class ChangeSubscriber : IDisposable
         CancellationToken cancellationToken = default)
     {
         await foreach (var (change, payload) in consumer.ConsumeAsync(cancellationToken))
-            await ProcessMessageAsync(change, payload, cancellationToken);
-    }
-
-    public async Task ConsumeFromQueueAsync<TQueue>(
-        TQueue queue,
-        Func<TQueue, CancellationToken, IAsyncEnumerable<(EntityChange Change, byte[] Payload)>> reader,
-        CancellationToken cancellationToken = default)
-    {
-        await foreach (var (change, payload) in reader(queue, cancellationToken))
             await ProcessMessageAsync(change, payload, cancellationToken);
     }
 
@@ -127,6 +117,20 @@ public class ChangeSubscriber : IDisposable
                 await Task.Delay(_options.RetryDelay * retries, ct);
             }
         }
+    }
+
+    private static Type? ResolveType(string typeName)
+    {
+        var t = Type.GetType(typeName);
+        if (t != null) return t;
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            t = assembly.GetType(typeName);
+            if (t != null) return t;
+        }
+
+        return null;
     }
 
     public void Dispose()

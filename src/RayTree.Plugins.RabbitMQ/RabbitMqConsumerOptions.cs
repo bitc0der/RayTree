@@ -10,4 +10,13 @@ public class RabbitMqConsumerOptions
     public bool DeclareQueue { get; set; } = true;
     public bool Durable { get; set; } = true;
     public ushort PrefetchCount { get; set; } = 10;
+
+    /// <summary>
+    /// When set, the queue is bound to this exchange during initialization.
+    /// Required when the publisher writes to a named exchange rather than the default exchange.
+    /// </summary>
+    public string? ExchangeName { get; set; }
+
+    /// <summary>Routing key pattern used when binding the queue to the exchange. Defaults to "#" (match all).</summary>
+    public string BindingKey { get; set; } = "#";
 }

@@ -36,4 +36,15 @@ public static class RabbitMqSubscriberExtensions
         options.PrefetchCount = prefetchCount;
         return options;
     }
+
+    public static RabbitMqConsumerOptions BindToExchange(
+        this RabbitMqConsumerOptions options,
+        string exchangeName,
+        string bindingKey = "#")
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        options.ExchangeName = exchangeName;
+        options.BindingKey   = bindingKey;
+        return options;
+    }
 }

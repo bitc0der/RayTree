@@ -39,6 +39,9 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
             _channel.QueueDeclare(_options.QueueName, durable: _options.Durable,
                 exclusive: false, autoDelete: false, arguments: null);
 
+        if (!string.IsNullOrEmpty(_options.ExchangeName))
+            _channel.QueueBind(_options.QueueName, _options.ExchangeName, _options.BindingKey);
+
         _channel.BasicQos(prefetchSize: 0, prefetchCount: _options.PrefetchCount, global: false);
 
         var consumer = new AsyncEventingBasicConsumer(_channel);
