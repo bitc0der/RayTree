@@ -95,6 +95,20 @@ EntityChangeTracker
 - **Kafka thread safety**: `KafkaConsumer` keeps a single background `Task.Run` thread that owns all `IConsumer<K,V>` operations. `Dispose()` cancels via `_disposeCts`, waits up to `2×PollTimeoutMs + 200 ms` for the poll task to exit, then frees the native handle.
 - **Integration tests use Testcontainers**: PostgreSQL, Kafka, and RabbitMQ tests require Docker. Mark test classes `[NonParallelizable]` when sharing a container. Use unique topic/queue names per test to avoid cross-test contamination.
 
+## Code Style
+
+Follow `.editorconfig` at the repo root for all formatting and naming. Key conventions in effect:
+
+- Private/internal fields: `_camelCase`
+- Static private/internal fields: `s_PascalCase` prefix
+- Constants: `PascalCase`
+- Expression-bodied members preferred for single-expression methods, properties, and accessors
+- `using` directives outside the namespace
+- System `using` directives sorted first
+- Braces on a new line (`csharp_new_line_before_open_brace = all`)
+
+Do not override these rules. If a rule from `.editorconfig` conflicts with a general suggestion, `.editorconfig` wins.
+
 ## Design Principles
 
 All code in this repository must respect the following principles. When reviewing or modifying code, check for violations before accepting a change.
