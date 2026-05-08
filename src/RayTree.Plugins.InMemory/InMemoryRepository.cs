@@ -43,9 +43,9 @@ public class InMemoryRepository<TEntity> : IRepository<TEntity> where TEntity : 
     private static object GetEntityId(TEntity entity)
     {
         var prop = typeof(TEntity).GetProperty("Id")
-            ?? throw new InvalidOperationException($"Entity type {typeof(TEntity).Name} has no Id property");
+                   ?? throw new InvalidOperationException($"Entity type {typeof(TEntity).Name} has no Id property");
 
         return prop.GetValue(entity)
-            ?? throw new InvalidOperationException($"Entity Id is null");
+               ?? throw new InvalidOperationException($"Entity Id is null");
     }
 }

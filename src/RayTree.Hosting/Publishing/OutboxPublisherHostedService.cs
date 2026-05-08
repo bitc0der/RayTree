@@ -2,7 +2,7 @@ using Microsoft.Extensions.Hosting;
 using RayTree.Core.Distribution;
 using RayTree.Core.Tracking;
 
-namespace RayTree.Hosting;
+namespace RayTree.Hosting.Publishing;
 
 public class OutboxPublisherHostedService : IHostedService
 {

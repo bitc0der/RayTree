@@ -1,6 +1,6 @@
 ﻿using RayTree.Core.Tracking;
 
-namespace RayTree.Hosting;
+namespace RayTree.Hosting.Publishing;
 
 public class EntityChangeTrackerFactory
 {

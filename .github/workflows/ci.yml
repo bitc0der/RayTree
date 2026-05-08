@@ -66,7 +66,6 @@ jobs:
           for project in \
             tests/RayTree.Core.Tests \
             tests/RayTree.Plugins.InMemory.Tests \
-            tests/RayTree.Subscriber.Tests \
             tests/RayTree.EntityFrameworkCore.Tests \
             tests/RayTree.Plugins.Compressors.Brotli.Tests \
             tests/RayTree.Plugins.Compressors.Gzip.Tests \

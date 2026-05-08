@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="..\..\src\RayTree.Plugins.InMemory\RayTree.Plugins.InMemory.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.RabbitMQ\RayTree.Plugins.RabbitMQ.csproj" />
-    <ProjectReference Include="..\..\src\RayTree.Subscriber\RayTree.Subscriber.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.Json\RayTree.Plugins.Serializers.Json.csproj" />
     <PackageReference Include="Testcontainers" />
     <PackageReference Include="Testcontainers.RabbitMq" />

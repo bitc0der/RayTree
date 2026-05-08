@@ -1,4 +1,4 @@
-﻿namespace RayTree.Subscriber;
+﻿namespace RayTree.Core.Handling;
 
 public class SubscriberOptions
 {

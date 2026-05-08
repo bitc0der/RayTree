@@ -1,7 +1,7 @@
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Core.Handling;
 
 internal class HandlerRegistration
 {

@@ -3,7 +3,7 @@ using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
 
-namespace RayTree.Subscriber;
+namespace RayTree.Core.Handling;
 
 /// <summary>
 /// Internal implementation of <see cref="IEntitySubscriberBuilder{TEntity}"/> that collects
@@ -14,9 +14,9 @@ internal sealed class EntitySubscriberBuilder<TEntity>(ChangeSubscriberBuilder p
     : IEntitySubscriberBuilder<TEntity>
     where TEntity : class
 {
-    private IQueueConsumer?            _queue;
-    private IChangeSerializer?         _serializer;
-    private IChangeCompressor?         _compressor;
+    private IQueueConsumer? _queue;
+    private IChangeSerializer? _serializer;
+    private IChangeCompressor? _compressor;
     private Action<SubscriberOptions>? _optionsConfigure;
 
     private readonly List<(ChangeType? ChangeType, ChangeHandlerAsync<TEntity> Handler)> _handlers = new();
@@ -91,9 +91,9 @@ internal sealed class EntitySubscriberBuilder<TEntity>(ChangeSubscriberBuilder p
         {
             entityOptions = new SubscriberOptions
             {
-                MaxRetries             = parent.GlobalOptions.MaxRetries,
-                RetryDelay             = parent.GlobalOptions.RetryDelay,
-                SkipOnFailure          = parent.GlobalOptions.SkipOnFailure,
+                MaxRetries = parent.GlobalOptions.MaxRetries,
+                RetryDelay = parent.GlobalOptions.RetryDelay,
+                SkipOnFailure = parent.GlobalOptions.SkipOnFailure,
                 MaxDegreeOfParallelism = parent.GlobalOptions.MaxDegreeOfParallelism,
                 DeduplicationRetention = parent.GlobalOptions.DeduplicationRetention,
             };
