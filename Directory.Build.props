@@ -7,10 +7,12 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <WarningsAsErrors>nullable</WarningsAsErrors>
 
-    <VersionPrefix>1.0.0</VersionPrefix>
+    <VersionPrefix>0.0.1</VersionPrefix>
     <VersionSuffix>pre-release</VersionSuffix>
-    <Authors>RayTree</Authors>
+
+    <Authors>bitc0der</Authors>
     <Copyright>Copyright bitc0der © 2026</Copyright>
+
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <RepositoryUrl>https://github.com/bitc0der/RayTree</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -18,5 +20,4 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
-
 </Project>
