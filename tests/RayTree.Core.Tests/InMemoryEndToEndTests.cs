@@ -1,3 +1,4 @@
+using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
@@ -20,13 +21,14 @@ public class InMemoryEndToEndTests
     {
         _queue = new InMemoryQueue();
 
-        _tracker = new EntityChangeTracker();
-        _tracker.RegisterOutbox(typeof(Order), new InMemoryOutbox());
-        _tracker.RegisterPublisher(typeof(Order), _queue);
-        _tracker.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
-        _tracker.RegisterCompressor(typeof(Order), new NoOpCompressorPlugin());
-        _tracker.PublisherOptions.PollingInterval = TimeSpan.FromMilliseconds(50);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(Order), new InMemoryOutbox());
+        publisher.RegisterPublisher(typeof(Order), _queue);
+        publisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
+        publisher.RegisterCompressor(typeof(Order), new NoOpCompressorPlugin());
+        publisher.Options.PollingInterval = TimeSpan.FromMilliseconds(50);
 
+        _tracker = new EntityChangeTracker(publisher);
         await _tracker.InitializeAsync();
     }
 
@@ -37,10 +39,6 @@ public class InMemoryEndToEndTests
         _queue.Dispose();
     }
 
-    // -------------------------------------------------------------------------
-    // Helper: build a subscriber wired to _queue and start its consume loop.
-    // Returns the subscriber + a CTS that stops the loop when cancelled.
-    // -------------------------------------------------------------------------
     private (ChangeSubscriber subscriber, CancellationTokenSource cts, Task consumeTask)
         StartSubscriber(Action<ChangeSubscriber> configure)
     {
@@ -161,12 +159,10 @@ public class InMemoryEndToEndTests
                 return Task.CompletedTask;
             }));
 
-        // Track once — writes a change with a unique CorrelationId
         var change = await _tracker.TrackInsertAsync(new Order { Id = 1, Total = 5m });
 
         await firstArrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Manually publish the same change again (same CorrelationId)
         await _queue.PublishAsync(new MessageEnvelope
         {
             EntityType    = change.EntityType,
@@ -177,7 +173,7 @@ public class InMemoryEndToEndTests
             Timestamp     = change.Timestamp,
             Payload       = Array.Empty<byte>()
         });
-        await Task.Delay(300); // give time for second delivery attempt
+        await Task.Delay(300);
 
         Assert.That(invokeCount, Is.EqualTo(1), "Handler must not be invoked for duplicate CorrelationId");
 
@@ -188,7 +184,6 @@ public class InMemoryEndToEndTests
     [Test]
     public async Task ChangeSubscriberBuilder_Build_AppliesOptionsAndDedup()
     {
-        // Verifies the deferred-build path via the new fluent builder API.
         var tcs = new TaskCompletionSource<EntityChange>();
 
         var subscriber = new ChangeSubscriberBuilder()
@@ -200,7 +195,7 @@ public class InMemoryEndToEndTests
             .ForEntity<Order>(e => e
                 .UseInMemoryQueue(_queue)
                 .UseSerializer(new JsonSerializerPlugin())
-                .UseCompressor(new NoOpCompressorPlugin()) // must match tracker's compressor
+                .UseCompressor(new NoOpCompressorPlugin())
                 .OnInsert((change, _) =>
                 {
                     tcs.TrySetResult(change);
@@ -220,20 +215,13 @@ public class InMemoryEndToEndTests
         subscriber.Dispose();
     }
 
-    // -------------------------------------------------------------------------
-    // No-serializer fallback
-    // -------------------------------------------------------------------------
-
     [Test]
     public async Task NoSerializer_HandlerReceivesTypedChangeWithNullState()
     {
-        // Subscriber has NO serializer registered — it should still receive a typed
-        // EntityChange<Order> (so the cast succeeds) but with State == null.
         var tcs = new TaskCompletionSource<EntityChange<Order>>();
 
         var subscriber = new ChangeSubscriber();
         subscriber.RegisterQueue<Order>(_queue);
-        // Note: no UseSerializer call — exercising the Activator.CreateInstance fallback path.
         subscriber.OnChange<Order>(ChangeType.Insert, (change, _) =>
         {
             tcs.TrySetResult(change);
@@ -254,15 +242,9 @@ public class InMemoryEndToEndTests
         subscriber.Dispose();
     }
 
-    // -------------------------------------------------------------------------
-    // Retry semantics
-    // -------------------------------------------------------------------------
-
     [Test]
     public async Task InvokeWithRetry_HandlerSucceedsAfterRetries()
     {
-        // With MaxRetries = 2 the handler may be called up to 3 times total
-        // (1 initial + 2 retries).  Here it succeeds on the 3rd attempt.
         var attempts = 0;
         var succeeded = new TaskCompletionSource<bool>();
 
@@ -297,7 +279,6 @@ public class InMemoryEndToEndTests
     [Test]
     public async Task InvokeWithRetry_MaxRetries1_ExhaustedWithSkipOnFailure_DoesNotThrow()
     {
-        // MaxRetries = 1 → 2 total attempts. Both fail. SkipOnFailure = true → no exception.
         var attempts = 0;
         var secondAttempt = new TaskCompletionSource<bool>();
 
@@ -322,8 +303,6 @@ public class InMemoryEndToEndTests
 
         await _tracker.TrackInsertAsync(new Order { Id = 20, Total = 2m });
 
-        // Wait for the second (final) attempt, then give the consume loop a moment to
-        // confirm it did NOT throw (if it did, consumeTask would be faulted).
         await secondAttempt.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Task.Delay(200);
 
@@ -334,9 +313,6 @@ public class InMemoryEndToEndTests
         subscriber.Dispose();
     }
 
-    // -------------------------------------------------------------------------
-    // Test entity
-    // -------------------------------------------------------------------------
     private class Order
     {
         public int Id { get; set; }

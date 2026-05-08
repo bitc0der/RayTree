@@ -1,4 +1,5 @@
-﻿using RayTree.Core.Models;
+﻿using RayTree.Core.Distribution;
+using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
@@ -25,9 +26,10 @@ public class TrackInsertWithTypedStateTests
     [Test]
     public async Task TrackInsertAsync_CapturesEntityStateAfterInsert()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(User), outbox);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(User), outbox);
+        var tracker = new EntityChangeTracker(publisher);
 
         var user = new User { Id = 1, Name = "Alice", Email = "alice@example.com" };
         var change = await tracker.TrackInsertAsync(user);
@@ -41,9 +43,10 @@ public class TrackInsertWithTypedStateTests
     [Test]
     public async Task TrackInsertAsync_WritesTypedChangeToOutbox()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(User), outbox);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(User), outbox);
+        var tracker = new EntityChangeTracker(publisher);
 
         var user = new User { Id = 2, Name = "Bob" };
         await tracker.TrackInsertAsync(user);
@@ -56,9 +59,10 @@ public class TrackInsertWithTypedStateTests
     [Test]
     public async Task TrackInsertAsync_SetsEntityTypeFromGenericParameter()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(User), outbox);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(User), outbox);
+        var tracker = new EntityChangeTracker(publisher);
 
         var user = new User { Id = 3, Name = "Charlie" };
         var change = await tracker.TrackInsertAsync(user);
@@ -69,9 +73,10 @@ public class TrackInsertWithTypedStateTests
     [Test]
     public async Task TrackInsertAsync_SetsEntityIdFromIdProperty()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(User), outbox);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(User), outbox);
+        var tracker = new EntityChangeTracker(publisher);
 
         var user = new User { Id = 42, Name = "Dave" };
         var change = await tracker.TrackInsertAsync(user);
@@ -93,9 +98,10 @@ public class TrackUpdateWithTypedStateTests
     [Test]
     public async Task TrackUpdateAsync_CapturesEntityStateAfterUpdate()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(Product), outbox);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(Product), outbox);
+        var tracker = new EntityChangeTracker(publisher);
 
         var product = new Product { Id = 10, Name = "Widget", Price = 19.99m };
         var change = await tracker.TrackUpdateAsync(product);
@@ -108,9 +114,10 @@ public class TrackUpdateWithTypedStateTests
     [Test]
     public async Task TrackUpdateAsync_WritesTypedChangeToOutbox()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(Product), outbox);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(Product), outbox);
+        var tracker = new EntityChangeTracker(publisher);
 
         var product = new Product { Id = 20, Name = "Gadget", Price = 49.99m };
         await tracker.TrackUpdateAsync(product);
@@ -133,9 +140,10 @@ public class TrackDeleteWithTypedStateTests
     [Test]
     public async Task TrackDeleteAsync_CapturesEntityStateBeforeDelete()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(Order), outbox);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(Order), outbox);
+        var tracker = new EntityChangeTracker(publisher);
 
         var order = new Order { Id = 100, Total = 99.50m };
         var change = await tracker.TrackDeleteAsync(order);
@@ -148,9 +156,10 @@ public class TrackDeleteWithTypedStateTests
     [Test]
     public async Task TrackDeleteAsync_WritesTypedChangeToOutbox()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        tracker.RegisterOutbox(typeof(Order), outbox);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(Order), outbox);
+        var tracker = new EntityChangeTracker(publisher);
 
         var order = new Order { Id = 200, Total = 150.00m };
         await tracker.TrackDeleteAsync(order);

@@ -3,10 +3,6 @@ using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
-using RayTree.Core.Plugins.Outbox;
-using RayTree.Core.Plugins.Publisher;
-using RayTree.Core.Plugins.Repository;
-using RayTree.Core.Plugins.Serialization;
 
 namespace RayTree.Core.Tracking;
 
@@ -25,26 +21,10 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
 
     public ChangePublisher Publisher => _publisher;
 
-    public OutboxPublisherOptions PublisherOptions => _publisher.Options;
-
     public IReadOnlyDictionary<Type, IQueueConsumer> Consumers
         => _subscriber?.Queues ?? new Dictionary<Type, IQueueConsumer>();
 
     internal void AttachSubscriber(ChangeSubscriber subscriber) => _subscriber = subscriber;
-
-    public void RegisterOutbox(Type entityType, IOutbox outbox) => _publisher.RegisterOutbox(entityType, outbox);
-    public void RegisterPublisher(Type entityType, IQueuePublisher publisher) => _publisher.RegisterPublisher(entityType, publisher);
-    public void RegisterSerializer(Type entityType, IChangeSerializer serializer) => _publisher.RegisterSerializer(entityType, serializer);
-    public void RegisterCompressor(Type entityType, IChangeCompressor compressor) => _publisher.RegisterCompressor(entityType, compressor);
-    public void RegisterRepository(Type entityType, IRepository repository) => _publisher.RegisterRepository(entityType, repository);
-
-    public IOutbox GetOutbox(Type entityType) => _publisher.GetOutbox(entityType);
-    public IQueuePublisher GetPublisher(Type entityType) => _publisher.GetPublisher(entityType);
-    public IChangeSerializer GetSerializer(Type entityType) => _publisher.GetSerializer(entityType);
-    public IChangeCompressor GetCompressor(Type entityType) => _publisher.GetCompressor(entityType);
-    public IRepository GetRepository(Type entityType) => _publisher.GetRepository(entityType);
-
-    public IReadOnlyDictionary<Type, IOutbox> GetOutboxes() => _publisher.GetOutboxes();
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -141,10 +121,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         CancellationToken cancellationToken = default)
         where TEntity : class
     {
-        var entityType = typeof(TEntity);
-
-        var outbox = _publisher.GetOutbox(entityType);
-
+        var outbox = _publisher.GetOutbox(typeof(TEntity));
         await outbox.WriteAsync(change, cancellationToken);
     }
 

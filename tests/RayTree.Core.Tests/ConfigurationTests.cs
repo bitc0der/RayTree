@@ -34,10 +34,10 @@ public class ChangeTrackingBuilderTests
 
         var tracker = builder.Build();
 
-        Assert.That(tracker.GetOutbox(typeof(object)), Is.SameAs(outbox));
-        Assert.That(tracker.GetPublisher(typeof(object)), Is.SameAs(queue));
-        Assert.That(tracker.GetSerializer(typeof(object)), Is.SameAs(serializer));
-        Assert.That(tracker.GetCompressor(typeof(object)), Is.SameAs(compressor));
+        Assert.That(tracker.Publisher.GetOutbox(typeof(object)), Is.SameAs(outbox));
+        Assert.That(tracker.Publisher.GetPublisher(typeof(object)), Is.SameAs(queue));
+        Assert.That(tracker.Publisher.GetSerializer(typeof(object)), Is.SameAs(serializer));
+        Assert.That(tracker.Publisher.GetCompressor(typeof(object)), Is.SameAs(compressor));
     }
 
     [Test]
@@ -106,7 +106,7 @@ public class ChangeTrackingBuilderTests
 
         var tracker = builder.Build();
 
-        Assert.That(tracker.GetOutboxes(), Has.Count.EqualTo(2));
+        Assert.That(tracker.Publisher.GetOutboxes(), Has.Count.EqualTo(2));
     }
 }
 

@@ -1,3 +1,4 @@
+using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
@@ -36,13 +37,13 @@ public class KafkaEndToEndTests : IAsyncDisposable
             Acks             = "all"
         });
 
-        var tracker = new EntityChangeTracker();
-        tracker.RegisterOutbox(typeof(Order), new InMemoryOutbox());
-        tracker.RegisterPublisher(typeof(Order), publisher);
-        tracker.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
-        tracker.RegisterCompressor(typeof(Order), new NoOpCompressorPlugin());
-        tracker.PublisherOptions.PollingInterval = TimeSpan.FromMilliseconds(100);
-        return tracker;
+        var changePublisher = new ChangePublisher();
+        changePublisher.RegisterOutbox(typeof(Order), new InMemoryOutbox());
+        changePublisher.RegisterPublisher(typeof(Order), publisher);
+        changePublisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
+        changePublisher.RegisterCompressor(typeof(Order), new NoOpCompressorPlugin());
+        changePublisher.Options.PollingInterval = TimeSpan.FromMilliseconds(100);
+        return new EntityChangeTracker(changePublisher);
     }
 
     private KafkaConsumer BuildConsumer(string topic, string groupId) => new(new KafkaConsumerOptions

@@ -1,3 +1,4 @@
+using RayTree.Core.Distribution;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
@@ -11,16 +12,13 @@ public class EndToEndTests
     [Test]
     public async Task FullPipeline_TracksChange_WritesToOutbox_AndPublishesToQueue()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        var queue = new InMemoryQueue();
-        var serializer = new JsonSerializerPlugin();
-        var compressor = new NoOpCompressorPlugin();
-
-        tracker.RegisterOutbox(typeof(User), outbox);
-        tracker.RegisterPublisher(typeof(User), queue);
-        tracker.RegisterSerializer(typeof(User), serializer);
-        tracker.RegisterCompressor(typeof(User), compressor);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(User), outbox);
+        publisher.RegisterPublisher(typeof(User), new InMemoryQueue());
+        publisher.RegisterSerializer(typeof(User), new JsonSerializerPlugin());
+        publisher.RegisterCompressor(typeof(User), new NoOpCompressorPlugin());
+        var tracker = new EntityChangeTracker(publisher);
 
         await tracker.TrackInsertAsync(new User { Id = 1, Name = "Alice" });
 
@@ -30,16 +28,13 @@ public class EndToEndTests
     [Test]
     public async Task Pipeline_WithCompression_RoundTripSucceeds()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        var queue = new InMemoryQueue();
-        var serializer = new JsonSerializerPlugin();
-        var compressor = new GzipCompressorPlugin();
-
-        tracker.RegisterOutbox(typeof(Order), outbox);
-        tracker.RegisterPublisher(typeof(Order), queue);
-        tracker.RegisterSerializer(typeof(Order), serializer);
-        tracker.RegisterCompressor(typeof(Order), compressor);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(Order), outbox);
+        publisher.RegisterPublisher(typeof(Order), new InMemoryQueue());
+        publisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
+        publisher.RegisterCompressor(typeof(Order), new GzipCompressorPlugin());
+        var tracker = new EntityChangeTracker(publisher);
 
         await tracker.TrackUpdateAsync(new Order { Id = 100, Total = 99.99m });
 
@@ -49,12 +44,12 @@ public class EndToEndTests
     [Test]
     public async Task MultipleEntities_TrackedIndependently()
     {
-        var tracker = new EntityChangeTracker();
         var userOutbox = new InMemoryOutbox();
         var orderOutbox = new InMemoryOutbox();
-
-        tracker.RegisterOutbox(typeof(User), userOutbox);
-        tracker.RegisterOutbox(typeof(Order), orderOutbox);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(User), userOutbox);
+        publisher.RegisterOutbox(typeof(Order), orderOutbox);
+        var tracker = new EntityChangeTracker(publisher);
 
         await tracker.TrackInsertAsync(new User { Id = 1, Name = "Bob" });
         await tracker.TrackInsertAsync(new Order { Id = 100, Total = 50m });
@@ -66,37 +61,32 @@ public class EndToEndTests
     [Test]
     public async Task Pipeline_WritesOutbox_InSameBatch()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new InMemoryOutbox();
-        var serializer = new JsonSerializerPlugin();
-        var compressor = new NoOpCompressorPlugin();
-
-        tracker.RegisterOutbox(typeof(User), outbox);
-        tracker.RegisterSerializer(typeof(User), serializer);
-        tracker.RegisterCompressor(typeof(User), compressor);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(User), outbox);
+        publisher.RegisterSerializer(typeof(User), new JsonSerializerPlugin());
+        publisher.RegisterCompressor(typeof(User), new NoOpCompressorPlugin());
+        var tracker = new EntityChangeTracker(publisher);
 
         await tracker.TrackInsertAsync(new User { Id = 1, Name = "A" });
         await tracker.TrackUpdateAsync(new User { Id = 2, Name = "B" });
         await tracker.TrackDeleteAsync(new User { Id = 3, Name = "C" });
 
-        var stored = outbox.GetAll();
-        Assert.That(stored, Has.Count.EqualTo(3));
+        Assert.That(outbox.GetAll(), Has.Count.EqualTo(3));
     }
 
     [Test]
     public async Task Pipeline_WithQueue_ConsumerReceivesMessage()
     {
-        var tracker = new EntityChangeTracker();
         var queue = new InMemoryQueue();
-        var serializer = new JsonSerializerPlugin();
-        var compressor = new NoOpCompressorPlugin();
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(User), new InMemoryOutbox());
+        publisher.RegisterPublisher(typeof(User), queue);
+        publisher.RegisterSerializer(typeof(User), new JsonSerializerPlugin());
+        publisher.RegisterCompressor(typeof(User), new NoOpCompressorPlugin());
+        publisher.Options.PollingInterval = TimeSpan.FromMilliseconds(50);
 
-        tracker.RegisterOutbox(typeof(User), new InMemoryOutbox());
-        tracker.RegisterPublisher(typeof(User), queue);
-        tracker.RegisterSerializer(typeof(User), serializer);
-        tracker.RegisterCompressor(typeof(User), compressor);
-
-        tracker.PublisherOptions.PollingInterval = TimeSpan.FromMilliseconds(50);
+        var tracker = new EntityChangeTracker(publisher);
         await tracker.InitializeAsync();
 
         await tracker.TrackInsertAsync(new User { Id = 1, Name = "Charlie" });
