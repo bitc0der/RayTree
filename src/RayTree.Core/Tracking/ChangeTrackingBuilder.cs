@@ -121,11 +121,6 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
         return tracker;
     }
 
-    public ChangeSubscriber BuildSubscriber(
-        IDeduplicationStore? dedupStoreOverride = null,
-        SubscriberOptions? optionsOverride = null)
-        => _subscriberBuilder.Build(dedupStoreOverride, optionsOverride);
-
     private EntityChangeTracker BuildInternal()
     {
         var tracker = new EntityChangeTracker();
@@ -163,10 +158,10 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
             tracker.RegisterCompressor(entityType, compressor);
 
             if (repository != null)
-            {
                 tracker.RegisterRepository(entityType, repository);
-            }
         }
+
+        _subscriberBuilder.Apply(tracker);
 
         return tracker;
     }

@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using RayTree.Core.Distribution;
+using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Repository;
@@ -18,8 +20,16 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     private readonly ConcurrentDictionary<Type, IRepository> _repositories = new();
 
     private readonly List<OutboxPublisherService> _publisherServices = new();
+    private ChangeSubscriber? _subscriber;
+    private bool _disposed;
 
     public OutboxPublisherOptions PublisherOptions { get; } = new();
+
+    /// <summary>Exposes the consumer queues registered on the attached subscriber.</summary>
+    public IReadOnlyDictionary<Type, IQueueConsumer> Consumers
+        => _subscriber?.Queues ?? new Dictionary<Type, IQueueConsumer>();
+
+    internal void AttachSubscriber(ChangeSubscriber subscriber) => _subscriber = subscriber;
 
     public void RegisterOutbox(Type entityType, IOutbox outbox) => _outboxes[entityType] = outbox;
 
@@ -58,7 +68,21 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
             _publisherServices.Add(service);
             await service.StartAsync(cancellationToken);
         }
+
+        if (_subscriber != null)
+        {
+            foreach (var (_, consumer) in _subscriber.Queues)
+                await consumer.InitializeAsync(cancellationToken);
+        }
     }
+
+    /// <summary>Starts a consume loop for the given consumer, delegating to the attached subscriber.</summary>
+    public Task ConsumeFromConsumerAsync(IQueueConsumer consumer, CancellationToken cancellationToken = default)
+        => _subscriber!.ConsumeFromConsumerAsync(consumer, cancellationToken);
+
+    /// <summary>Processes a single message envelope through the attached subscriber.</summary>
+    public Task ProcessMessageAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
+        => _subscriber!.ProcessMessageAsync(envelope, cancellationToken);
 
     public async Task TrackChangeAsync<TEntity>(
         TEntity entity,
@@ -156,10 +180,15 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         foreach (var service in _publisherServices)
         {
             service.StopAsync().GetAwaiter().GetResult();
             service.Dispose();
         }
+
+        _subscriber?.Dispose();
     }
 }

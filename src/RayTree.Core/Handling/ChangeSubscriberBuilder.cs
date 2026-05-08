@@ -107,6 +107,13 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
         _entityApplicators.Add(applicator);
     }
 
+    /// <summary>
+    /// Builds the subscriber and attaches it to <paramref name="tracker"/> so that the tracker
+    /// becomes the single runtime host for both publisher and subscriber.
+    /// </summary>
+    internal void Apply(RayTree.Core.Tracking.EntityChangeTracker tracker)
+        => tracker.AttachSubscriber(Build());
+
     // Explicit interface implementation so the IChangeSubscriberBuilder.Build() call
     // uses the parameterless overload without leaking the override parameters on the interface.
     ChangeSubscriber IChangeSubscriberBuilder.Build() => Build();

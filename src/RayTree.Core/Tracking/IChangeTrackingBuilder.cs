@@ -1,4 +1,4 @@
-﻿using RayTree.Core.Distribution;
+using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Deduplication;
@@ -30,8 +30,4 @@ public interface IChangeTrackingBuilder
 
     EntityChangeTracker Build();
     Task<EntityChangeTracker> BuildAsync(CancellationToken cancellationToken = default);
-
-    ChangeSubscriber BuildSubscriber(
-        IDeduplicationStore? dedupStoreOverride = null,
-        SubscriberOptions? optionsOverride = null);
 }
