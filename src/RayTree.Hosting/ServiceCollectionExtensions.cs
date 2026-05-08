@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using RayTree.Core.Distribution;
 using RayTree.Core.Tracking;
+using RayTree.Hosting.Publishing;
 
 namespace RayTree.Hosting;
 
