@@ -161,9 +161,7 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
                 publisher.RegisterRepository(entityType, repository);
         }
 
-        var tracker = new EntityChangeTracker(publisher);
-        _subscriberBuilder.Apply(tracker);
-
-        return tracker;
+        var subscriber = _subscriberBuilder.Build();
+        return new EntityChangeTracker(publisher, subscriber);
     }
 }

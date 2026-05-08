@@ -1,7 +1,6 @@
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
-using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
 
 namespace RayTree.Core.Tracking;
@@ -9,22 +8,17 @@ namespace RayTree.Core.Tracking;
 public sealed class EntityChangeTracker : IEntityChangeTracker
 {
     private readonly ChangePublisher _publisher;
-    private ChangeSubscriber? _subscriber;
+    private readonly ChangeSubscriber? _subscriber;
     private bool _disposed;
 
-    public EntityChangeTracker() : this(new ChangePublisher()) { }
+    public ChangePublisher Publisher => _publisher;
+    public ChangeSubscriber? Subscriber => _subscriber;
 
-    public EntityChangeTracker(ChangePublisher publisher)
+    public EntityChangeTracker(ChangePublisher publisher, ChangeSubscriber? subscriber = null)
     {
         _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
+        _subscriber = subscriber;
     }
-
-    public ChangePublisher Publisher => _publisher;
-
-    public IReadOnlyDictionary<Type, IQueueConsumer> Consumers
-        => _subscriber?.Queues ?? new Dictionary<Type, IQueueConsumer>();
-
-    internal void AttachSubscriber(ChangeSubscriber subscriber) => _subscriber = subscriber;
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
