@@ -46,7 +46,7 @@ public class AutoInitializationTests
         await tracker.TrackChangeAsync(change);
 
         // Verify outbox has the change
-        var outbox = tracker.GetOutbox(typeof(AutoInitTestEntity)) as InMemoryOutbox;
+        var outbox = tracker.Publisher.GetOutbox(typeof(AutoInitTestEntity)) as InMemoryOutbox;
         Assert.That(outbox, Is.Not.Null);
         var changes = outbox.GetAll();
         Assert.That(changes, Has.Count.EqualTo(1));

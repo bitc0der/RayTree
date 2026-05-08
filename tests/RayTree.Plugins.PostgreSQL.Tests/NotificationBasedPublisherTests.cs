@@ -56,7 +56,7 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
 
         _tracker = builder.Build();
 
-        _publisher = new NotificationBasedPublisher(_tracker, new NotificationBasedPublisherOptions
+        _publisher = new NotificationBasedPublisher(_tracker.Publisher, new NotificationBasedPublisherOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
             ChannelName = ChannelName,

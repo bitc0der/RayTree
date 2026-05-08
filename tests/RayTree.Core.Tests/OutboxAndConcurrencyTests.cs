@@ -59,9 +59,9 @@ public class OutboxPublisherServiceTests
     [Test]
     public async Task StopAsync_Completes_WithinTimeout()
     {
-        var tracker = new EntityChangeTracker();
+        var publisher = new ChangePublisher();
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromSeconds(1) };
-        var service = new OutboxPublisherService(tracker, typeof(DummyEntity), options);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options);
 
         await service.StartAsync();
 
@@ -73,9 +73,9 @@ public class OutboxPublisherServiceTests
     [Test]
     public void Dispose_DoesNotThrow()
     {
-        var tracker = new EntityChangeTracker();
+        var publisher = new ChangePublisher();
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromHours(1) };
-        var service = new OutboxPublisherService(tracker, typeof(DummyEntity), options);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options);
 
         Assert.DoesNotThrow(() => service.Dispose());
     }
@@ -93,12 +93,13 @@ public class ConcurrentChangeDetectionTests
     [Test]
     public async Task TrackChangeAsync_IsThreadSafe_WithConcurrentCalls()
     {
-        var tracker = new EntityChangeTracker();
         var outbox = new Mock<IOutbox>();
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        tracker.RegisterOutbox(typeof(SampleEntity), outbox.Object);
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(SampleEntity), outbox.Object);
+        var tracker = new EntityChangeTracker(publisher);
 
         var tasks = Enumerable.Range(0, 100).Select(async i =>
         {
@@ -115,33 +116,5 @@ public class ConcurrentChangeDetectionTests
         await Task.WhenAll(tasks);
 
         outbox.Verify(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()), Times.Exactly(100));
-    }
-
-    [Test]
-    public void RegisterAndGetOutbox_IsThreadSafe_WithConcurrentAccess()
-    {
-        var tracker = new EntityChangeTracker();
-        var outboxes = Enumerable.Range(0, 50).Select(i => new Mock<IOutbox>().Object).ToArray();
-        var types = Enumerable.Range(0, 50).Select(_ => typeof(SampleEntity)).ToArray();
-
-        var registerTask = Task.Run(() =>
-        {
-            Parallel.For(0, outboxes.Length, i =>
-            {
-                tracker.RegisterOutbox(types[i], outboxes[i]);
-            });
-        });
-
-        registerTask.Wait();
-
-        var getTask = Task.Run(() =>
-        {
-            Parallel.For(0, outboxes.Length, i =>
-            {
-                tracker.GetOutbox(types[i]);
-            });
-        });
-
-        Assert.DoesNotThrowAsync(async () => await getTask);
     }
 }

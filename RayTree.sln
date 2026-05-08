@@ -65,6 +65,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution items", "Solution 
 		Directory.Packages.props = Directory.Packages.props
 		NuGet.config = NuGet.config
 		.github\workflows\ci.yml = .github\workflows\ci.yml
+		CLAUDE.md = CLAUDE.md
 	EndProjectSection
 EndProject
 Global

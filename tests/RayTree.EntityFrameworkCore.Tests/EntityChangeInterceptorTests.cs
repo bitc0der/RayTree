@@ -1,10 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Moq;
+using RayTree.Core.Distribution;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
 using RayTree.EntityFrameworkCore.Interceptors;
-using RayTree.Plugins;
 using RayTree.EntityFrameworkCore.Extensions;
 
 namespace RayTree.EntityFrameworkCore.Tests;
@@ -35,6 +35,13 @@ public class EntityChangeInterceptorTests
         public DateTime CreatedAt { get; set; }
     }
 
+    private static EntityChangeTracker BuildTracker(IOutbox outbox)
+    {
+        var publisher = new ChangePublisher();
+        publisher.RegisterOutbox(typeof(TestEntity), outbox);
+        return new EntityChangeTracker(publisher);
+    }
+
     [Test]
     public async Task SavingChangesAsync_DetectsAddedEntities()
     {
@@ -42,9 +49,7 @@ public class EntityChangeInterceptorTests
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var tracker = new EntityChangeTracker();
-        tracker.RegisterOutbox(typeof(TestEntity), outbox.Object);
-
+        var tracker = BuildTracker(outbox.Object);
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(TestEntity) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -68,9 +73,7 @@ public class EntityChangeInterceptorTests
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var tracker = new EntityChangeTracker();
-        tracker.RegisterOutbox(typeof(TestEntity), outbox.Object);
-
+        var tracker = BuildTracker(outbox.Object);
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(TestEntity) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -98,9 +101,7 @@ public class EntityChangeInterceptorTests
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var tracker = new EntityChangeTracker();
-        tracker.RegisterOutbox(typeof(TestEntity), outbox.Object);
-
+        var tracker = BuildTracker(outbox.Object);
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(TestEntity) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()

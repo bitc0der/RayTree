@@ -101,6 +101,12 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     /// <summary>Exposes the global options to <see cref="EntitySubscriberBuilder{TEntity}"/> for copying.</summary>
     internal SubscriberOptions GlobalOptions => _globalOptions;
 
+    internal void AddEntityApplicator(Action<ChangeSubscriber> applicator)
+    {
+        ThrowIfBuilt();
+        _entityApplicators.Add(applicator);
+    }
+
     // Explicit interface implementation so the IChangeSubscriberBuilder.Build() call
     // uses the parameterless overload without leaking the override parameters on the interface.
     ChangeSubscriber IChangeSubscriberBuilder.Build() => Build();
