@@ -95,6 +95,21 @@ EntityChangeTracker
 - **Kafka thread safety**: `KafkaConsumer` keeps a single background `Task.Run` thread that owns all `IConsumer<K,V>` operations. `Dispose()` cancels via `_disposeCts`, waits up to `2×PollTimeoutMs + 200 ms` for the poll task to exit, then frees the native handle.
 - **Integration tests use Testcontainers**: PostgreSQL, Kafka, and RabbitMQ tests require Docker. Mark test classes `[NonParallelizable]` when sharing a container. Use unique topic/queue names per test to avoid cross-test contamination.
 
+## Design Principles
+
+All code in this repository must respect the following principles. When reviewing or modifying code, check for violations before accepting a change.
+
+- **SRP** — every class has one reason to change. Publisher management, subscriber management, and change tracking are separate concerns; do not merge them into one class.
+- **OCP** — extend behaviour through new plugin implementations (`IOutbox`, `IQueuePublisher`, `IChangeSerializer`, etc.), not by modifying core classes.
+- **LSP** — plugin implementations must be fully substitutable. A custom `IOutbox` must honour the same contract (idempotency, ordering) as `InMemoryOutbox`.
+- **ISP** — keep interfaces narrow. `IQueuePublisher` and `IQueueConsumer` are separate even though `InMemoryQueue` implements both.
+- **DIP** — core classes depend on abstractions (`IOutbox`, `IQueuePublisher`, `IChangeSerializer`, …), never on concrete plugin types.
+- **KISS** — prefer the simplest solution that satisfies the requirement. Avoid speculative abstractions, configuration knobs, or indirection layers that have no current caller.
+- **DRY** — shared logic lives in one place. Serialization, compression, and deduplication are plugin responsibilities, not duplicated across publisher and subscriber.
+- **YAGNI** — do not add features, overloads, or extension points for hypothetical future requirements. Three similar lines are better than a premature abstraction.
+- **Constructor injection** — dependencies are declared in the constructor, never set via properties or internal methods after construction. Optional dependencies use nullable parameters (`ChangeSubscriber? subscriber = null`).
+- **Dead code** — unused fields, parameters, methods, and classes are removed immediately. A field that is injected but never read is a bug, not a harmless remnant.
+
 ## CI
 
 `.github/workflows/ci.yml` has three jobs: `build` (compile gate), `unit-tests` (10 projects, no Docker), `integration-tests` (matrix: PostgreSQL / RabbitMQ / Kafka). Jobs do not share filesystem state — each job independently restores and builds. The `build` job is a fast fail-early gate only.
