@@ -126,4 +126,4 @@ All code in this repository must respect the following principles. When reviewin
 
 ## CI
 
-`.github/workflows/ci.yml` has three jobs: `build` (compile gate), `unit-tests` (10 projects, no Docker), `integration-tests` (matrix: PostgreSQL / RabbitMQ / Kafka). Jobs do not share filesystem state — each job independently restores and builds. The `build` job is a fast fail-early gate only.
+`.github/workflows/ci.yml` has three job groups: `build` (compile gate, uploads compiled output as an artifact with 1-day retention), `unit-tests` (9-way parallel matrix, no Docker, downloads build artifact — no rebuild), `integration-tests` (3-way matrix: PostgreSQL / RabbitMQ / Kafka, also downloads build artifact). No job rebuilds the solution; all test jobs depend on the shared artifact from `build`.

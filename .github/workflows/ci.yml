@@ -34,15 +34,42 @@ jobs:
       - name: Build
         run: dotnet build RayTree.sln --no-restore -c Release
 
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          retention-days: 1
+          path: |
+            src/**/bin/Release
+            tests/**/bin/Release
+
   # ── Unit tests (no Docker) ─────────────────────────────────────────────────
-  # Note: GitHub Actions jobs do not share filesystem state, so each job must
-  # independently restore packages and build even though the 'build' job already
-  # compiled the solution.  The 'build' job serves as a fast fail-early gate for
-  # compilation errors; it does not produce shared artifacts consumed here.
   unit-tests:
-    name: Unit Tests
+    name: Unit / ${{ matrix.name }}
     needs: build
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Core
+            project: tests/RayTree.Core.Tests
+          - name: InMemory
+            project: tests/RayTree.Plugins.InMemory.Tests
+          - name: EntityFrameworkCore
+            project: tests/RayTree.EntityFrameworkCore.Tests
+          - name: Compressor.Brotli
+            project: tests/RayTree.Plugins.Compressors.Brotli.Tests
+          - name: Compressor.Gzip
+            project: tests/RayTree.Plugins.Compressors.Gzip.Tests
+          - name: Compressor.Lz4
+            project: tests/RayTree.Plugins.Compressors.Lz4.Tests
+          - name: Serializer.Json
+            project: tests/RayTree.Plugins.Serializers.Json.Tests
+          - name: Serializer.MessagePack
+            project: tests/RayTree.Plugins.Serializers.MessagePack.Tests
+          - name: Serializer.Protobuf
+            project: tests/RayTree.Plugins.Serializers.Protobuf.Tests
     steps:
       - uses: actions/checkout@v4
 
@@ -50,41 +77,23 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - uses: actions/cache@v4
+      - name: Download build output
+        uses: actions/download-artifact@v4
         with:
-          path: ${{ env.NUGET_PACKAGES }}
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
-          restore-keys: nuget-${{ runner.os }}-
-
-      - name: Restore & build
-        run: |
-          dotnet restore RayTree.sln
-          dotnet build RayTree.sln --no-restore -c Release
+          name: build-output
 
       - name: Test
         run: |
-          for project in \
-            tests/RayTree.Core.Tests \
-            tests/RayTree.Plugins.InMemory.Tests \
-            tests/RayTree.EntityFrameworkCore.Tests \
-            tests/RayTree.Plugins.Compressors.Brotli.Tests \
-            tests/RayTree.Plugins.Compressors.Gzip.Tests \
-            tests/RayTree.Plugins.Compressors.Lz4.Tests \
-            tests/RayTree.Plugins.Serializers.Json.Tests \
-            tests/RayTree.Plugins.Serializers.MessagePack.Tests \
-            tests/RayTree.Plugins.Serializers.Protobuf.Tests
-          do
-            dotnet test "$project" \
-              --no-build -c Release \
-              --logger "trx;LogFileName=results.trx" \
-              --results-directory "TestResults/$project"
-          done
+          dotnet test ${{ matrix.project }} \
+            --no-build -c Release \
+            --logger "trx;LogFileName=results.trx" \
+            --results-directory "TestResults/${{ matrix.project }}"
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unit-test-results
+          name: unit-test-results-${{ matrix.name }}
           path: TestResults/**/results.trx
 
   # ── Integration tests (Testcontainers / Docker) ────────────────────────────
@@ -93,16 +102,15 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false          # run all brokers even if one fails
+      fail-fast: false
       matrix:
         include:
           - name: PostgreSQL
-            projects: "tests/RayTree.Plugins.PostgreSQL.Tests"
+            project: tests/RayTree.Plugins.PostgreSQL.Tests
           - name: RabbitMQ
-            projects: "tests/RayTree.Plugins.RabbitMQ.Tests"
+            project: tests/RayTree.Plugins.RabbitMQ.Tests
           - name: Kafka
-            projects: "tests/RayTree.Plugins.Kafka.Tests"
-
+            project: tests/RayTree.Plugins.Kafka.Tests
     steps:
       - uses: actions/checkout@v4
 
@@ -110,25 +118,17 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - uses: actions/cache@v4
+      - name: Download build output
+        uses: actions/download-artifact@v4
         with:
-          path: ${{ env.NUGET_PACKAGES }}
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
-          restore-keys: nuget-${{ runner.os }}-
-
-      - name: Restore & build
-        run: |
-          dotnet restore RayTree.sln
-          dotnet build RayTree.sln --no-restore -c Release
+          name: build-output
 
       - name: Test
         run: |
-          for project in ${{ matrix.projects }}; do
-            dotnet test "$project" \
-              --no-build -c Release \
-              --logger "trx;LogFileName=results.trx" \
-              --results-directory "TestResults/$project"
-          done
+          dotnet test ${{ matrix.project }} \
+            --no-build -c Release \
+            --logger "trx;LogFileName=results.trx" \
+            --results-directory "TestResults/${{ matrix.project }}"
 
       - name: Upload results
         if: always()
