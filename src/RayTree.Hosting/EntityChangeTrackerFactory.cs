@@ -1,16 +1,9 @@
 ﻿using RayTree.Core.Tracking;
 
-namespace RayTree.Hosting.Publishing;
+namespace RayTree.Hosting;
 
 public class EntityChangeTrackerFactory
 {
-    private readonly IServiceProvider _sp;
-
-    public EntityChangeTrackerFactory(IServiceProvider sp)
-    {
-        _sp = sp ?? throw new ArgumentNullException(nameof(sp));
-    }
-
     public EntityChangeTracker Create(Action<IChangeTrackingBuilder>? configure = null)
     {
         var builder = new ChangeTrackingBuilder();

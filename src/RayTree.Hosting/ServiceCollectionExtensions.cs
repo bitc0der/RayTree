@@ -5,7 +5,7 @@ using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Tracking;
 
-namespace RayTree.Hosting.Publishing;
+namespace RayTree.Hosting;
 
 public static class ServiceCollectionExtensions
 {
