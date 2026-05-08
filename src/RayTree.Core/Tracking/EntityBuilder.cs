@@ -1,3 +1,4 @@
+using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
@@ -8,38 +9,38 @@ using RayTree.Core.Plugins.Serialization;
 
 namespace RayTree.Core.Tracking;
 
-internal sealed class EntityBuilder<TEntity>(ChangeTrackingBuilder parent, ChangeSubscriberBuilder subscriberBuilder)
+internal sealed class EntityBuilder<TEntity>(ChangePublisherBuilder publisherBuilder, ChangeSubscriberBuilder subscriberBuilder)
     : IEntityBuilder<TEntity>
     where TEntity : class
 {
+    private readonly EntityPublisherBuilder<TEntity> _pubBuilder = new(publisherBuilder);
     private readonly EntitySubscriberBuilder<TEntity> _subBuilder = new(subscriberBuilder);
-    private readonly Type _entityType = typeof(TEntity);
 
     public IEntityBuilder<TEntity> UseRepository(IRepository repository)
     {
         ArgumentNullException.ThrowIfNull(repository);
-        parent.AddRepositoryOverride(_entityType, repository);
+        _pubBuilder.UseRepository(repository);
         return this;
     }
 
     public IEntityBuilder<TEntity> UseOutbox(IOutbox outbox)
     {
         ArgumentNullException.ThrowIfNull(outbox);
-        parent.AddOutboxOverride(_entityType, outbox);
+        _pubBuilder.UseOutbox(outbox);
         return this;
     }
 
     public IEntityBuilder<TEntity> UseQueue(IQueuePublisher queue)
     {
         ArgumentNullException.ThrowIfNull(queue);
-        parent.AddQueueOverride(_entityType, queue);
+        _pubBuilder.UseQueue(queue);
         return this;
     }
 
     public IEntityBuilder<TEntity> UseSerializer(IChangeSerializer serializer)
     {
         ArgumentNullException.ThrowIfNull(serializer);
-        parent.AddSerializerOverride(_entityType, serializer);
+        _pubBuilder.UseSerializer(serializer);
         _subBuilder.UseSerializer(serializer);
         return this;
     }
@@ -47,7 +48,7 @@ internal sealed class EntityBuilder<TEntity>(ChangeTrackingBuilder parent, Chang
     public IEntityBuilder<TEntity> UseCompressor(IChangeCompressor compressor)
     {
         ArgumentNullException.ThrowIfNull(compressor);
-        parent.AddCompressorOverride(_entityType, compressor);
+        _pubBuilder.UseCompressor(compressor);
         _subBuilder.UseCompressor(compressor);
         return this;
     }
