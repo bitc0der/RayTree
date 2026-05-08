@@ -23,8 +23,11 @@ public class ChangeTrackingHostedService : IHostedService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         var ct = _cts.Token;
-        foreach (var (_, consumer) in _tracker.Subscriber!.Queues)
-            _consumeTasks.Add(Task.Run(() => _tracker.ConsumeFromConsumerAsync(consumer, ct), ct));
+        if (_tracker.Subscriber is { } subscriber)
+        {
+            foreach (var (_, consumer) in subscriber.Queues)
+                _consumeTasks.Add(Task.Run(() => _tracker.ConsumeFromConsumerAsync(consumer, ct), ct));
+        }
 
         return Task.CompletedTask;
     }
