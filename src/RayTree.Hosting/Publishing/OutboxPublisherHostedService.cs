@@ -1,31 +1,30 @@
 using Microsoft.Extensions.Hosting;
 using RayTree.Core.Distribution;
-using RayTree.Core.Tracking;
 
 namespace RayTree.Hosting.Publishing;
 
 public class OutboxPublisherHostedService : IHostedService
 {
-    private readonly EntityChangeTracker _tracker;
+    private readonly ChangePublisher _publisher;
     private readonly OutboxPublisherOptions _options;
     private readonly OutboxCleanupService? _cleanupService;
     private readonly List<OutboxPublisherService> _publisherServices = new();
 
     public OutboxPublisherHostedService(
-        EntityChangeTracker tracker,
+        ChangePublisher publisher,
         OutboxPublisherOptions options,
         OutboxCleanupService? cleanupService = null)
     {
-        _tracker = tracker;
+        _publisher = publisher;
         _options = options;
         _cleanupService = cleanupService;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        foreach (var entityType in _tracker.GetOutboxes().Keys)
+        foreach (var entityType in _publisher.GetOutboxes().Keys)
         {
-            var service = new OutboxPublisherService(_tracker, entityType, _options);
+            var service = new OutboxPublisherService(_publisher, entityType, _options);
             _publisherServices.Add(service);
             await service.StartAsync(cancellationToken);
         }

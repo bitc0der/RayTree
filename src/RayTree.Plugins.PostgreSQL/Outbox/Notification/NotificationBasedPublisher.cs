@@ -1,18 +1,18 @@
 using System.Reflection;
 using System.Text.Json;
 using Npgsql;
+using RayTree.Core.Distribution;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
-using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.PostgreSQL.Outbox.Notification;
 
 public class NotificationBasedPublisher : IDisposable
 {
-    private readonly EntityChangeTracker _tracker;
+    private readonly ChangePublisher _publisher;
     private readonly NotificationBasedPublisherOptions _options;
     private readonly CancellationTokenSource _cts = new();
     private NpgsqlConnection? _connection;
@@ -28,9 +28,9 @@ public class NotificationBasedPublisher : IDisposable
     private static readonly MethodInfo SerializeMethod = typeof(NotificationBasedPublisher)
         .GetMethod(nameof(SerializeCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    public NotificationBasedPublisher(EntityChangeTracker tracker, NotificationBasedPublisherOptions options)
+    public NotificationBasedPublisher(ChangePublisher publisher, NotificationBasedPublisherOptions options)
     {
-        _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
+        _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
         _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
@@ -119,10 +119,10 @@ public class NotificationBasedPublisher : IDisposable
                 var entityType = Type.GetType(payload.EntityType);
                 if (entityType == null) return;
 
-                var outbox     = _tracker.GetOutbox(entityType);
-                var publisher  = _tracker.GetPublisher(entityType);
-                var serializer = _tracker.GetSerializer(entityType);
-                var compressor = _tracker.GetCompressor(entityType);
+                var outbox     = _publisher.GetOutbox(entityType);
+                var publisher  = _publisher.GetPublisher(entityType);
+                var serializer = _publisher.GetSerializer(entityType);
+                var compressor = _publisher.GetCompressor(entityType);
 
                 var change = await GetByIdAsync(outbox, entityType, payload.Id, _cts.Token);
                 if (change == null || change.Published) return;
@@ -165,13 +165,13 @@ public class NotificationBasedPublisher : IDisposable
 
     private async Task ProcessUnpublishedChangesAsync(CancellationToken cancellationToken)
     {
-        foreach (var (entityType, outbox) in _tracker.GetOutboxes())
+        foreach (var (entityType, outbox) in _publisher.GetOutboxes())
         {
             if (cancellationToken.IsCancellationRequested) break;
 
-            var publisher  = _tracker.GetPublisher(entityType);
-            var serializer = _tracker.GetSerializer(entityType);
-            var compressor = _tracker.GetCompressor(entityType);
+            var publisher  = _publisher.GetPublisher(entityType);
+            var serializer = _publisher.GetSerializer(entityType);
+            var compressor = _publisher.GetCompressor(entityType);
             var changes    = await GetUnpublishedAsync(outbox, entityType, 100, cancellationToken);
 
             foreach (var change in changes)

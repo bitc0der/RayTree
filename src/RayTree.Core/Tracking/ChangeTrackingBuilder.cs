@@ -123,8 +123,8 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
 
     private EntityChangeTracker BuildInternal()
     {
-        var tracker = new EntityChangeTracker();
-        _publisherOptionsConfigure?.Invoke(tracker.PublisherOptions);
+        var publisher = new ChangePublisher();
+        _publisherOptionsConfigure?.Invoke(publisher.Options);
 
         var entityTypes = _outboxOverrides.Keys
             .Concat(_queueOverrides.Keys)
@@ -152,15 +152,16 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
             var repository = _repositoryOverrides.GetValueOrDefault(entityType) ??
                              _repositoryFactory?.Invoke(entityType);
 
-            tracker.RegisterOutbox(entityType, outbox);
-            tracker.RegisterPublisher(entityType, queue);
-            tracker.RegisterSerializer(entityType, serializer);
-            tracker.RegisterCompressor(entityType, compressor);
+            publisher.RegisterOutbox(entityType, outbox);
+            publisher.RegisterPublisher(entityType, queue);
+            publisher.RegisterSerializer(entityType, serializer);
+            publisher.RegisterCompressor(entityType, compressor);
 
             if (repository != null)
-                tracker.RegisterRepository(entityType, repository);
+                publisher.RegisterRepository(entityType, repository);
         }
 
+        var tracker = new EntityChangeTracker(publisher);
         _subscriberBuilder.Apply(tracker);
 
         return tracker;

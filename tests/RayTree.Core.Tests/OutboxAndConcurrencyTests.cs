@@ -59,9 +59,9 @@ public class OutboxPublisherServiceTests
     [Test]
     public async Task StopAsync_Completes_WithinTimeout()
     {
-        var tracker = new EntityChangeTracker();
+        var publisher = new ChangePublisher();
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromSeconds(1) };
-        var service = new OutboxPublisherService(tracker, typeof(DummyEntity), options);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options);
 
         await service.StartAsync();
 
@@ -73,9 +73,9 @@ public class OutboxPublisherServiceTests
     [Test]
     public void Dispose_DoesNotThrow()
     {
-        var tracker = new EntityChangeTracker();
+        var publisher = new ChangePublisher();
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromHours(1) };
-        var service = new OutboxPublisherService(tracker, typeof(DummyEntity), options);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options);
 
         Assert.DoesNotThrow(() => service.Dispose());
     }

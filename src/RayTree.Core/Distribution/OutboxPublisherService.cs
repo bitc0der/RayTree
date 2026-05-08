@@ -5,13 +5,12 @@ using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
-using RayTree.Core.Tracking;
 
 namespace RayTree.Core.Distribution;
 
 public class OutboxPublisherService : IDisposable
 {
-    private readonly EntityChangeTracker _tracker;
+    private readonly ChangePublisher _publisher;
     private readonly Type _entityType;
     private readonly OutboxPublisherOptions _options;
     private readonly CancellationTokenSource _cts = new();
@@ -24,9 +23,9 @@ public class OutboxPublisherService : IDisposable
     private static readonly MethodInfo SerializeMethod = typeof(OutboxPublisherService)
         .GetMethod(nameof(SerializeCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    public OutboxPublisherService(EntityChangeTracker tracker, Type entityType, OutboxPublisherOptions options)
+    public OutboxPublisherService(ChangePublisher publisher, Type entityType, OutboxPublisherOptions options)
     {
-        _tracker    = tracker    ?? throw new ArgumentNullException(nameof(tracker));
+        _publisher  = publisher  ?? throw new ArgumentNullException(nameof(publisher));
         _entityType = entityType ?? throw new ArgumentNullException(nameof(entityType));
         _options    = options    ?? throw new ArgumentNullException(nameof(options));
     }
@@ -68,10 +67,10 @@ public class OutboxPublisherService : IDisposable
 
     private async Task ProcessBatchAsync(CancellationToken cancellationToken)
     {
-        var outbox      = _tracker.GetOutbox(_entityType);
-        var publisher   = _tracker.GetPublisher(_entityType);
-        var serializer  = _tracker.GetSerializer(_entityType);
-        var compressor  = _tracker.GetCompressor(_entityType);
+        var outbox      = _publisher.GetOutbox(_entityType);
+        var publisher   = _publisher.GetPublisher(_entityType);
+        var serializer  = _publisher.GetSerializer(_entityType);
+        var compressor  = _publisher.GetCompressor(_entityType);
 
         var changes = await GetUnpublishedAsync(outbox, _options.BatchSize, cancellationToken);
 
