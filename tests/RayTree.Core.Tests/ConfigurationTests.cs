@@ -72,7 +72,7 @@ public class ChangeTrackingBuilderTests
     public void ForEntity_Callback_ReceivesEntityBuilder()
     {
         var builder = new ChangeTrackingBuilder();
-        IEntityBuilder? capturedEntityBuilder = null;
+        IEntityBuilder<object>? capturedEntityBuilder = null;
 
         builder.ForEntity<object>(e =>
         {
@@ -98,7 +98,7 @@ public class ChangeTrackingBuilderTests
                 .UseQueue(new InMemoryQueue())
                 .UseSerializer(new JsonSerializerPlugin())
                 .UseCompressor(new NoOpCompressorPlugin()))
-            .ForEntity<int>(e => e
+            .ForEntity<Exception>(e => e
                 .UseOutbox(new InMemoryOutbox())
                 .UseQueue(new InMemoryQueue())
                 .UseSerializer(new JsonSerializerPlugin())

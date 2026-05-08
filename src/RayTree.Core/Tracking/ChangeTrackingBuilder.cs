@@ -1,5 +1,7 @@
 using RayTree.Core.Distribution;
+using RayTree.Core.Handling;
 using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Repository;
@@ -23,6 +25,8 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
     private Func<Type, IChangeCompressor>? _compressorFactory;
     private Func<Type, IRepository>? _repositoryFactory;
 
+    private readonly ChangeSubscriberBuilder _subscriberBuilder = new();
+
     public IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory)
         where T : IOutbox
     {
@@ -40,14 +44,18 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
     public IChangeTrackingBuilder UseSerializer<T>(Func<Type, IChangeSerializer> factory)
         where T : IChangeSerializer
     {
-        _serializerFactory = factory ?? throw new ArgumentNullException(nameof(factory));
+        ArgumentNullException.ThrowIfNull(factory);
+        _serializerFactory = factory;
+        _subscriberBuilder.UseSerializer(factory(typeof(object)));
         return this;
     }
 
     public IChangeTrackingBuilder UseCompressor<T>(Func<Type, IChangeCompressor> factory)
         where T : IChangeCompressor
     {
-        _compressorFactory = factory ?? throw new ArgumentNullException(nameof(factory));
+        ArgumentNullException.ThrowIfNull(factory);
+        _compressorFactory = factory;
+        _subscriberBuilder.UseCompressor(factory(typeof(object)));
         return this;
     }
 
@@ -64,10 +72,25 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
         return this;
     }
 
-    public IChangeTrackingBuilder ForEntity<TEntity>(Action<IEntityBuilder> configure)
+    public IChangeTrackingBuilder UseSubscriberOptions(Action<SubscriberOptions> configure)
+    {
+        _subscriberBuilder.UseOptions(configure);
+        return this;
+    }
+
+    public IChangeTrackingBuilder UseDeduplicationStore(IDeduplicationStore store)
+    {
+        _subscriberBuilder.UseDeduplicationStore(store);
+        return this;
+    }
+
+    public IChangeTrackingBuilder ForEntity<TEntity>(Action<IEntityBuilder<TEntity>> configure)
+        where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(configure);
-        configure(new EntityBuilder(this, typeof(TEntity)));
+        var entityBuilder = new EntityBuilder<TEntity>(this, _subscriberBuilder);
+        configure(entityBuilder);
+        entityBuilder.RegisterSubscriberApplicator();
         return this;
     }
 
@@ -97,6 +120,11 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
         await tracker.InitializeAsync(cancellationToken);
         return tracker;
     }
+
+    public ChangeSubscriber BuildSubscriber(
+        IDeduplicationStore? dedupStoreOverride = null,
+        SubscriberOptions? optionsOverride = null)
+        => _subscriberBuilder.Build(dedupStoreOverride, optionsOverride);
 
     private EntityChangeTracker BuildInternal()
     {
