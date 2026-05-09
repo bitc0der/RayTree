@@ -1,4 +1,6 @@
 using System.Reflection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 
@@ -13,6 +15,7 @@ public class OutboxPublisherService : IDisposable
     private readonly ChangePublisher _publisher;
     private readonly Type _entityType;
     private readonly OutboxPublisherOptions _options;
+    private readonly ILogger<OutboxPublisherService> _logger;
     private readonly CancellationTokenSource _cts = new();
     private Task? _pollingTask;
     private volatile bool _stopping;
@@ -23,11 +26,16 @@ public class OutboxPublisherService : IDisposable
     private static readonly MethodInfo SerializeMethod = typeof(OutboxPublisherService)
         .GetMethod(nameof(SerializeCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    public OutboxPublisherService(ChangePublisher publisher, Type entityType, OutboxPublisherOptions options)
+    public OutboxPublisherService(
+        ChangePublisher publisher,
+        Type entityType,
+        OutboxPublisherOptions options,
+        ILoggerFactory? loggerFactory = null)
     {
         _publisher  = publisher  ?? throw new ArgumentNullException(nameof(publisher));
         _entityType = entityType ?? throw new ArgumentNullException(nameof(entityType));
         _options    = options    ?? throw new ArgumentNullException(nameof(options));
+        _logger     = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<OutboxPublisherService>();
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -55,7 +63,10 @@ public class OutboxPublisherService : IDisposable
                     await ProcessBatchAsync(cancellationToken);
             }
             catch (OperationCanceledException) { break; }
-            catch (Exception) { /* swallow and retry after interval */ }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing outbox batch for {EntityType}", _entityType.Name);
+            }
 
             try
             {
@@ -98,10 +109,20 @@ public class OutboxPublisherService : IDisposable
                 await outbox.MarkPublishedAsync(change.Id, ct);
                 return;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 retries++;
-                if (retries >= _options.MaxRetryCount) throw;
+                if (retries >= _options.MaxRetryCount)
+                {
+                    _logger.LogError(ex,
+                        "Failed to publish change {ChangeId} for {EntityType} after {Retries} attempt(s)",
+                        change.Id, _entityType.Name, retries);
+                    throw;
+                }
+
+                _logger.LogWarning(ex,
+                    "Publish attempt {Attempt} of {MaxRetries} failed for {EntityType}, retrying",
+                    retries, _options.MaxRetryCount, _entityType.Name);
                 await Task.Delay(_options.RetryDelay * retries, ct);
             }
         }

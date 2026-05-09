@@ -1,4 +1,6 @@
 using System.Reflection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
@@ -26,6 +28,7 @@ public class ChangeSubscriber : IDisposable
     private readonly Dictionary<Type, SubscriberOptions> _entityOptions = new();
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
+    private readonly ILogger<ChangeSubscriber> _logger;
     private readonly CancellationTokenSource _cts = new();
 
     // Reflection helper: DeserializeCoreAsync<TEntity>(serializer, stream, ct) → Task<EntityChange>
@@ -34,10 +37,14 @@ public class ChangeSubscriber : IDisposable
             nameof(DeserializeCoreAsync),
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    public ChangeSubscriber(IDeduplicationStore? dedupStore = null, SubscriberOptions? options = null)
+    public ChangeSubscriber(
+        IDeduplicationStore? dedupStore = null,
+        SubscriberOptions? options = null,
+        ILogger<ChangeSubscriber>? logger = null)
     {
         _dedupStore = dedupStore ?? new InMemoryDeduplicationStore();
         _options    = options   ?? new SubscriberOptions();
+        _logger     = logger    ?? NullLogger<ChangeSubscriber>.Instance;
     }
 
     public IReadOnlyDictionary<Type, IQueueConsumer> Queues => _queues;
@@ -133,7 +140,10 @@ public class ChangeSubscriber : IDisposable
     {
         var entityType = ResolveType(envelope.EntityType);
         if (entityType == null)
+        {
+            _logger.LogWarning("Unknown entity type '{EntityType}' in message envelope, skipping", envelope.EntityType);
             return;
+        }
 
         if (!await _dedupStore.TryMarkProcessedAsync(envelope.CorrelationId.ToString(), cancellationToken))
             return;
@@ -233,15 +243,25 @@ public class ChangeSubscriber : IDisposable
                 await registration.Handler(change, ct);
                 return;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 if (attempt >= options.MaxRetries)
                 {
-                    if (options.SkipOnFailure) return;
+                    if (options.SkipOnFailure)
+                    {
+                        _logger.LogError(ex,
+                            "Handler for {EntityType} failed after {Attempts} attempt(s), skipping message",
+                            registration.EntityType.Name, attempt + 1);
+                        return;
+                    }
+
                     throw;
                 }
 
                 attempt++;
+                _logger.LogWarning(ex,
+                    "Handler for {EntityType} failed on attempt {Attempt}, retrying",
+                    registration.EntityType.Name, attempt);
                 await Task.Delay(options.RetryDelay * attempt, ct);
             }
         }

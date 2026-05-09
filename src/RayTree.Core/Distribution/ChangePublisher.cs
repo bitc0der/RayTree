@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
@@ -20,8 +21,14 @@ public sealed class ChangePublisher : IDisposable
     private readonly ConcurrentDictionary<Type, IChangeCompressor> _compressors = new();
     private readonly ConcurrentDictionary<Type, IRepository> _repositories = new();
     private readonly List<OutboxPublisherService> _publisherServices = new();
+    private readonly ILoggerFactory? _loggerFactory;
 
     public OutboxPublisherOptions Options { get; } = new();
+
+    public ChangePublisher(ILoggerFactory? loggerFactory = null)
+    {
+        _loggerFactory = loggerFactory;
+    }
 
     public void RegisterOutbox(Type entityType, IOutbox outbox) => _outboxes[entityType] = outbox;
     public void RegisterPublisher(Type entityType, IQueuePublisher publisher) => _publishers[entityType] = publisher;
@@ -64,7 +71,7 @@ public sealed class ChangePublisher : IDisposable
 
         foreach (var entityType in _publishers.Keys)
         {
-            var service = new OutboxPublisherService(this, entityType, Options);
+            var service = new OutboxPublisherService(this, entityType, Options, _loggerFactory);
             _publisherServices.Add(service);
             await service.StartAsync(cancellationToken);
         }

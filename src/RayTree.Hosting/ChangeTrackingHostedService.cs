@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Hosting;
@@ -12,12 +14,16 @@ namespace RayTree.Hosting;
 public class ChangeTrackingHostedService : IHostedService
 {
     private readonly EntityChangeTracker _tracker;
+    private readonly ILogger<ChangeTrackingHostedService> _logger;
     private readonly CancellationTokenSource _cts = new();
     private readonly List<Task> _consumeTasks = new();
 
-    public ChangeTrackingHostedService(EntityChangeTracker tracker)
+    public ChangeTrackingHostedService(
+        EntityChangeTracker tracker,
+        ILogger<ChangeTrackingHostedService>? logger = null)
     {
         _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
+        _logger  = logger  ?? NullLogger<ChangeTrackingHostedService>.Instance;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -25,8 +31,17 @@ public class ChangeTrackingHostedService : IHostedService
         var ct = _cts.Token;
         if (_tracker.Subscriber is { } subscriber)
         {
-            foreach (var (_, consumer) in subscriber.Queues)
+            var queues = subscriber.Queues;
+            var total  = queues.Count;
+            var index  = 0;
+            foreach (var (_, consumer) in queues)
+            {
+                index++;
+                _logger.LogInformation(
+                    "Starting change tracking consumer loop {Index} of {Total}",
+                    index, total);
                 _consumeTasks.Add(Task.Run(() => _tracker.ConsumeFromConsumerAsync(consumer, ct), ct));
+            }
         }
 
         return Task.CompletedTask;
@@ -44,5 +59,7 @@ public class ChangeTrackingHostedService : IHostedService
         {
             // expected on graceful shutdown
         }
+
+        _logger.LogInformation("Change tracking hosted service stopped");
     }
 }

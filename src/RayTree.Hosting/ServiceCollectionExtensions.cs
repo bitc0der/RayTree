@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
@@ -18,7 +19,12 @@ public static class ServiceCollectionExtensions
         configure?.Invoke(builder);
 
         services.AddSingleton<EntityChangeTrackerFactory>();
-        services.AddSingleton<EntityChangeTracker>(_ => builder.Build());
+        services.AddSingleton<EntityChangeTracker>(sp =>
+        {
+            if (sp.GetService<ILoggerFactory>() is { } lf)
+                builder.UseLoggerFactory(lf);
+            return builder.Build();
+        });
         services.AddSingleton<IEntityChangeTracker>(sp => sp.GetRequiredService<EntityChangeTracker>());
 
         if (configuration != null)
