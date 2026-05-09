@@ -452,11 +452,18 @@ public class AnnotatedEntity
     [Required]
     public string RequiredField { get; set; } = string.Empty;
 
+    [Required]
+    public int? RequiredNullableInt { get; set; }
+
     [MaxLength(200)]
     public string? Bio { get; set; }
 
     [StringLength(50)]
     public string? Code { get; set; }
+
+    [MaxLength(100)]
+    [StringLength(20)]
+    public string? BothLengths { get; set; }
 
     [Column(TypeName = "JSONB")]
     public string? Metadata { get; set; }
@@ -528,12 +535,29 @@ public class EntityColumnMapperTests
     }
 
     [Test]
+    public void GetColumns_RequiredOnNullableValueType_SetsNotNullable()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(AnnotatedEntity));
+        var col = columns.Single(c => c.Property.Name == "RequiredNullableInt");
+        Assert.That(col.IsNullable, Is.False);
+    }
+
+    [Test]
+    public void GetColumns_MaxLengthWinsOverStringLength_WhenBothPresent()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(AnnotatedEntity));
+        var col = columns.Single(c => c.Property.Name == "BothLengths");
+        Assert.That(col.ColumnType, Is.EqualTo("VARCHAR(100)"));
+    }
+
+    [Test]
     public void GetTableName_WithTableAttribute_ReturnsAttributeName()
         => Assert.That(EntityColumnMapper.GetTableName(typeof(AnnotatedEntity)), Is.EqualTo("annotated_entity"));
 
     [Test]
     public void GetTableName_WithoutTableAttribute_ReturnsSnakeCaseName()
         => Assert.That(EntityColumnMapper.GetTableName(typeof(TestEntity)), Is.EqualTo("test_entity"));
+
 }
 
 public class DefaultSourceTableNameWithAttributeTests

@@ -23,11 +23,12 @@ public static class EntityColumnMapper
             if (prop.IsDefined(typeof(NotMappedAttribute), inherit: true))
                 continue;
 
+            var columnAttr = prop.GetCustomAttribute<ColumnAttribute>(inherit: true);
             var underlyingType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
             result.Add(new PropertyColumn(
                 prop,
-                ResolveColumnName(prop),
-                ResolveColumnType(prop, underlyingType),
+                ResolveColumnName(prop, columnAttr),
+                ResolveColumnType(prop, columnAttr, underlyingType),
                 ResolveNullability(prop)));
         }
 
@@ -35,10 +36,7 @@ public static class EntityColumnMapper
     }
 
     public static string GetTableName(Type entityType)
-    {
-        var attr = entityType.GetCustomAttribute<TableAttribute>();
-        return attr?.Name ?? ToSnakeCase(entityType.Name);
-    }
+        => entityType.GetCustomAttribute<TableAttribute>()?.Name ?? ToSnakeCase(entityType.Name);
 
     public static string ToSnakeCase(string name)
         => Regex.Replace(name, "(?<!^)([A-Z])", "_$1").ToLowerInvariant();
@@ -57,23 +55,21 @@ public static class EntityColumnMapper
         _ => "TEXT"
     };
 
-    private static string ResolveColumnName(PropertyInfo prop)
+    private static string ResolveColumnName(PropertyInfo prop, ColumnAttribute? columnAttr)
     {
-        var attr = prop.GetCustomAttribute<ColumnAttribute>();
-        var suffix = attr?.Name is { Length: > 0 } name ? name : ToSnakeCase(prop.Name);
+        var suffix = columnAttr?.Name is { Length: > 0 } name ? name : ToSnakeCase(prop.Name);
         return "state_" + suffix;
     }
 
-    private static string ResolveColumnType(PropertyInfo prop, Type underlyingType)
+    private static string ResolveColumnType(PropertyInfo prop, ColumnAttribute? columnAttr, Type underlyingType)
     {
-        var attr = prop.GetCustomAttribute<ColumnAttribute>();
-        if (attr?.TypeName is { Length: > 0 } typeName)
+        if (columnAttr?.TypeName is { Length: > 0 } typeName)
             return typeName;
 
         if (underlyingType == typeof(string))
         {
-            var maxLength = prop.GetCustomAttribute<MaxLengthAttribute>()?.Length
-                            ?? prop.GetCustomAttribute<StringLengthAttribute>()?.MaximumLength;
+            var maxLength = prop.GetCustomAttribute<MaxLengthAttribute>(inherit: true)?.Length
+                            ?? prop.GetCustomAttribute<StringLengthAttribute>(inherit: true)?.MaximumLength;
             if (maxLength > 0)
                 return $"VARCHAR({maxLength})";
         }

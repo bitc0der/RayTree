@@ -165,7 +165,7 @@ public class Order
     public int Id { get; set; }
 
     [NotMapped]
-    public string DisplayLabel => $"#{Id}";   // computed — not persisted
+    public string? CachedSummary { get; set; }   // populated in-process, not persisted
 }
 ```
 
@@ -189,7 +189,7 @@ public class Order
     public string? LineItemsJson { get; set; }
 
     [NotMapped]
-    public string DisplayLabel => $"Order #{Id}";
+    public string? CachedSummary { get; set; }
 }
 ```
 
@@ -201,7 +201,7 @@ Generated outbox columns (alongside the fixed metadata columns):
 | `CustomerEmail` | `state_customer_email` | `VARCHAR(200)` | NO |
 | `Total` | `state_total` | `NUMERIC(18,4)` | NO |
 | `LineItemsJson` | `state_line_items_json` | `JSONB` | YES |
-| `DisplayLabel` | — | — | excluded |
+| `CachedSummary` | — | — | excluded |
 
 ## In-Memory Mode (Testing)
 
