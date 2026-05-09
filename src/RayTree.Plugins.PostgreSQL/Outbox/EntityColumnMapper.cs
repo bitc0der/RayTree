@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Reflection;
 using System.Text.RegularExpressions;
 
@@ -18,13 +20,24 @@ public static class EntityColumnMapper
         {
             if (!prop.CanRead || !prop.CanWrite)
                 continue;
-            var isNullable = !prop.PropertyType.IsValueType || Nullable.GetUnderlyingType(prop.PropertyType) != null;
+            if (prop.IsDefined(typeof(NotMappedAttribute), inherit: true))
+                continue;
+
             var underlyingType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-            result.Add(new PropertyColumn(prop, "state_" + ToSnakeCase(prop.Name), ToPostgresType(underlyingType),
-                isNullable));
+            result.Add(new PropertyColumn(
+                prop,
+                ResolveColumnName(prop),
+                ResolveColumnType(prop, underlyingType),
+                ResolveNullability(prop)));
         }
 
         return result;
+    }
+
+    public static string GetTableName(Type entityType)
+    {
+        var attr = entityType.GetCustomAttribute<TableAttribute>();
+        return attr?.Name ?? ToSnakeCase(entityType.Name);
     }
 
     public static string ToSnakeCase(string name)
@@ -43,4 +56,35 @@ public static class EntityColumnMapper
         _ when type == typeof(DateTime) || type == typeof(DateTimeOffset) => "TIMESTAMPTZ",
         _ => "TEXT"
     };
+
+    private static string ResolveColumnName(PropertyInfo prop)
+    {
+        var attr = prop.GetCustomAttribute<ColumnAttribute>();
+        var suffix = attr?.Name is { Length: > 0 } name ? name : ToSnakeCase(prop.Name);
+        return "state_" + suffix;
+    }
+
+    private static string ResolveColumnType(PropertyInfo prop, Type underlyingType)
+    {
+        var attr = prop.GetCustomAttribute<ColumnAttribute>();
+        if (attr?.TypeName is { Length: > 0 } typeName)
+            return typeName;
+
+        if (underlyingType == typeof(string))
+        {
+            var maxLength = prop.GetCustomAttribute<MaxLengthAttribute>()?.Length
+                            ?? prop.GetCustomAttribute<StringLengthAttribute>()?.MaximumLength;
+            if (maxLength > 0)
+                return $"VARCHAR({maxLength})";
+        }
+
+        return ToPostgresType(underlyingType);
+    }
+
+    private static bool ResolveNullability(PropertyInfo prop)
+    {
+        if (prop.IsDefined(typeof(RequiredAttribute), inherit: true))
+            return false;
+        return !prop.PropertyType.IsValueType || Nullable.GetUnderlyingType(prop.PropertyType) != null;
+    }
 }

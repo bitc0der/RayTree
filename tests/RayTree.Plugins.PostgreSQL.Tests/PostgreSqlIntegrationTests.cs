@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Npgsql;
 using RayTree.Core.Models;
@@ -434,4 +435,125 @@ public class TestUser
 
     [Column("updated_at")]
     public DateTime? UpdatedAt { get; set; }
+}
+
+[Table("annotated_entity")]
+public class AnnotatedEntity
+{
+    [Column("custom_id")]
+    public int Id { get; set; }
+
+    [Column("full_name")]
+    public string? Name { get; set; }
+
+    [NotMapped]
+    public string? Ignored { get; set; }
+
+    [Required]
+    public string RequiredField { get; set; } = string.Empty;
+
+    [MaxLength(200)]
+    public string? Bio { get; set; }
+
+    [StringLength(50)]
+    public string? Code { get; set; }
+
+    [Column(TypeName = "JSONB")]
+    public string? Metadata { get; set; }
+}
+
+public class EntityColumnMapperTests
+{
+    [Test]
+    public void GetColumns_SkipsNotMappedProperty()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(AnnotatedEntity));
+        Assert.That(columns.Select(c => c.Property.Name), Does.Not.Contain("Ignored"));
+    }
+
+    [Test]
+    public void GetColumns_WithColumnName_UsesPrefixedAttributeName()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(AnnotatedEntity));
+        var col = columns.Single(c => c.Property.Name == "Id");
+        Assert.That(col.ColumnName, Is.EqualTo("state_custom_id"));
+    }
+
+    [Test]
+    public void GetColumns_WithColumnName_AffectsOnlySuffix()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(AnnotatedEntity));
+        var col = columns.Single(c => c.Property.Name == "Name");
+        Assert.That(col.ColumnName, Is.EqualTo("state_full_name"));
+    }
+
+    [Test]
+    public void GetColumns_WithoutColumnAttribute_UsesPrefixedSnakeCase()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(TestEntity));
+        var col = columns.Single(c => c.Property.Name == "Id");
+        Assert.That(col.ColumnName, Is.EqualTo("state_id"));
+    }
+
+    [Test]
+    public void GetColumns_RequiredOnReferenceType_SetsNotNullable()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(AnnotatedEntity));
+        var col = columns.Single(c => c.Property.Name == "RequiredField");
+        Assert.That(col.IsNullable, Is.False);
+    }
+
+    [Test]
+    public void GetColumns_MaxLengthOnString_EmitsVarchar()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(AnnotatedEntity));
+        var col = columns.Single(c => c.Property.Name == "Bio");
+        Assert.That(col.ColumnType, Is.EqualTo("VARCHAR(200)"));
+    }
+
+    [Test]
+    public void GetColumns_StringLengthOnString_EmitsVarchar()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(AnnotatedEntity));
+        var col = columns.Single(c => c.Property.Name == "Code");
+        Assert.That(col.ColumnType, Is.EqualTo("VARCHAR(50)"));
+    }
+
+    [Test]
+    public void GetColumns_ColumnTypeName_OverridesAutoMapping()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(AnnotatedEntity));
+        var col = columns.Single(c => c.Property.Name == "Metadata");
+        Assert.That(col.ColumnType, Is.EqualTo("JSONB"));
+    }
+
+    [Test]
+    public void GetTableName_WithTableAttribute_ReturnsAttributeName()
+        => Assert.That(EntityColumnMapper.GetTableName(typeof(AnnotatedEntity)), Is.EqualTo("annotated_entity"));
+
+    [Test]
+    public void GetTableName_WithoutTableAttribute_ReturnsSnakeCaseName()
+        => Assert.That(EntityColumnMapper.GetTableName(typeof(TestEntity)), Is.EqualTo("test_entity"));
+}
+
+public class DefaultSourceTableNameWithAttributeTests
+{
+    [Test]
+    public void Constructor_WithTableAttribute_DerivesNameFromAttribute()
+    {
+        var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
+        _ = new PostgreSqlRepository<AnnotatedEntity>(options);
+        Assert.That(options.TableName, Is.EqualTo("annotated_entity"));
+    }
+}
+
+public class DefaultTableNameWithAttributeTests
+{
+    [Test]
+    public void Constructor_WithTableAttribute_DerivesOutboxNameFromAttribute()
+    {
+        var options = new PostgreSqlOutboxOptions { ConnectionString = "Host=localhost" };
+        _ = new PostgreSqlOutbox<AnnotatedEntity>(options);
+        Assert.That(options.OutboxTableName, Is.EqualTo("annotated_entity_outbox"));
+    }
 }

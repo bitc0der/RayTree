@@ -13,7 +13,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     public PostgreSqlRepository(PostgreSqlRepositoryOptions options)
     {
         if (string.IsNullOrWhiteSpace(options.TableName))
-            options.TableName = EntityColumnMapper.ToSnakeCase(typeof(TEntity).Name);
+            options.TableName = EntityColumnMapper.GetTableName(typeof(TEntity));
 
         _options = options;
     }
