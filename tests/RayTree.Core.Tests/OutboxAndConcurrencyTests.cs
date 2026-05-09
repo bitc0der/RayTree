@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using RayTree.Core.Distribution;
 using RayTree.Core.Models;
@@ -59,9 +60,9 @@ public class OutboxPublisherServiceTests
     [Test]
     public async Task StopAsync_Completes_WithinTimeout()
     {
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromSeconds(1) };
-        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
 
         await service.StartAsync();
 
@@ -73,9 +74,9 @@ public class OutboxPublisherServiceTests
     [Test]
     public void Dispose_DoesNotThrow()
     {
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromHours(1) };
-        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
 
         Assert.DoesNotThrow(() => service.Dispose());
     }
@@ -97,7 +98,7 @@ public class ConcurrentChangeDetectionTests
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(SampleEntity), outbox.Object);
         var tracker = new EntityChangeTracker(publisher);
 

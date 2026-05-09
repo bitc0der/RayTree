@@ -1,6 +1,5 @@
 using System.Reflection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
@@ -38,13 +37,13 @@ public class ChangeSubscriber : IDisposable
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
     public ChangeSubscriber(
+        ILogger<ChangeSubscriber> logger,
         IDeduplicationStore? dedupStore = null,
-        SubscriberOptions? options = null,
-        ILogger<ChangeSubscriber>? logger = null)
+        SubscriberOptions? options = null)
     {
+        _logger     = logger;
         _dedupStore = dedupStore ?? new InMemoryDeduplicationStore();
-        _options    = options   ?? new SubscriberOptions();
-        _logger     = logger    ?? NullLogger<ChangeSubscriber>.Instance;
+        _options    = options    ?? new SubscriberOptions();
     }
 
     public IReadOnlyDictionary<Type, IQueueConsumer> Queues => _queues;

@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Plugins;
@@ -11,13 +10,6 @@ namespace RayTree.Core.Tracking;
 
 public interface IChangeTrackingBuilder
 {
-    /// <summary>
-    /// Supplies the logger factory used by background services (outbox publisher, subscriber handler
-    /// retry loop). When not called, all logging defaults to <see cref="Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory"/>
-    /// so no log output is produced.
-    /// </summary>
-    IChangeTrackingBuilder UseLoggerFactory(ILoggerFactory loggerFactory);
-
     // Publisher global configuration
     IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox;
     IChangeTrackingBuilder UseQueue<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher;

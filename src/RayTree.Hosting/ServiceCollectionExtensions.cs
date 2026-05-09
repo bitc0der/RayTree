@@ -15,14 +15,11 @@ public static class ServiceCollectionExtensions
         IConfiguration? configuration = null,
         Action<IChangeTrackingBuilder>? configure = null)
     {
-        var builder = new ChangeTrackingBuilder();
-        configure?.Invoke(builder);
-
         services.AddSingleton<EntityChangeTrackerFactory>();
         services.AddSingleton<EntityChangeTracker>(sp =>
         {
-            if (sp.GetService<ILoggerFactory>() is { } lf)
-                builder.UseLoggerFactory(lf);
+            var builder = new ChangeTrackingBuilder(sp.GetService<ILoggerFactory>());
+            configure?.Invoke(builder);
             return builder.Build();
         });
         services.AddSingleton<IEntityChangeTracker>(sp => sp.GetRequiredService<EntityChangeTracker>());
@@ -41,8 +38,7 @@ public static class ServiceCollectionExtensions
             return new OutboxCleanupService(outboxes, options.PollingInterval * 10);
         });
 
-        services.AddHostedService<ChangeTrackingHostedService>(sp =>
-            new ChangeTrackingHostedService(sp.GetRequiredService<EntityChangeTracker>()));
+        services.AddHostedService<ChangeTrackingHostedService>();
 
         return services;
     }

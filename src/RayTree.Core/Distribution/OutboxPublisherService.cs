@@ -1,6 +1,5 @@
 using System.Reflection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 
@@ -30,12 +29,12 @@ public class OutboxPublisherService : IDisposable
         ChangePublisher publisher,
         Type entityType,
         OutboxPublisherOptions options,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory loggerFactory)
     {
-        _publisher  = publisher  ?? throw new ArgumentNullException(nameof(publisher));
-        _entityType = entityType ?? throw new ArgumentNullException(nameof(entityType));
-        _options    = options    ?? throw new ArgumentNullException(nameof(options));
-        _logger     = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<OutboxPublisherService>();
+        _publisher  = publisher    ?? throw new ArgumentNullException(nameof(publisher));
+        _entityType = entityType   ?? throw new ArgumentNullException(nameof(entityType));
+        _options    = options      ?? throw new ArgumentNullException(nameof(options));
+        _logger     = loggerFactory.CreateLogger<OutboxPublisherService>();
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)

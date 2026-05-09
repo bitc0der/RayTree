@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
@@ -21,7 +22,7 @@ public class InMemoryEndToEndTests
     {
         _queue = new InMemoryQueue();
 
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(Order), new InMemoryOutbox());
         publisher.RegisterPublisher(typeof(Order), _queue);
         publisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
@@ -42,7 +43,7 @@ public class InMemoryEndToEndTests
     private (ChangeSubscriber subscriber, CancellationTokenSource cts, Task consumeTask)
         StartSubscriber(Action<ChangeSubscriber> configure)
     {
-        var subscriber = new ChangeSubscriber();
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
         subscriber.RegisterQueue<Order>(_queue);
         configure(subscriber);
 
@@ -220,7 +221,7 @@ public class InMemoryEndToEndTests
     {
         var tcs = new TaskCompletionSource<EntityChange<Order>>();
 
-        var subscriber = new ChangeSubscriber();
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
         subscriber.RegisterQueue<Order>(_queue);
         subscriber.OnChange<Order>(ChangeType.Insert, (change, _) =>
         {
@@ -248,7 +249,7 @@ public class InMemoryEndToEndTests
         var attempts = 0;
         var succeeded = new TaskCompletionSource<bool>();
 
-        var subscriber = new ChangeSubscriber(options: new SubscriberOptions
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, options: new SubscriberOptions
         {
             MaxRetries = 2,
             RetryDelay = TimeSpan.FromMilliseconds(10)
@@ -282,7 +283,7 @@ public class InMemoryEndToEndTests
         var attempts = 0;
         var secondAttempt = new TaskCompletionSource<bool>();
 
-        var subscriber = new ChangeSubscriber(options: new SubscriberOptions
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, options: new SubscriberOptions
         {
             MaxRetries    = 1,
             RetryDelay    = TimeSpan.FromMilliseconds(10),

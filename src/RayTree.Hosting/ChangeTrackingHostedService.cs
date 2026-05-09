@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Hosting;
@@ -20,10 +19,10 @@ public class ChangeTrackingHostedService : IHostedService
 
     public ChangeTrackingHostedService(
         EntityChangeTracker tracker,
-        ILogger<ChangeTrackingHostedService>? logger = null)
+        ILogger<ChangeTrackingHostedService> logger)
     {
         _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
-        _logger  = logger  ?? NullLogger<ChangeTrackingHostedService>.Instance;
+        _logger  = logger;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)

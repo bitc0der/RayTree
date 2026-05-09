@@ -1,4 +1,5 @@
-﻿using RayTree.Core.Distribution;
+﻿using Microsoft.Extensions.Logging.Abstractions;
+using RayTree.Core.Distribution;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Serialization;
@@ -27,7 +28,7 @@ public class TrackInsertWithTypedStateTests
     public async Task TrackInsertAsync_CapturesEntityStateAfterInsert()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(User), outbox);
         var tracker = new EntityChangeTracker(publisher);
 
@@ -44,7 +45,7 @@ public class TrackInsertWithTypedStateTests
     public async Task TrackInsertAsync_WritesTypedChangeToOutbox()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(User), outbox);
         var tracker = new EntityChangeTracker(publisher);
 
@@ -60,7 +61,7 @@ public class TrackInsertWithTypedStateTests
     public async Task TrackInsertAsync_SetsEntityTypeFromGenericParameter()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(User), outbox);
         var tracker = new EntityChangeTracker(publisher);
 
@@ -74,7 +75,7 @@ public class TrackInsertWithTypedStateTests
     public async Task TrackInsertAsync_SetsEntityIdFromIdProperty()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(User), outbox);
         var tracker = new EntityChangeTracker(publisher);
 
@@ -99,7 +100,7 @@ public class TrackUpdateWithTypedStateTests
     public async Task TrackUpdateAsync_CapturesEntityStateAfterUpdate()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(Product), outbox);
         var tracker = new EntityChangeTracker(publisher);
 
@@ -115,7 +116,7 @@ public class TrackUpdateWithTypedStateTests
     public async Task TrackUpdateAsync_WritesTypedChangeToOutbox()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(Product), outbox);
         var tracker = new EntityChangeTracker(publisher);
 
@@ -141,7 +142,7 @@ public class TrackDeleteWithTypedStateTests
     public async Task TrackDeleteAsync_CapturesEntityStateBeforeDelete()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(Order), outbox);
         var tracker = new EntityChangeTracker(publisher);
 
@@ -157,7 +158,7 @@ public class TrackDeleteWithTypedStateTests
     public async Task TrackDeleteAsync_WritesTypedChangeToOutbox()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(Order), outbox);
         var tracker = new EntityChangeTracker(publisher);
 

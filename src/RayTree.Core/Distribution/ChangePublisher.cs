@@ -21,11 +21,11 @@ public sealed class ChangePublisher : IDisposable
     private readonly ConcurrentDictionary<Type, IChangeCompressor> _compressors = new();
     private readonly ConcurrentDictionary<Type, IRepository> _repositories = new();
     private readonly List<OutboxPublisherService> _publisherServices = new();
-    private readonly ILoggerFactory? _loggerFactory;
+    private readonly ILoggerFactory _loggerFactory;
 
     public OutboxPublisherOptions Options { get; } = new();
 
-    public ChangePublisher(ILoggerFactory? loggerFactory = null)
+    public ChangePublisher(ILoggerFactory loggerFactory)
     {
         _loggerFactory = loggerFactory;
     }

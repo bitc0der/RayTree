@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Compression;
@@ -13,7 +14,7 @@ public class EndToEndTests
     public async Task FullPipeline_TracksChange_WritesToOutbox_AndPublishesToQueue()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(User), outbox);
         publisher.RegisterPublisher(typeof(User), new InMemoryQueue());
         publisher.RegisterSerializer(typeof(User), new JsonSerializerPlugin());
@@ -29,7 +30,7 @@ public class EndToEndTests
     public async Task Pipeline_WithCompression_RoundTripSucceeds()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(Order), outbox);
         publisher.RegisterPublisher(typeof(Order), new InMemoryQueue());
         publisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
@@ -46,7 +47,7 @@ public class EndToEndTests
     {
         var userOutbox = new InMemoryOutbox();
         var orderOutbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(User), userOutbox);
         publisher.RegisterOutbox(typeof(Order), orderOutbox);
         var tracker = new EntityChangeTracker(publisher);
@@ -62,7 +63,7 @@ public class EndToEndTests
     public async Task Pipeline_WritesOutbox_InSameBatch()
     {
         var outbox = new InMemoryOutbox();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(User), outbox);
         publisher.RegisterSerializer(typeof(User), new JsonSerializerPlugin());
         publisher.RegisterCompressor(typeof(User), new NoOpCompressorPlugin());
@@ -79,7 +80,7 @@ public class EndToEndTests
     public async Task Pipeline_WithQueue_ConsumerReceivesMessage()
     {
         var queue = new InMemoryQueue();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(User), new InMemoryOutbox());
         publisher.RegisterPublisher(typeof(User), queue);
         publisher.RegisterSerializer(typeof(User), new JsonSerializerPlugin());

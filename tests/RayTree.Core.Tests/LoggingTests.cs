@@ -165,10 +165,7 @@ public class LoggingTests
         // Arrange
         var recordingLogger = new RecordingLogger<ChangeSubscriber>();
         var options         = new SubscriberOptions { MaxRetries = 0, SkipOnFailure = true };
-        var subscriber      = new ChangeSubscriber(
-            dedupStore: null,
-            options:    options,
-            logger:     recordingLogger);
+        var subscriber      = new ChangeSubscriber(recordingLogger, options: options);
 
         subscriber.RegisterQueue<SampleEntity>(new InMemoryQueue());
         subscriber.OnChange<SampleEntity>(changeType: null, (_, _) =>
