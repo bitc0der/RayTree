@@ -56,30 +56,40 @@ public static class SourceTableDdlGenerator
         return sql;
     }
 
-    public static SourceTableSchema CreateDefault(string entityTypeName, string? tableNameOverride = null)
+    public static SourceTableSchema CreateDefault(
+        string entityTypeName,
+        IReadOnlyList<SourceTableColumn> keyColumns,
+        string? tableNameOverride = null)
     {
         var schemaName = entityTypeName.ToLowerInvariant();
+
+        var columns = new List<SourceTableColumn>
+        {
+            new() { Name = "id", Type = "BIGINT", IsPrimaryKey = true, IsIdentity = true },
+            new() { Name = "created_at", Type = "TIMESTAMPTZ", IsNullable = false, Default = "NOW()" },
+            new() { Name = "updated_at", Type = "TIMESTAMPTZ", IsNullable = false, Default = "NOW()" },
+            new() { Name = "version", Type = "INTEGER", IsNullable = false, Default = "1" }
+        };
+        columns.AddRange(keyColumns);
+
+        var indexes = new List<SourceTableIndex>
+        {
+            new() { Name = $"idx_{schemaName}_source_created", Columns = ["created_at"] }
+        };
+        if (keyColumns.Count > 0)
+            indexes.Add(new SourceTableIndex
+            {
+                Name = $"idx_{schemaName}_source_key",
+                Columns = keyColumns.Select(c => c.Name).ToList(),
+                IsUnique = true
+            });
+
         return new SourceTableSchema
         {
             EntityTypeName = entityTypeName,
             TableName = tableNameOverride ?? $"{schemaName}_source",
-            Columns =
-            [
-                new SourceTableColumn { Name = "id", Type = "BIGINT", IsPrimaryKey = true, IsIdentity = true },
-                new SourceTableColumn
-                {
-                    Name = "created_at", Type = "TIMESTAMPTZ", IsNullable = false, Default = "NOW()"
-                },
-                new SourceTableColumn
-                {
-                    Name = "updated_at", Type = "TIMESTAMPTZ", IsNullable = false, Default = "NOW()"
-                },
-                new SourceTableColumn { Name = "version", Type = "INTEGER", IsNullable = false, Default = "1" }
-            ],
-            Indexes =
-            [
-                new SourceTableIndex { Name = $"idx_{schemaName}_source_created", Columns = ["created_at"] }
-            ]
+            Columns = columns,
+            Indexes = indexes
         };
     }
 }

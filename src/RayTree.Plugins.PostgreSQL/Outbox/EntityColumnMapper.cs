@@ -38,6 +38,31 @@ public static class EntityColumnMapper
     public static string GetTableName(Type entityType)
         => entityType.GetCustomAttribute<TableAttribute>()?.Name ?? ToSnakeCase(entityType.Name);
 
+    public static IReadOnlyList<PropertyInfo> GetKeyProperties(Type entityType)
+    {
+        var props = entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        var keyed = props
+            .Where(p => p.CanRead && p.CanWrite && p.IsDefined(typeof(KeyAttribute), inherit: true))
+            .OrderBy(p =>
+            {
+                var order = p.GetCustomAttribute<ColumnAttribute>(inherit: true)?.Order ?? -1;
+                return order >= 0 ? order : int.MaxValue;
+            })
+            .ThenBy(p => Array.IndexOf(props, p))
+            .ToList();
+
+        if (keyed.Count > 0)
+            return keyed;
+
+        var idProp = props.FirstOrDefault(p => p.Name == "Id" && p.CanRead && p.CanWrite);
+        if (idProp != null)
+            return [idProp];
+
+        throw new InvalidOperationException(
+            $"Entity type '{entityType.Name}' has no [Key]-annotated property and no 'Id' convention property. " +
+            $"Annotate a property with [Key] or add a property named 'Id'.");
+    }
+
     public static string ToSnakeCase(string name)
         => Regex.Replace(name, "(?<!^)([A-Z])", "_$1").ToLowerInvariant();
 

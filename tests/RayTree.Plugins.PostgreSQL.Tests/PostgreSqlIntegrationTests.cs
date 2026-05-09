@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Reflection;
 using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
@@ -237,29 +238,25 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     public async Task InsertAsync_StoresEntity()
     {
         var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
-        var user = new TestUser();
+        var user = new TestUser { Id = 1 };
 
         await repo!.InsertAsync(user);
 
-        var userId = await GetLatestUserIdAsync();
-        Assert.That(userId, Is.GreaterThan(0));
-        var stored = await repo.GetByIdAsync(userId);
+        var stored = await repo.GetByIdAsync([1]);
         Assert.That(stored, Is.Not.Null);
+        Assert.That(stored!.Id, Is.EqualTo(1));
     }
 
     [Test]
     public async Task UpdateAsync_UpdatesTimestamp()
     {
         var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
-        var user = new TestUser();
+        var user = new TestUser { Id = 1 };
         await repo!.InsertAsync(user);
 
-        var userId = await GetLatestUserIdAsync();
-        var beforeUpdate = await repo.GetByIdAsync(userId);
-        Assert.That(beforeUpdate, Is.Not.Null);
+        await repo.UpdateAsync(user);
 
-        await repo.UpdateAsync(new TestUser { Id = userId });
-        var stored = await repo.GetByIdAsync(userId);
+        var stored = await repo.GetByIdAsync([1]);
         Assert.That(stored, Is.Not.Null);
     }
 
@@ -267,13 +264,12 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     public async Task DeleteAsync_RemovesEntity()
     {
         var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
-        var user = new TestUser();
+        var user = new TestUser { Id = 1 };
         await repo!.InsertAsync(user);
 
-        var userId = await GetLatestUserIdAsync();
-        await repo.DeleteAsync(new TestUser { Id = userId });
+        await repo.DeleteAsync(user);
 
-        var stored = await repo.GetByIdAsync(userId);
+        var stored = await repo.GetByIdAsync([1]);
         Assert.That(stored, Is.Null);
     }
 
@@ -281,17 +277,8 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     public async Task GetByIdAsync_WithNonExistentId_ReturnsNull()
     {
         var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
-        var result = await repo!.GetByIdAsync(999);
+        var result = await repo!.GetByIdAsync([999]);
         Assert.That(result, Is.Null);
-    }
-
-    private async Task<int> GetLatestUserIdAsync()
-    {
-        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
-        await conn.OpenAsync();
-        await using var cmd = new NpgsqlCommand("SELECT id FROM test_users ORDER BY id DESC LIMIT 1", conn);
-        var result = await cmd.ExecuteScalarAsync();
-        return Convert.ToInt32(result!);
     }
 
     [TearDown]
@@ -421,6 +408,7 @@ public class DefaultTableNameIntegrationTests : IAsyncDisposable
 [Table("test_users")]
 public class TestUser
 {
+    [Key]
     [Column("id")]
     public int Id { get; set; }
 
@@ -579,5 +567,98 @@ public class DefaultTableNameWithAttributeTests
         var options = new PostgreSqlOutboxOptions { ConnectionString = "Host=localhost" };
         _ = new PostgreSqlOutbox<AnnotatedEntity>(options);
         Assert.That(options.OutboxTableName, Is.EqualTo("annotated_entity_outbox"));
+    }
+}
+
+public class KeyAnnotatedEntity
+{
+    [Key]
+    public int OrderId { get; set; }
+
+    public string? Description { get; set; }
+}
+
+public class CompositeKeyEntity
+{
+    [Key, Column(Order = 0)]
+    public int OrderId { get; set; }
+
+    [Key, Column(Order = 1)]
+    public int LineNumber { get; set; }
+
+    public string? Product { get; set; }
+}
+
+public class NoKeyEntity
+{
+    public string? Name { get; set; }
+}
+
+public class GetKeyPropertiesTests
+{
+    [Test]
+    public void GetKeyProperties_WithKeyAttribute_ReturnsThatProperty()
+    {
+        var keys = EntityColumnMapper.GetKeyProperties(typeof(KeyAnnotatedEntity));
+        Assert.That(keys, Has.Count.EqualTo(1));
+        Assert.That(keys[0].Name, Is.EqualTo("OrderId"));
+    }
+
+    [Test]
+    public void GetKeyProperties_WithoutKeyAttribute_FallsBackToIdConvention()
+    {
+        var keys = EntityColumnMapper.GetKeyProperties(typeof(TestEntity));
+        Assert.That(keys, Has.Count.EqualTo(1));
+        Assert.That(keys[0].Name, Is.EqualTo("Id"));
+    }
+
+    [Test]
+    public void GetKeyProperties_WithCompositeKey_ReturnsAllInColumnOrder()
+    {
+        var keys = EntityColumnMapper.GetKeyProperties(typeof(CompositeKeyEntity));
+        Assert.That(keys, Has.Count.EqualTo(2));
+        Assert.That(keys[0].Name, Is.EqualTo("OrderId"));
+        Assert.That(keys[1].Name, Is.EqualTo("LineNumber"));
+    }
+
+    [Test]
+    public void GetKeyProperties_WithNoKeyAndNoId_Throws()
+    {
+        Assert.That(
+            () => EntityColumnMapper.GetKeyProperties(typeof(NoKeyEntity)),
+            Throws.InvalidOperationException.With.Message.Contains("NoKeyEntity"));
+    }
+
+    [Test]
+    public void Constructor_WithKeyAttribute_ResolvesKeyAtStartup()
+    {
+        var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
+        Assert.That(() => new PostgreSqlRepository<KeyAnnotatedEntity>(options), Throws.Nothing);
+    }
+
+    [Test]
+    public void Constructor_WithCompositeKey_ResolvesKeyAtStartup()
+    {
+        var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
+        Assert.That(() => new PostgreSqlRepository<CompositeKeyEntity>(options), Throws.Nothing);
+    }
+
+    [Test]
+    public void Constructor_WithNoKeyAndNoId_ThrowsAtStartup()
+    {
+        var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
+        Assert.That(
+            () => new PostgreSqlRepository<NoKeyEntity>(options),
+            Throws.InvalidOperationException.With.Message.Contains("NoKeyEntity"));
+    }
+
+    [Test]
+    public void GetByIdAsync_WrongKeyValueCount_Throws()
+    {
+        var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
+        var repo = new PostgreSqlRepository<CompositeKeyEntity>(options);
+        Assert.That(
+            async () => await repo.GetByIdAsync([1]),
+            Throws.ArgumentException.With.Message.Contains("Expected 2"));
     }
 }

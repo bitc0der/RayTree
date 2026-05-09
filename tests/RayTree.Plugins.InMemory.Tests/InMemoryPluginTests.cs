@@ -134,7 +134,7 @@ public class InMemoryRepositoryTests
         var entity = new TestEntity { Id = 1, Name = "Test" };
 
         await repo.InsertAsync(entity);
-        var result = await repo.GetByIdAsync(1);
+        var result = await repo.GetByIdAsync([1]);
 
         Assert.That(result, Is.Not.Null);
         Assert.That(result!.Name, Is.EqualTo("Test"));
@@ -150,7 +150,7 @@ public class InMemoryRepositoryTests
         entity.Name = "Updated";
         await repo.UpdateAsync(entity);
 
-        var result = await repo.GetByIdAsync(1);
+        var result = await repo.GetByIdAsync([1]);
         Assert.That(result!.Name, Is.EqualTo("Updated"));
     }
 
@@ -162,7 +162,7 @@ public class InMemoryRepositoryTests
         await repo.InsertAsync(entity);
 
         await repo.DeleteAsync(entity);
-        var result = await repo.GetByIdAsync(1);
+        var result = await repo.GetByIdAsync([1]);
 
         Assert.That(result, Is.Null);
     }

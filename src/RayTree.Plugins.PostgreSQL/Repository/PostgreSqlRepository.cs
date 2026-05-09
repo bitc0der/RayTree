@@ -1,3 +1,4 @@
+using System.Reflection;
 using Npgsql;
 using RayTree.Core.Plugins.Repository;
 using RayTree.Plugins.PostgreSQL.Outbox;
@@ -9,6 +10,10 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     where TEntity : class
 {
     private readonly PostgreSqlRepositoryOptions _options;
+    private readonly IReadOnlyList<EntityColumnMapper.PropertyColumn> _keyColumns;
+    private readonly string _insertSql;
+    private readonly string _whereClause;
+    private readonly Dictionary<string, PropertyInfo> _columnToProperty;
 
     public PostgreSqlRepository(PostgreSqlRepositoryOptions options)
     {
@@ -16,20 +21,37 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             options.TableName = EntityColumnMapper.GetTableName(typeof(TEntity));
 
         _options = options;
+
+        var keyProperties = EntityColumnMapper.GetKeyProperties(typeof(TEntity));
+        var allColumns = EntityColumnMapper.GetColumns(typeof(TEntity)).ToDictionary(c => c.Property.Name);
+        _keyColumns = keyProperties.Select(p => allColumns[p.Name]).ToList();
+
+        _insertSql = BuildInsertSql();
+        _whereClause = BuildWhereClause();
+        _columnToProperty = _keyColumns.ToDictionary(c => c.ColumnName, c => c.Property);
     }
+
+    private string BuildInsertSql()
+    {
+        var cols = string.Join(", ", _keyColumns.Select(c => c.ColumnName));
+        var parms = string.Join(", ", Enumerable.Range(0, _keyColumns.Count).Select(i => $"@K{i}"));
+        return $"INSERT INTO {_options.TableName} ({cols}) VALUES ({parms})";
+    }
+
+    private string BuildWhereClause()
+        => string.Join(" AND ", _keyColumns.Select((c, i) => $"{c.ColumnName} = @K{i}"));
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        // Create source table only - triggers are created by the outbox
-        var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, _options.TableName);
+        var keySourceColumns = _keyColumns
+            .Select(c => new SourceTableColumn { Name = c.ColumnName, Type = c.ColumnType, IsNullable = false })
+            .ToList();
+        var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, keySourceColumns, _options.TableName);
         var sourceDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true);
         await ExecuteDdlDirectly(_options.ConnectionString, sourceDdl, cancellationToken);
     }
 
-    private static async Task ExecuteDdlDirectly(
-        string connectionString,
-        string ddl,
-        CancellationToken cancellationToken)
+    private static async Task ExecuteDdlDirectly(string connectionString, string ddl, CancellationToken cancellationToken)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(cancellationToken);
@@ -44,9 +66,9 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
-        var sql = $"INSERT INTO {_options.TableName} DEFAULT VALUES RETURNING id";
-        await using var cmd = new NpgsqlCommand(sql, conn);
-        await cmd.ExecuteScalarAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand(_insertSql, conn);
+        AddKeyParameters(cmd, entity);
+        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task UpdateAsync(TEntity entity, CancellationToken cancellationToken = default)
@@ -56,9 +78,9 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
-        var sql = $"UPDATE {_options.TableName} SET updated_at = NOW() WHERE id = @Id";
-        await using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("Id", GetEntityId(entity));
+        await using var cmd = new NpgsqlCommand(
+            $"UPDATE {_options.TableName} SET updated_at = NOW() WHERE {_whereClause}", conn);
+        AddKeyParameters(cmd, entity);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -69,42 +91,37 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
-        var sql = $"DELETE FROM {_options.TableName} WHERE id = @Id";
-        await using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("Id", GetEntityId(entity));
+        await using var cmd = new NpgsqlCommand(
+            $"DELETE FROM {_options.TableName} WHERE {_whereClause}", conn);
+        AddKeyParameters(cmd, entity);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    public async Task<TEntity?> GetByIdAsync(object id, CancellationToken cancellationToken = default)
+    public async Task<TEntity?> GetByIdAsync(object[] keyValues, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(id);
+        ArgumentNullException.ThrowIfNull(keyValues);
+
+        if (keyValues.Length != _keyColumns.Count)
+            throw new ArgumentException(
+                $"Expected {_keyColumns.Count} key value(s) for {typeof(TEntity).Name}, got {keyValues.Length}.",
+                nameof(keyValues));
 
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
-        var sql = $"SELECT * FROM {_options.TableName} WHERE id = @Id";
-        await using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("Id", id);
+        await using var cmd = new NpgsqlCommand(
+            $"SELECT * FROM {_options.TableName} WHERE {_whereClause}", conn);
+        for (var i = 0; i < keyValues.Length; i++)
+            cmd.Parameters.AddWithValue($"K{i}", keyValues[i] ?? DBNull.Value);
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-
-        if (await reader.ReadAsync(cancellationToken))
-        {
-            return MapEntity(reader);
-        }
-
-        return null;
+        return await reader.ReadAsync(cancellationToken) ? MapEntity(reader) : null;
     }
 
-    protected virtual object GetEntityId(TEntity entity)
+    private void AddKeyParameters(NpgsqlCommand cmd, TEntity entity)
     {
-        ArgumentNullException.ThrowIfNull(entity);
-
-        var prop = typeof(TEntity).GetProperty("Id")
-                   ?? throw new InvalidOperationException($"Entity type {typeof(TEntity).Name} has no Id property");
-
-        return prop.GetValue(entity)
-               ?? throw new InvalidOperationException($"Entity Id is null");
+        for (var i = 0; i < _keyColumns.Count; i++)
+            cmd.Parameters.AddWithValue($"K{i}", _keyColumns[i].Property.GetValue(entity) ?? DBNull.Value);
     }
 
     protected virtual TEntity MapEntity(NpgsqlDataReader reader)
@@ -112,11 +129,11 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         ArgumentNullException.ThrowIfNull(reader);
 
         var entity = Activator.CreateInstance<TEntity>();
-
         for (var i = 0; i < reader.FieldCount; i++)
         {
-            var propName = reader.GetName(i);
-            var prop = typeof(TEntity).GetProperty(propName);
+            var colName = reader.GetName(i);
+            var prop = typeof(TEntity).GetProperty(colName)
+                       ?? (_columnToProperty.TryGetValue(colName, out var mapped) ? mapped : null);
             if (prop != null && prop.CanWrite && !reader.IsDBNull(i))
             {
                 var value = reader.GetValue(i);

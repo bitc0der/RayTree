@@ -169,6 +169,49 @@ public class Order
 }
 ```
 
+### Primary key — `[Key]`
+
+Mark the business primary key with `[Key]`. `PostgreSqlRepository` uses it to build `WHERE` clauses for `UpdateAsync`, `DeleteAsync`, and `GetByIdAsync`, and adds a `UNIQUE` index on the corresponding column(s) in the source table. Falls back to a property named `Id` when no `[Key]` annotation is present; throws at construction time if neither exists.
+
+```csharp
+public class Order
+{
+    [Key]
+    public int OrderId { get; set; }   // WHERE state_order_id = @K0
+
+    public decimal Total { get; set; }
+}
+```
+
+`GetByIdAsync` takes `object[]` — one element per key, in the same order as declared:
+
+```csharp
+var order = await repo.GetByIdAsync([42]);
+```
+
+#### Composite primary keys
+
+Apply `[Key]` to multiple properties and use `[Column(Order = n)]` to control the column order:
+
+```csharp
+public class OrderLine
+{
+    [Key, Column(Order = 0)]
+    public int OrderId { get; set; }
+
+    [Key, Column(Order = 1)]
+    public int LineNumber { get; set; }
+
+    public string? Product { get; set; }
+}
+```
+
+Generated source table gets a `UNIQUE (state_order_id, state_line_number)` index. `GetByIdAsync` receives both values:
+
+```csharp
+var line = await repo.GetByIdAsync([orderId, lineNumber]);
+```
+
 ### Complete example
 
 ```csharp
