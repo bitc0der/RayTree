@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
@@ -26,6 +28,7 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
     private Func<Type, IRepository>? _repositoryFactory;
 
     private Action<OutboxPublisherOptions>? _optionsConfigure;
+    private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private bool _built;
 
     /// <inheritdoc/>
@@ -92,7 +95,7 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
     {
         _built = true;
 
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(_loggerFactory);
         _optionsConfigure?.Invoke(publisher.Options);
 
         var entityTypes = _outboxOverrides.Keys
@@ -129,6 +132,8 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
 
         return publisher;
     }
+
+    internal void UseLoggerFactory(ILoggerFactory factory) => _loggerFactory = factory;
 
     internal void AddOutboxOverride(Type entityType, IOutbox outbox) => _outboxOverrides[entityType] = outbox;
     internal void AddQueueOverride(Type entityType, IQueuePublisher queue) => _queueOverrides[entityType] = queue;

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Compression;
@@ -16,7 +17,7 @@ public class EndToEndInMemoryTests
     private static (ChangePublisher publisher, EntityChangeTracker tracker) BuildTracker(
         InMemoryOutbox outbox, bool withQueue = false, bool withGzip = false)
     {
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(Product), outbox);
         publisher.RegisterSerializer(typeof(Product), new JsonSerializerPlugin());
         publisher.RegisterCompressor(typeof(Product), withGzip ? new GzipCompressorPlugin() : (IChangeCompressor)new NoOpCompressorPlugin());
@@ -142,7 +143,7 @@ public class EndToEndInMemoryTests
     {
         var outbox = new InMemoryOutbox();
         var queue = new InMemoryQueue();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(Product), outbox);
         publisher.RegisterPublisher(typeof(Product), queue);
         publisher.RegisterSerializer(typeof(Product), new JsonSerializerPlugin());
@@ -170,7 +171,7 @@ public class EndToEndInMemoryTests
     {
         var outbox = new InMemoryOutbox();
         var queue = new InMemoryQueue();
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(Product), outbox);
         publisher.RegisterPublisher(typeof(Product), queue);
         publisher.RegisterSerializer(typeof(Product), new JsonSerializerPlugin());

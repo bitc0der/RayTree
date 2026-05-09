@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using RayTree.Core.Distribution;
 using RayTree.Core.Models;
@@ -37,7 +38,7 @@ public class EntityChangeInterceptorTests
 
     private static EntityChangeTracker BuildTracker(IOutbox outbox)
     {
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(TestEntity), outbox);
         return new EntityChangeTracker(publisher);
     }

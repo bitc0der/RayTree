@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Channels;
 using Confluent.Kafka;
+using Microsoft.Extensions.Logging;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Tracking;
@@ -11,6 +12,7 @@ namespace RayTree.Plugins.Kafka;
 public class KafkaConsumer : IQueueConsumer, IDisposable
 {
     private readonly KafkaConsumerOptions _options;
+    private readonly ILogger<KafkaConsumer> _logger;
     private readonly CancellationTokenSource _disposeCts = new();
     private IConsumer<string, byte[]>? _consumer;
     private Task? _pollTask;
@@ -24,9 +26,11 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
     /// </summary>
     public bool IsAssigned => _assigned;
 
-    public KafkaConsumer(KafkaConsumerOptions options)
+    public KafkaConsumer(KafkaConsumerOptions options, ILoggerFactory loggerFactory)
     {
-        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _options = options       ?? throw new ArgumentNullException(nameof(options));
+        _logger  = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
+                       .CreateLogger<KafkaConsumer>();
     }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -81,16 +85,22 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                     {
                         // Fatal broker/network errors cannot be recovered; surface them to
                         // all ConsumeAsync callers via the channel completion exception.
+                        _logger.LogError(ex, "Fatal Kafka error on topic {Topic}", _options.Topic);
                         channel.Writer.TryComplete(ex);
                         return;
                     }
-                    catch { continue; }
+                    catch (Exception ex) { _logger.LogWarning(ex, "Error consuming from Kafka topic {Topic}, continuing", _options.Topic); continue; }
 
                     if (result?.Message == null) continue;
 
                     MessageEnvelope envelope;
                     try   { envelope = ParseEnvelope(result.Message); }
-                    catch { _consumer!.Commit(result); continue; }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse Kafka message envelope on topic {Topic}, skipping", _options.Topic);
+                        _consumer!.Commit(result);
+                        continue;
+                    }
 
                     _consumer!.Commit(result);
                     channel.Writer.TryWrite(envelope);

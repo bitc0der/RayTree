@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
@@ -28,7 +29,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
 
     private EntityChangeTracker BuildTracker(RabbitMqPublisher publisher)
     {
-        var changePublisher = new ChangePublisher();
+        var changePublisher = new ChangePublisher(NullLoggerFactory.Instance);
         changePublisher.RegisterOutbox(typeof(Order), new InMemoryOutbox());
         changePublisher.RegisterPublisher(typeof(Order), publisher);
         changePublisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
@@ -58,7 +59,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         DeclareQueue = true,
         ExchangeName = "entity_changes",
         BindingKey   = "#"
-    });
+    }, NullLoggerFactory.Instance);
 
     // -------------------------------------------------------------------------
     // Tests
@@ -75,7 +76,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
-        var subscriber = new ChangeSubscriber();
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
@@ -113,7 +114,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
-        var subscriber = new ChangeSubscriber();
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
@@ -153,7 +154,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         var received    = new List<EntityChange>();
         var allReceived = new TaskCompletionSource<bool>();
 
-        var subscriber = new ChangeSubscriber();
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)

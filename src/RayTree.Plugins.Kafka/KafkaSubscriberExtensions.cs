@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Handling;
 
 namespace RayTree.Plugins.Kafka;
@@ -17,7 +18,7 @@ public static class KafkaSubscriberExtensions
 
         var options = new KafkaConsumerOptions();
         configure(options);
-        return builder.UseQueue(new KafkaConsumer(options));
+        return builder.UseQueue(new KafkaConsumer(options, NullLoggerFactory.Instance));
     }
 
     public static KafkaConsumerOptions WithTopic(this KafkaConsumerOptions options, string topic)

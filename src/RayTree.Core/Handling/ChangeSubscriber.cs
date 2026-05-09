@@ -1,4 +1,5 @@
 using System.Reflection;
+using Microsoft.Extensions.Logging;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
@@ -26,6 +27,7 @@ public class ChangeSubscriber : IDisposable
     private readonly Dictionary<Type, SubscriberOptions> _entityOptions = new();
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
+    private readonly ILogger<ChangeSubscriber> _logger;
     private readonly CancellationTokenSource _cts = new();
 
     // Reflection helper: DeserializeCoreAsync<TEntity>(serializer, stream, ct) → Task<EntityChange>
@@ -34,10 +36,14 @@ public class ChangeSubscriber : IDisposable
             nameof(DeserializeCoreAsync),
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    public ChangeSubscriber(IDeduplicationStore? dedupStore = null, SubscriberOptions? options = null)
+    public ChangeSubscriber(
+        ILogger<ChangeSubscriber> logger,
+        IDeduplicationStore? dedupStore = null,
+        SubscriberOptions? options = null)
     {
+        _logger     = logger;
         _dedupStore = dedupStore ?? new InMemoryDeduplicationStore();
-        _options    = options   ?? new SubscriberOptions();
+        _options    = options    ?? new SubscriberOptions();
     }
 
     public IReadOnlyDictionary<Type, IQueueConsumer> Queues => _queues;
@@ -133,20 +139,34 @@ public class ChangeSubscriber : IDisposable
     {
         var entityType = ResolveType(envelope.EntityType);
         if (entityType == null)
+        {
+            _logger.LogWarning("Unknown entity type '{EntityType}' in message envelope, skipping", envelope.EntityType);
             return;
+        }
 
         if (!await _dedupStore.TryMarkProcessedAsync(envelope.CorrelationId.ToString(), cancellationToken))
+        {
+            _logger.LogDebug("Duplicate message {CorrelationId} for {EntityType}, skipping",
+                envelope.CorrelationId, envelope.EntityType);
             return;
+        }
 
         if (!_handlers.TryGetValue(entityType, out var handlers) || handlers.Count == 0)
+        {
+            _logger.LogDebug("No handlers registered for {EntityType}, skipping", entityType.Name);
             return;
+        }
 
         var matchingHandlers = handlers
             .Where(h => h.ChangeType == null || h.ChangeType == envelope.ChangeType)
             .ToList();
 
         if (matchingHandlers.Count == 0)
+        {
+            _logger.LogDebug("No handlers matched change type {ChangeType} for {EntityType}, skipping",
+                envelope.ChangeType, entityType.Name);
             return;
+        }
 
         // Deserialize the envelope payload back into a typed EntityChange so handlers
         // receive the full entity state. Falls back to meta-only when no serializer is
@@ -233,15 +253,25 @@ public class ChangeSubscriber : IDisposable
                 await registration.Handler(change, ct);
                 return;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 if (attempt >= options.MaxRetries)
                 {
-                    if (options.SkipOnFailure) return;
+                    if (options.SkipOnFailure)
+                    {
+                        _logger.LogError(ex,
+                            "Handler for {EntityType} failed after {Attempts} attempt(s), skipping message",
+                            registration.EntityType.Name, attempt + 1);
+                        return;
+                    }
+
                     throw;
                 }
 
                 attempt++;
+                _logger.LogWarning(ex,
+                    "Handler for {EntityType} failed on attempt {Attempt}, retrying",
+                    registration.EntityType.Name, attempt);
                 await Task.Delay(options.RetryDelay * attempt, ct);
             }
         }

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Plugins;
@@ -13,6 +15,12 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
 {
     private readonly ChangePublisherBuilder _publisherBuilder = new();
     private readonly ChangeSubscriberBuilder _subscriberBuilder = new();
+    private readonly ILoggerFactory _loggerFactory;
+
+    public ChangeTrackingBuilder(ILoggerFactory? loggerFactory = null)
+    {
+        _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+    }
 
     public IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox
     {
@@ -92,7 +100,9 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
 
     private EntityChangeTracker BuildInternal()
     {
-        var publisher = _publisherBuilder.Build();
+        _publisherBuilder.UseLoggerFactory(_loggerFactory);  // always non-null — resolved once here
+        _subscriberBuilder.UseLoggerFactory(_loggerFactory);
+        var publisher  = _publisherBuilder.Build();
         var subscriber = _subscriberBuilder.Build();
         return new EntityChangeTracker(publisher, subscriber);
     }

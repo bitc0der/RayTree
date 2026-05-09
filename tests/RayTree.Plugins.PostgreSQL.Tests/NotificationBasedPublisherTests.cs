@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
@@ -61,7 +62,7 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
             ConnectionString = _postgres.GetConnectionString(),
             ChannelName = ChannelName,
             FallbackPollingInterval = TimeSpan.FromMilliseconds(300)
-        });
+        }, NullLoggerFactory.Instance);
     }
 
     [TearDown]

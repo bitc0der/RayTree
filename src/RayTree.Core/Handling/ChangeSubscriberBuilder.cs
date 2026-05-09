@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Serialization;
@@ -14,6 +16,7 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     private IChangeSerializer? _globalSerializer;
     private IChangeCompressor? _globalCompressor;
     private IDeduplicationStore? _dedupStore;
+    private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
     private readonly SubscriberOptions _globalOptions = new();
     private readonly List<Action<ChangeSubscriber>> _entityApplicators = new();
     private bool _built;
@@ -83,14 +86,17 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     {
         _built = true;
         var effectiveDedupStore = dedupStoreOverride ?? _dedupStore;
-        var effectiveOptions = optionsOverride ?? _globalOptions;
-        var subscriber = new ChangeSubscriber(effectiveDedupStore, effectiveOptions);
+        var effectiveOptions    = optionsOverride    ?? _globalOptions;
+        var logger              = _loggerFactory.CreateLogger<ChangeSubscriber>();
+        var subscriber          = new ChangeSubscriber(logger, effectiveDedupStore, effectiveOptions);
 
         foreach (var apply in _entityApplicators)
             apply(subscriber);
 
         return subscriber;
     }
+
+    internal void UseLoggerFactory(ILoggerFactory factory) => _loggerFactory = factory;
 
     /// <summary>Exposes the global serializer to <see cref="EntitySubscriberBuilder{TEntity}"/>.</summary>
     internal IChangeSerializer? GlobalSerializer => _globalSerializer;

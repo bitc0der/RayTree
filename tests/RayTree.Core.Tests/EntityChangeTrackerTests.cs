@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using RayTree.Core.Distribution;
 using RayTree.Core.Models;
@@ -22,7 +23,7 @@ public class EntityChangeTrackerTests
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var publisher = new ChangePublisher();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
         publisher.RegisterOutbox(typeof(SampleEntity), outbox.Object);
 
         var tracker = new EntityChangeTracker(publisher);
@@ -43,7 +44,7 @@ public class EntityChangeTrackerTests
     [Test]
     public void TrackChangeAsync_Throws_WhenNoOutboxRegistered()
     {
-        var tracker = new EntityChangeTracker(new ChangePublisher());
+        var tracker = new EntityChangeTracker(new ChangePublisher(NullLoggerFactory.Instance));
 
         var change = new EntityChange<SampleEntity>
         {
