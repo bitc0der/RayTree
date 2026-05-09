@@ -89,7 +89,11 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                         channel.Writer.TryComplete(ex);
                         return;
                     }
-                    catch (Exception ex) { _logger.LogWarning(ex, "Error consuming from Kafka topic {Topic}, continuing", _options.Topic); continue; }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error consuming from Kafka topic {Topic}, continuing", _options.Topic);
+                        continue;
+                    }
 
                     if (result?.Message == null) continue;
 

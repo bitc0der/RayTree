@@ -156,7 +156,70 @@ public class LoggingTests
     }
 
     // -------------------------------------------------------------------------
-    // 10.3  ChangeSubscriber logs Error when SkipOnFailure drops a message
+    // 10.3  ChangeSubscriber logs Debug on a duplicate CorrelationId
+    // -------------------------------------------------------------------------
+
+    [Test]
+    public async Task ChangeSubscriber_DuplicateMessage_LogsDebug()
+    {
+        // Arrange
+        var recordingLogger = new RecordingLogger<ChangeSubscriber>();
+        var subscriber      = new ChangeSubscriber(recordingLogger);
+
+        var correlationId = Guid.NewGuid();
+        var envelope = new MessageEnvelope
+        {
+            EntityType    = typeof(SampleEntity).AssemblyQualifiedName!,
+            EntityId      = "1",
+            ChangeType    = ChangeType.Insert,
+            CorrelationId = correlationId
+        };
+
+        // First delivery — marks the correlation ID as processed
+        await subscriber.ProcessMessageAsync(envelope);
+        recordingLogger.Entries.Clear();
+
+        // Act — second delivery with the same CorrelationId
+        await subscriber.ProcessMessageAsync(envelope);
+
+        // Assert — a Debug entry was emitted for the duplicate
+        Assert.That(
+            recordingLogger.Entries.Any(e => e.Level == LogLevel.Debug),
+            Is.True,
+            "Expected a Debug log entry for the duplicate CorrelationId");
+    }
+
+    // -------------------------------------------------------------------------
+    // 10.4  ChangeSubscriber logs Debug when no handlers are registered
+    // -------------------------------------------------------------------------
+
+    [Test]
+    public async Task ChangeSubscriber_NoHandlers_LogsDebug()
+    {
+        // Arrange — subscriber has no entity registrations at all
+        var recordingLogger = new RecordingLogger<ChangeSubscriber>();
+        var subscriber      = new ChangeSubscriber(recordingLogger);
+
+        var envelope = new MessageEnvelope
+        {
+            EntityType    = typeof(SampleEntity).AssemblyQualifiedName!,
+            EntityId      = "2",
+            ChangeType    = ChangeType.Update,
+            CorrelationId = Guid.NewGuid()
+        };
+
+        // Act
+        await subscriber.ProcessMessageAsync(envelope);
+
+        // Assert — a Debug entry was emitted because no handlers matched
+        Assert.That(
+            recordingLogger.Entries.Any(e => e.Level == LogLevel.Debug),
+            Is.True,
+            "Expected a Debug log entry when no handlers are registered for the entity type");
+    }
+
+    // -------------------------------------------------------------------------
+    // 10.5  ChangeSubscriber logs Error when SkipOnFailure drops a message
     // -------------------------------------------------------------------------
 
     [Test]

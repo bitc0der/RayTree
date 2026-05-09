@@ -22,7 +22,7 @@ public class ChangeTrackingHostedService : IHostedService
         ILogger<ChangeTrackingHostedService> logger)
     {
         _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
-        _logger  = logger;
+        _logger  = logger  ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public Task StartAsync(CancellationToken cancellationToken)

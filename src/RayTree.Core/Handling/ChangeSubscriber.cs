@@ -41,7 +41,7 @@ public class ChangeSubscriber : IDisposable
         IDeduplicationStore? dedupStore = null,
         SubscriberOptions? options = null)
     {
-        _logger     = logger;
+        _logger     = logger ?? throw new ArgumentNullException(nameof(logger));
         _dedupStore = dedupStore ?? new InMemoryDeduplicationStore();
         _options    = options    ?? new SubscriberOptions();
     }

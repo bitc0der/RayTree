@@ -73,7 +73,7 @@ public sealed class ChangePublisher : IDisposable
 
         foreach (var entityType in _publishers.Keys)
         {
-            _logger.LogInformation("Registering outbox publisher service for {EntityType}", entityType.Name);
+            _logger.LogDebug("Registering outbox publisher service for {EntityType}", entityType.Name);
             var service = new OutboxPublisherService(this, entityType, Options, _loggerFactory);
             _publisherServices.Add(service);
             await service.StartAsync(cancellationToken);

@@ -34,7 +34,8 @@ public class OutboxPublisherService : IDisposable
         _publisher  = publisher    ?? throw new ArgumentNullException(nameof(publisher));
         _entityType = entityType   ?? throw new ArgumentNullException(nameof(entityType));
         _options    = options      ?? throw new ArgumentNullException(nameof(options));
-        _logger     = loggerFactory.CreateLogger<OutboxPublisherService>();
+        _logger     = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
+                          .CreateLogger<OutboxPublisherService>();
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -122,7 +123,7 @@ public class OutboxPublisherService : IDisposable
                 }
 
                 _logger.LogWarning(ex,
-                    "Publish attempt {Attempt} of {MaxRetries} failed for {EntityType}, retrying",
+                    "Retry {Attempt} of {MaxRetries} failed for {EntityType}, retrying",
                     retries, _options.MaxRetryCount, _entityType.Name);
                 await Task.Delay(_options.RetryDelay * retries, ct);
             }
