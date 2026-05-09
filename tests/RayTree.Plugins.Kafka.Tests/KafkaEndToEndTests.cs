@@ -54,7 +54,7 @@ public class KafkaEndToEndTests : IAsyncDisposable
         GroupId          = groupId,
         FromEarliest     = true,
         PollTimeoutMs    = 200   // short poll for fast test feedback
-    });
+    }, NullLoggerFactory.Instance);
 
     /// <summary>
     /// Polls <see cref="KafkaConsumer.IsAssigned"/> until the broker has acknowledged the

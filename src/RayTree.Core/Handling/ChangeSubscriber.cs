@@ -145,17 +145,28 @@ public class ChangeSubscriber : IDisposable
         }
 
         if (!await _dedupStore.TryMarkProcessedAsync(envelope.CorrelationId.ToString(), cancellationToken))
+        {
+            _logger.LogDebug("Duplicate message {CorrelationId} for {EntityType}, skipping",
+                envelope.CorrelationId, envelope.EntityType);
             return;
+        }
 
         if (!_handlers.TryGetValue(entityType, out var handlers) || handlers.Count == 0)
+        {
+            _logger.LogDebug("No handlers registered for {EntityType}, skipping", entityType.Name);
             return;
+        }
 
         var matchingHandlers = handlers
             .Where(h => h.ChangeType == null || h.ChangeType == envelope.ChangeType)
             .ToList();
 
         if (matchingHandlers.Count == 0)
+        {
+            _logger.LogDebug("No handlers matched change type {ChangeType} for {EntityType}, skipping",
+                envelope.ChangeType, entityType.Name);
             return;
+        }
 
         // Deserialize the envelope payload back into a typed EntityChange so handlers
         // receive the full entity state. Falls back to meta-only when no serializer is

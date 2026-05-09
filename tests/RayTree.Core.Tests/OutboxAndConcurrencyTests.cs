@@ -21,7 +21,7 @@ public class OutboxCleanupServiceTests
         outbox2.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(3);
 
-        var service = new OutboxCleanupService(new[] { outbox1.Object, outbox2.Object }, TimeSpan.FromDays(7));
+        var service = new OutboxCleanupService(new[] { outbox1.Object, outbox2.Object }, NullLogger<OutboxCleanupService>.Instance, TimeSpan.FromDays(7));
 
         var deleted = await service.RunCleanupAsync();
 
@@ -33,7 +33,7 @@ public class OutboxCleanupServiceTests
     [Test]
     public async Task RunCleanupAsync_ReturnsZero_WhenNoOutboxes()
     {
-        var service = new OutboxCleanupService(Array.Empty<IOutbox>(), TimeSpan.FromDays(7));
+        var service = new OutboxCleanupService(Array.Empty<IOutbox>(), NullLogger<OutboxCleanupService>.Instance, TimeSpan.FromDays(7));
 
         var deleted = await service.RunCleanupAsync();
 
@@ -47,7 +47,7 @@ public class OutboxCleanupServiceTests
         outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(0);
 
-        var service = new OutboxCleanupService(new[] { outbox.Object });
+        var service = new OutboxCleanupService(new[] { outbox.Object }, NullLogger<OutboxCleanupService>.Instance);
 
         await service.RunCleanupAsync();
 

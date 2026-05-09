@@ -35,7 +35,8 @@ public static class ServiceCollectionExtensions
             var options = sp.GetService<IOptions<OutboxPublisherOptions>>()?.Value ?? new OutboxPublisherOptions();
             var tracker = sp.GetRequiredService<EntityChangeTracker>();
             var outboxes = tracker.Publisher.GetOutboxes().Values;
-            return new OutboxCleanupService(outboxes, options.PollingInterval * 10);
+            var logger = sp.GetRequiredService<ILogger<OutboxCleanupService>>();
+            return new OutboxCleanupService(outboxes, logger, options.PollingInterval * 10);
         });
 
         services.AddHostedService<ChangeTrackingHostedService>();

@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using RayTree.Core.Distribution;
 using RayTree.Core.Models;
@@ -14,6 +15,7 @@ public class NotificationBasedPublisher : IDisposable
 {
     private readonly ChangePublisher _publisher;
     private readonly NotificationBasedPublisherOptions _options;
+    private readonly ILogger<NotificationBasedPublisher> _logger;
     private readonly CancellationTokenSource _cts = new();
     private NpgsqlConnection? _connection;
     private Task? _listenTask;
@@ -28,10 +30,15 @@ public class NotificationBasedPublisher : IDisposable
     private static readonly MethodInfo SerializeMethod = typeof(NotificationBasedPublisher)
         .GetMethod(nameof(SerializeCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
-    public NotificationBasedPublisher(ChangePublisher publisher, NotificationBasedPublisherOptions options)
+    public NotificationBasedPublisher(
+        ChangePublisher publisher,
+        NotificationBasedPublisherOptions options,
+        ILoggerFactory loggerFactory)
     {
-        _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
-        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _publisher = publisher    ?? throw new ArgumentNullException(nameof(publisher));
+        _options   = options      ?? throw new ArgumentNullException(nameof(options));
+        _logger    = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
+                         .CreateLogger<NotificationBasedPublisher>();
     }
 
     public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
@@ -48,6 +55,9 @@ public class NotificationBasedPublisher : IDisposable
 
         _listenTask   = ListenLoopAsync(_cts.Token);
         _fallbackTask = FallbackPollingLoopAsync(_cts.Token);
+
+        _logger.LogInformation("NotificationBasedPublisher started, listening on channel {ChannelName}",
+            _options.ChannelName);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -71,6 +81,8 @@ public class NotificationBasedPublisher : IDisposable
 
             await _connection.CloseAsync();
         }
+
+        _logger.LogInformation("NotificationBasedPublisher stopped");
     }
 
     private async Task ListenLoopAsync(CancellationToken cancellationToken)
@@ -82,8 +94,10 @@ public class NotificationBasedPublisher : IDisposable
                 await _connection!.WaitAsync(cancellationToken);
             }
             catch (OperationCanceledException) { break; }
-            catch (Exception)
+            catch (Exception ex)
             {
+                _logger.LogWarning(ex, "Error waiting for PostgreSQL notifications on {ChannelName}, falling back to polling",
+                    _options.ChannelName);
                 await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
             }
         }
@@ -99,8 +113,9 @@ public class NotificationBasedPublisher : IDisposable
                 await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
             }
             catch (OperationCanceledException) { break; }
-            catch (Exception)
+            catch (Exception ex)
             {
+                _logger.LogWarning(ex, "Error in fallback polling loop");
                 try { await Task.Delay(_options.FallbackPollingInterval, cancellationToken); }
                 catch { }
             }
@@ -130,7 +145,10 @@ public class NotificationBasedPublisher : IDisposable
                 await PublishChangeAsync(change, entityType, publisher, serializer, compressor, _cts.Token);
                 await outbox.MarkPublishedAsync(change.Id, _cts.Token);
             }
-            catch (Exception) { }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error processing PostgreSQL notification");
+            }
         });
     }
 
@@ -182,7 +200,12 @@ public class NotificationBasedPublisher : IDisposable
                     await PublishChangeAsync(change, entityType, publisher, serializer, compressor, cancellationToken);
                     await outbox.MarkPublishedAsync(change.Id, cancellationToken);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to publish change {ChangeId} for {EntityType}, will retry in next polling cycle",
+                        change.Id, entityType.Name);
+                }
             }
         }
     }

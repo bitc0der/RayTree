@@ -39,12 +39,14 @@ public class OutboxPublisherService : IDisposable
 
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
+        _logger.LogInformation("Starting outbox publisher for {EntityType}", _entityType.Name);
         _pollingTask = PollAndPublishAsync(_cts.Token);
         return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
+        _logger.LogInformation("Stopping outbox publisher for {EntityType}", _entityType.Name);
         _stopping = true;
         _cts.Cancel();
 

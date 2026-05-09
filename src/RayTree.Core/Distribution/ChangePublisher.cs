@@ -22,12 +22,14 @@ public sealed class ChangePublisher : IDisposable
     private readonly ConcurrentDictionary<Type, IRepository> _repositories = new();
     private readonly List<OutboxPublisherService> _publisherServices = new();
     private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger<ChangePublisher> _logger;
 
     public OutboxPublisherOptions Options { get; } = new();
 
     public ChangePublisher(ILoggerFactory loggerFactory)
     {
         _loggerFactory = loggerFactory;
+        _logger        = loggerFactory.CreateLogger<ChangePublisher>();
     }
 
     public void RegisterOutbox(Type entityType, IOutbox outbox) => _outboxes[entityType] = outbox;
@@ -71,6 +73,7 @@ public sealed class ChangePublisher : IDisposable
 
         foreach (var entityType in _publishers.Keys)
         {
+            _logger.LogInformation("Registering outbox publisher service for {EntityType}", entityType.Name);
             var service = new OutboxPublisherService(this, entityType, Options, _loggerFactory);
             _publisherServices.Add(service);
             await service.StartAsync(cancellationToken);
