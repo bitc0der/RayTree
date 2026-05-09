@@ -41,12 +41,15 @@ When `UseNotificationChannel = true`, calling `outbox.InitializeAsync()` (or `tr
 `NotificationBasedPublisher` is a standalone component that holds its own persistent LISTEN connection:
 
 ```csharp
-var publisher = new NotificationBasedPublisher(tracker, new NotificationBasedPublisherOptions
-{
-    ConnectionString = connectionString,
-    ChannelName = "products_notify",             // must match the outbox channel name
-    FallbackPollingInterval = TimeSpan.FromSeconds(30)
-});
+var publisher = new NotificationBasedPublisher(
+    tracker.Publisher,
+    new NotificationBasedPublisherOptions
+    {
+        ConnectionString = connectionString,
+        ChannelName = "products_notify",         // must match the outbox channel name
+        FallbackPollingInterval = TimeSpan.FromSeconds(30)
+    },
+    loggerFactory);  // ILoggerFactory — required
 
 await publisher.StartAsync();
 
@@ -55,7 +58,7 @@ await publisher.StopAsync();
 publisher.Dispose();
 ```
 
-`tracker` is the `EntityChangeTracker` that has the outbox, queue publisher, serializer, and compressor registered for each entity type. `NotificationBasedPublisher` uses it to resolve these per-entity dependencies when a notification arrives.
+`tracker.Publisher` is the `ChangePublisher` that has the outbox, queue publisher, serializer, and compressor registered for each entity type. `NotificationBasedPublisher` uses it to resolve these per-entity dependencies when a notification arrives.
 
 ### Step 3 — Wire into hosted service (ASP.NET Core)
 
@@ -64,14 +67,20 @@ public class NotificationPublisherHostedService : IHostedService, IDisposable
 {
     private readonly NotificationBasedPublisher _publisher;
 
-    public NotificationPublisherHostedService(EntityChangeTracker tracker, IConfiguration config)
+    public NotificationPublisherHostedService(
+        EntityChangeTracker tracker,
+        IConfiguration config,
+        ILoggerFactory loggerFactory)
     {
-        _publisher = new NotificationBasedPublisher(tracker, new NotificationBasedPublisherOptions
-        {
-            ConnectionString = config.GetConnectionString("Default")!,
-            ChannelName = "products_notify",
-            FallbackPollingInterval = TimeSpan.FromSeconds(30)
-        });
+        _publisher = new NotificationBasedPublisher(
+            tracker.Publisher,
+            new NotificationBasedPublisherOptions
+            {
+                ConnectionString = config.GetConnectionString("Default")!,
+                ChannelName = "products_notify",
+                FallbackPollingInterval = TimeSpan.FromSeconds(30)
+            },
+            loggerFactory);
     }
 
     public Task StartAsync(CancellationToken ct) => _publisher.StartAsync(ct);
@@ -151,9 +160,9 @@ var productOptions = new PostgreSqlOutboxOptions { ... }
 var orderOptions = new PostgreSqlOutboxOptions { ... }
     .UseNotificationChannel("orders_notify");
 
-// A publisher per channel
-var productPublisher = new NotificationBasedPublisher(tracker, new() { ChannelName = "products_notify", ... });
-var orderPublisher   = new NotificationBasedPublisher(tracker, new() { ChannelName = "orders_notify",   ... });
+// A publisher per channel (ILoggerFactory required as third argument)
+var productPublisher = new NotificationBasedPublisher(tracker.Publisher, new() { ChannelName = "products_notify", ... }, loggerFactory);
+var orderPublisher   = new NotificationBasedPublisher(tracker.Publisher, new() { ChannelName = "orders_notify",   ... }, loggerFactory);
 ```
 
 ## Monitoring

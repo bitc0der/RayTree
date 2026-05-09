@@ -94,6 +94,7 @@ public interface IQueueConsumer
 - `InitializeAsync` opens the connection and sets up the subscription
 - `ConsumeAsync` must be called after `InitializeAsync`
 - All broker operations (consume + ack) must run on the same thread for brokers with native single-thread requirements (e.g., Confluent.Kafka); use a dedicated background thread with a `Channel<MessageEnvelope>` buffer
+- Accept `ILoggerFactory loggerFactory` as a required constructor parameter and create a typed `ILogger<T>` from it — do not add a `NullLoggerFactory.Instance` fallback inside the class itself
 
 ### IChangeSerializer
 
@@ -185,14 +186,16 @@ public static class MyOutboxExtensions
 
 ## Testing Plugins
 
-Register plugins directly on `EntityChangeTracker` without using the builder:
+Register plugins directly on `ChangePublisher` and construct `EntityChangeTracker` from it:
 
 ```csharp
-var tracker = new EntityChangeTracker();
-tracker.RegisterOutbox(typeof(MyEntity), new InMemoryOutbox());
-tracker.RegisterPublisher(typeof(MyEntity), new InMemoryQueue());
-tracker.RegisterSerializer(typeof(MyEntity), new MyCustomSerializer());
-tracker.RegisterCompressor(typeof(MyEntity), new MyCustomCompressor());
+var publisher = new ChangePublisher(NullLoggerFactory.Instance);
+publisher.RegisterOutbox(typeof(MyEntity), new InMemoryOutbox());
+publisher.RegisterPublisher(typeof(MyEntity), new InMemoryQueue());
+publisher.RegisterSerializer(typeof(MyEntity), new MyCustomSerializer());
+publisher.RegisterCompressor(typeof(MyEntity), new MyCustomCompressor());
+
+var tracker = new EntityChangeTracker(publisher);
 await tracker.InitializeAsync();
 ```
 

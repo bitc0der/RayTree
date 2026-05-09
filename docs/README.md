@@ -11,11 +11,13 @@ A modular .NET 8.0 entity change tracking system with outbox pattern support, qu
 - **Modular Plugins** - Each serializer and compressor in its own package
 - **In-Memory Testing** - Full in-memory implementation for development and testing
 - **Auto-Initialization** - Automatic database schema initialization on `Build()` / `BuildAsync()`
+- **Structured Logging** - `Microsoft.Extensions.Logging` throughout; pass `ILoggerFactory` to `ChangeTrackingBuilder` or let `AddChangeTracking` wire it from DI automatically
 
 ## Quick Start
 
 ```csharp
-var builder = new ChangeTrackingBuilder();
+// Optional: pass ILoggerFactory for structured log output (defaults to NullLoggerFactory)
+var builder = new ChangeTrackingBuilder(loggerFactory);
 
 builder.ForEntity<Product>(e => e
     .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions

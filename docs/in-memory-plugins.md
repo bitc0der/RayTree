@@ -76,13 +76,14 @@ public async Task ChangeTracking_Works_InMemory()
     var compressor = new NoOpCompressorPlugin();
 
     // Publisher side
-    var tracker = new EntityChangeTracker();
-    tracker.RegisterOutbox(typeof(Product), new InMemoryOutbox());
-    tracker.RegisterPublisher(typeof(Product), queue);
-    tracker.RegisterSerializer(typeof(Product), serializer);
-    tracker.RegisterCompressor(typeof(Product), compressor);
-    tracker.PublisherOptions.PollingInterval = TimeSpan.FromMilliseconds(50);
-    await tracker.InitializeAsync();
+    var tracker = new ChangeTrackingBuilder()
+        .ForEntity<Product>(e => e
+            .UseOutbox(new InMemoryOutbox())
+            .UseQueue(queue)
+            .UseSerializer(serializer)
+            .UseCompressor(compressor))
+        .UsePublisherOptions(opt => opt.PollingInterval = TimeSpan.FromMilliseconds(50))
+        .Build();
 
     // Subscriber side
     var received = new TaskCompletionSource<EntityChange<Product>>();

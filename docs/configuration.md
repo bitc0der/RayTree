@@ -113,12 +113,15 @@ builder.ForEntity<Product>(e => e
 
 var tracker = builder.Build(); // creates table + trigger
 
-var notificationPublisher = new NotificationBasedPublisher(tracker, new NotificationBasedPublisherOptions
-{
-    ConnectionString        = connectionString,
-    ChannelName             = "product_notify",
-    FallbackPollingInterval = TimeSpan.FromSeconds(30)
-});
+var notificationPublisher = new NotificationBasedPublisher(
+    tracker.Publisher,
+    new NotificationBasedPublisherOptions
+    {
+        ConnectionString        = connectionString,
+        ChannelName             = "product_notify",
+        FallbackPollingInterval = TimeSpan.FromSeconds(30)
+    },
+    loggerFactory);  // ILoggerFactory — required; use NullLoggerFactory.Instance in tests
 
 await notificationPublisher.StartAsync();
 ```
@@ -303,6 +306,69 @@ subscriber = new ChangeSubscriberBuilder()
     .ForEntity<Order>(e => e /* ... */)
     .Build();
 ```
+
+## Logging
+
+RayTree uses `Microsoft.Extensions.Logging` throughout. All runtime service classes require a logger — there is no silent NullLogger fallback inside services.
+
+### Standalone (no DI)
+
+Pass an `ILoggerFactory` to `ChangeTrackingBuilder`:
+
+```csharp
+// No logging (tests, scripts)
+var tracker = new ChangeTrackingBuilder().Build();
+
+// With logging
+using var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
+var tracker = new ChangeTrackingBuilder(loggerFactory).Build();
+```
+
+`ChangeTrackingBuilder` normalises `null` to `NullLoggerFactory.Instance`, so calling `new ChangeTrackingBuilder()` without an argument produces a working tracker with no log output.
+
+### ASP.NET Core (DI)
+
+`AddChangeTracking` resolves `ILoggerFactory` from the DI container automatically:
+
+```csharp
+builder.Services.AddLogging(b => b.AddConsole()); // standard host setup
+builder.Services.AddChangeTracking(builder.Configuration, tracking => { ... });
+// No UseLoggerFactory call needed — the host's ILoggerFactory is wired in automatically
+```
+
+### Broker-specific consumers
+
+`KafkaConsumer` and `RabbitMqConsumer` require `ILoggerFactory` as a second constructor argument. When constructing them directly outside a builder, pass the factory explicitly:
+
+```csharp
+// In tests
+var consumer = new KafkaConsumer(options, NullLoggerFactory.Instance);
+
+// In production code
+var consumer = new KafkaConsumer(options, loggerFactory);
+```
+
+When using the `.UseKafka(...)` / `.UseRabbitMq(...)` extension methods inside a `ForEntity` callback, `NullLoggerFactory.Instance` is used internally — to get real logging from these consumers, construct them directly and pass to `.UseConsumer(consumer)`.
+
+### What gets logged
+
+| Class | Level | When |
+|---|---|---|
+| `OutboxPublisherService` | `Information` | Polling loop start / stop |
+| `OutboxPublisherService` | `Warning` | Per-retry publish failure |
+| `OutboxPublisherService` | `Error` | Batch error; retries exhausted |
+| `ChangeSubscriber` | `Warning` | Unknown entity type in envelope |
+| `ChangeSubscriber` | `Debug` | Dedup hit; no handlers matched |
+| `ChangeSubscriber` | `Warning` | Handler retry attempt |
+| `ChangeSubscriber` | `Error` | Handler dropped (SkipOnFailure) |
+| `ChangePublisher` | `Information` | Publisher service registered per entity |
+| `ChangeTrackingHostedService` | `Information` | Consumer loop start / service stop |
+| `NotificationBasedPublisher` | `Information` | Start / stop |
+| `NotificationBasedPublisher` | `Warning` | Listen-loop error; fallback-poll error; per-change publish failure |
+| `KafkaConsumer` | `Error` | Fatal Kafka error |
+| `KafkaConsumer` | `Warning` | Consume error; envelope parse failure |
+| `RabbitMqConsumer` | `Warning` | Message processing error (before requeue) |
+| `OutboxCleanupService` | `Information` | Cleanup run total deleted count |
 
 ## Cleanup
 
