@@ -16,8 +16,7 @@ namespace RayTree.Plugins.RabbitMQ.Tests;
 [NonParallelizable]
 public class RabbitMqEndToEndTests : IAsyncDisposable
 {
-    private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder()
-        .WithImage("rabbitmq:3-alpine")
+    private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder("rabbitmq:3-alpine")
         .Build();
 
     [OneTimeSetUp]

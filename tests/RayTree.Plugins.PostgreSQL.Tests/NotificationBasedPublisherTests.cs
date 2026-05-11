@@ -14,8 +14,7 @@ namespace RayTree.Plugins.PostgreSQL.Tests;
 [NonParallelizable]
 public class NotificationBasedPublisherTests : IAsyncDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16-alpine")
         .Build();
 
     private EntityChangeTracker _tracker = null!;
