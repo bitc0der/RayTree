@@ -5,5 +5,9 @@
     <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.Json\RayTree.Plugins.Serializers.Json.csproj" />
     <PackageReference Include="Testcontainers" />
     <PackageReference Include="Testcontainers.Kafka" />
+    <PackageReference Update="NUnit.Analyzers">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 </Project>

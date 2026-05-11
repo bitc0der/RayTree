@@ -19,7 +19,7 @@ namespace RayTree.Plugins.Kafka.Tests;
 public class KafkaEndToEndTests : IAsyncDisposable
 {
     private readonly KafkaContainer _kafka = new KafkaBuilder()
-        .WithImage("confluentinc/cp-kafka:7.4.0")
+        .WithImage("confluentinc/cp-kafka:7.6.1")
         .Build();
 
     [OneTimeSetUp]

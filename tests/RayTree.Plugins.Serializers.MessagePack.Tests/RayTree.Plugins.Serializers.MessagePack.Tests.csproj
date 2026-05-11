@@ -2,5 +2,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.MessagePack\RayTree.Plugins.Serializers.MessagePack.csproj" />
     <PackageReference Include="MessagePack" />
+    <PackageReference Update="NUnit.Analyzers">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 </Project>
