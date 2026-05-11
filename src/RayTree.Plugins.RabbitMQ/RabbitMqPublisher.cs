@@ -8,26 +8,28 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 {
     private readonly RabbitMqPublisherOptions _options;
     private IConnection? _connection;
-    private IModel? _channel;
-    private readonly object _lock = new();
+    private IChannel? _channel;
+
+    private readonly SemaphoreSlim _semaphore = new(initialCount: 1, maxCount: 1);
 
     public RabbitMqPublisher(RabbitMqPublisherOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
     }
 
-    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        GetChannel();
-        return Task.CompletedTask;
+        await GetChannelAsync(cancellationToken);
     }
 
-    private IModel GetChannel()
+    private async Task<IChannel> GetChannelAsync(CancellationToken cancellationToken)
     {
         if (_channel is { IsOpen: true })
             return _channel;
 
-        lock (_lock)
+        await _semaphore.WaitAsync(cancellationToken);
+
+        try
         {
             if (_channel is { IsOpen: true })
                 return _channel;
@@ -35,47 +37,65 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
             var factory = new ConnectionFactory
             {
                 HostName = _options.HostName,
-                Port     = _options.Port,
+                Port = _options.Port,
                 UserName = _options.UserName,
                 Password = _options.Password
             };
 
-            _connection = factory.CreateConnection();
-            _channel    = _connection.CreateModel();
+            _connection = await factory.CreateConnectionAsync(cancellationToken: cancellationToken);
+            _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
 
             if (_options.DeclareExchange)
-                _channel.ExchangeDeclare(_options.ExchangeName, _options.ExchangeType, _options.Durable);
+                await _channel.ExchangeDeclareAsync(
+                    exchange: _options.ExchangeName,
+                    type: _options.ExchangeType,
+                    durable: _options.Durable,
+                    cancellationToken: cancellationToken
+                );
 
             return _channel;
         }
+        finally
+        {
+            _semaphore.Release();
+        }
     }
 
-    public Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
+    public async Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
     {
-        var channel    = GetChannel();
+        var channel = await GetChannelAsync(cancellationToken);
         var routingKey = $"{_options.RoutingKey}.{envelope.EntityType}.{envelope.ChangeType.ToString().ToLower()}";
 
-        var properties = channel.CreateBasicProperties();
-        properties.ContentType = "application/octet-stream";
-        properties.MessageId   = envelope.CorrelationId.ToString();
-        properties.Timestamp   = new AmqpTimestamp((long)new DateTimeOffset(envelope.Timestamp).ToUnixTimeSeconds());
-        properties.Headers     = new Dictionary<string, object?>
+        var properties = new BasicProperties
         {
-            ["entity_type"] = envelope.EntityType,
-            ["entity_id"]   = envelope.EntityId,
-            ["change_type"] = envelope.ChangeType.ToString(),
-            ["version"]     = envelope.Version
+            ContentType = "application/octet-stream",
+            MessageId = envelope.CorrelationId.ToString(),
+            Timestamp = new AmqpTimestamp(new DateTimeOffset(envelope.Timestamp).ToUnixTimeSeconds()),
+            Headers = new Dictionary<string, object?>
+            {
+                ["entity_type"] = envelope.EntityType,
+                ["entity_id"] = envelope.EntityId,
+                ["change_type"] = envelope.ChangeType.ToString(),
+                ["version"] = envelope.Version
+            }
         };
 
-        channel.BasicPublish(_options.ExchangeName, routingKey, false, properties, envelope.Payload);
-        return Task.CompletedTask;
+        await channel.BasicPublishAsync(
+            exchange: _options.ExchangeName,
+            routingKey: routingKey,
+            mandatory: false,
+            properties,
+            body: envelope.Payload,
+            cancellationToken: cancellationToken
+        );
     }
 
     public void Dispose()
     {
-        _channel?.Close();
-        _connection?.Close();
+        _channel?.CloseAsync().GetAwaiter().GetResult();
+        _connection?.CloseAsync().GetAwaiter().GetResult();
         _channel?.Dispose();
         _connection?.Dispose();
+        _semaphore.Dispose();
     }
 }

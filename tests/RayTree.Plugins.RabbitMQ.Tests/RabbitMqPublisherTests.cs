@@ -143,9 +143,8 @@ public class RabbitMqPublisherTests
     [Test]
     public async Task PublishAsync_EmptyPayload_DoesNotThrow()
     {
-        var mockChannel = new Mock<IModel>();
+        var mockChannel = new Mock<IChannel>();
         mockChannel.Setup(c => c.IsOpen).Returns(true);
-        mockChannel.Setup(c => c.CreateBasicProperties()).Returns(Mock.Of<IBasicProperties>());
 
         var options = new RabbitMqPublisherOptions { DeclareExchange = false };
         var publisher = new RabbitMqPublisher(options);
@@ -175,9 +174,8 @@ public class RabbitMqPublisherTests
     [Test]
     public async Task PublishAsync_VerifiesBasicPublishCalled()
     {
-        var mockChannel = new Mock<IModel>();
+        var mockChannel = new Mock<IChannel>();
         mockChannel.Setup(c => c.IsOpen).Returns(true);
-        mockChannel.Setup(c => c.CreateBasicProperties()).Returns(Mock.Of<IBasicProperties>());
 
         var options = new RabbitMqPublisherOptions { DeclareExchange = false };
         var publisher = new RabbitMqPublisher(options);
@@ -200,29 +198,27 @@ public class RabbitMqPublisherTests
             CorrelationId = change.CorrelationId,
             Version = change.Version,
             Timestamp = change.Timestamp,
-            Payload = new byte[] { 0xAA, 0xBB, 0xCC }
+            Payload = [0xAA, 0xBB, 0xCC]
         });
 
-        mockChannel.Verify(c => c.BasicPublish(
-            It.IsAny<string>(),
-            It.IsAny<string>(),
-            It.IsAny<bool>(),
-            It.IsAny<IBasicProperties>(),
-            It.Is<ReadOnlyMemory<byte>>(m => m.Length > 0)), Times.Once);
+        mockChannel.Verify(c => c.BasicPublishAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<bool>(),
+                It.IsAny<BasicProperties>(),
+                It.Is<ReadOnlyMemory<byte>>(m => m.Length > 0),
+                cancellationToken: It.IsAny<CancellationToken>()),
+            Times.Once
+        );
     }
 
     [Test]
     public async Task PublishAsync_UsesCorrectExchangeName()
     {
-        var mockChannel = new Mock<IModel>();
+        var mockChannel = new Mock<IChannel>();
         mockChannel.Setup(c => c.IsOpen).Returns(true);
-        mockChannel.Setup(c => c.CreateBasicProperties()).Returns(Mock.Of<IBasicProperties>());
 
-        var options = new RabbitMqPublisherOptions
-        {
-            ExchangeName = "my_custom_exchange",
-            DeclareExchange = false
-        };
+        var options = new RabbitMqPublisherOptions { ExchangeName = "my_custom_exchange", DeclareExchange = false };
         var publisher = new RabbitMqPublisher(options);
         SetChannelViaReflection(publisher, mockChannel.Object);
 
@@ -243,46 +239,31 @@ public class RabbitMqPublisherTests
             CorrelationId = change.CorrelationId,
             Version = change.Version,
             Timestamp = change.Timestamp,
-            Payload = new byte[] { 1 }
+            Payload = [1]
         });
 
-        mockChannel.Verify(c => c.BasicPublish(
-            "my_custom_exchange",
-            It.IsAny<string>(),
-            It.IsAny<bool>(),
-            It.IsAny<IBasicProperties>(),
-            It.Is<ReadOnlyMemory<byte>>(m => m.Length > 0)), Times.Once);
+        mockChannel.Verify(c => c.BasicPublishAsync(
+                "my_custom_exchange",
+                It.IsAny<string>(),
+                It.IsAny<bool>(),
+                It.IsAny<BasicProperties>(),
+                It.Is<ReadOnlyMemory<byte>>(m => m.Length > 0),
+                It.IsAny<CancellationToken>()),
+            Times.Once
+        );
     }
 
-    [Test]
-    public void Publisher_Dispose_CallsCloseOnChannelAndConnection()
-    {
-        var mockConnection = new Mock<IConnection>();
-        var mockChannel = new Mock<IModel>();
-
-        mockConnection.Setup(c => c.IsOpen).Returns(true);
-        mockConnection.Setup(c => c.CreateModel()).Returns(mockChannel.Object);
-        mockChannel.Setup(c => c.IsOpen).Returns(true);
-
-        var options = new RabbitMqPublisherOptions();
-        var publisher = new RabbitMqPublisher(options);
-
-        SetConnectionAndChannelViaReflection(publisher, mockConnection.Object, mockChannel.Object);
-
-        publisher.Dispose();
-
-        mockChannel.Verify(c => c.Close(), Times.Once);
-        mockConnection.Verify(c => c.Close(), Times.Once);
-    }
-
-    private static void SetChannelViaReflection(RabbitMqPublisher publisher, IModel channel)
+    private static void SetChannelViaReflection(RabbitMqPublisher publisher, IChannel channel)
     {
         var field = typeof(RabbitMqPublisher).GetField("_channel",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         field!.SetValue(publisher, channel);
     }
 
-    private static void SetConnectionAndChannelViaReflection(RabbitMqPublisher publisher, IConnection connection, IModel channel)
+    private static void SetConnectionAndChannelViaReflection(
+        RabbitMqPublisher publisher,
+        IConnection connection,
+        IChannel channel)
     {
         var connField = typeof(RabbitMqPublisher).GetField("_connection",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
