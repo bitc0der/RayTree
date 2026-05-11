@@ -32,6 +32,9 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RayTree.Plugins.Compressors.Lz4", "src\RayTree.Plugins.Compressors.Lz4\RayTree.Plugins.Compressors.Lz4.csproj", "{DB93F916-1EEE-414E-A31D-A130DD2EA91A}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
+	ProjectSection(SolutionItems) = preProject
+		tests\Directory.Build.props = tests\Directory.Build.props
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RayTree.Core.Tests", "tests\RayTree.Core.Tests\RayTree.Core.Tests.csproj", "{B4933D7D-2A96-4DED-ADD1-D947E6050F45}"
 EndProject

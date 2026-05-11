@@ -1,11 +1,11 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using DotNet.Testcontainers.Containers;
 using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.PostgreSQL.Outbox;
-using Testcontainers.PostgreSql;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
 
@@ -17,8 +17,7 @@ public class TestEntity
 [NonParallelizable]
 public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder(image: "postgres:16-alpine")
-        .Build();
+    private readonly IContainer _postgres = PostgresContainerFactory.Create();
 
     private EntityChangeTracker _tracker = null!;
 
@@ -35,8 +34,7 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
         builder.ForEntity<TestEntity>(e => e
             .UseOutbox(new PostgreSqlOutbox<TestEntity>(new()
             {
-                ConnectionString = _postgres.GetConnectionString(),
-                OutboxTableName = "test_entity_outbox"
+                ConnectionString = _postgres.GetConnectionString(), OutboxTableName = "test_entity_outbox"
             }))
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())
@@ -117,7 +115,8 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
         await outbox!.WriteAsync(CreateTestChange(timestamp: DateTime.UtcNow.AddHours(-2)));
         await outbox.WriteAsync(CreateTestChange(timestamp: DateTime.UtcNow));
 
-        var filtered = await outbox.GetUnpublishedAsync<TestEntity>(since: DateTime.UtcNow.AddMinutes(-30), batchSize: 10);
+        var filtered =
+            await outbox.GetUnpublishedAsync<TestEntity>(since: DateTime.UtcNow.AddMinutes(-30), batchSize: 10);
         Assert.That(filtered, Has.Count.EqualTo(1));
     }
 
@@ -193,70 +192,51 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
 [Table("test_users")]
 public class TestUser
 {
-    [Key]
-    [Column("id")]
-    public int Id { get; set; }
+    [Key] [Column("id")] public int Id { get; set; }
 
-    [Column("name")]
-    public string? Name { get; set; }
+    [Column("name")] public string? Name { get; set; }
 
-    [Column("email")]
-    public string? Email { get; set; }
+    [Column("email")] public string? Email { get; set; }
 
-    [Column("created_at")]
-    public DateTime? CreatedAt { get; set; }
+    [Column("created_at")] public DateTime? CreatedAt { get; set; }
 
-    [Column("updated_at")]
-    public DateTime? UpdatedAt { get; set; }
+    [Column("updated_at")] public DateTime? UpdatedAt { get; set; }
 }
 
 [Table("annotated_entity")]
 public class AnnotatedEntity
 {
-    [Column("custom_id")]
-    public int Id { get; set; }
+    [Column("custom_id")] public int Id { get; set; }
 
-    [Column("full_name")]
-    public string? Name { get; set; }
+    [Column("full_name")] public string? Name { get; set; }
 
-    [NotMapped]
-    public string? Ignored { get; set; }
+    [NotMapped] public string? Ignored { get; set; }
 
-    [Required]
-    public string RequiredField { get; set; } = string.Empty;
+    [Required] public string RequiredField { get; set; } = string.Empty;
 
-    [Required]
-    public int? RequiredNullableInt { get; set; }
+    [Required] public int? RequiredNullableInt { get; set; }
 
-    [MaxLength(200)]
-    public string? Bio { get; set; }
+    [MaxLength(200)] public string? Bio { get; set; }
 
-    [StringLength(50)]
-    public string? Code { get; set; }
+    [StringLength(50)] public string? Code { get; set; }
 
-    [MaxLength(100)]
-    [StringLength(20)]
-    public string? BothLengths { get; set; }
+    [MaxLength(100)] [StringLength(20)] public string? BothLengths { get; set; }
 
-    [Column(TypeName = "JSONB")]
-    public string? Metadata { get; set; }
+    [Column(TypeName = "JSONB")] public string? Metadata { get; set; }
 }
 
 public class KeyAnnotatedEntity
 {
-    [Key]
-    public int OrderId { get; set; }
+    [Key] public int OrderId { get; set; }
 
     public string? Description { get; set; }
 }
 
 public class CompositeKeyEntity
 {
-    [Key, Column(Order = 0)]
-    public int OrderId { get; set; }
+    [Key, Column(Order = 0)] public int OrderId { get; set; }
 
-    [Key, Column(Order = 1)]
-    public int LineNumber { get; set; }
+    [Key, Column(Order = 1)] public int LineNumber { get; set; }
 
     public string? Product { get; set; }
 }

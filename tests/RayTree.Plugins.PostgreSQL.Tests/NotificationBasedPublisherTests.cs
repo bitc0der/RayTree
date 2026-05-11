@@ -1,3 +1,4 @@
+using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using RayTree.Core.Models;
@@ -7,15 +8,13 @@ using RayTree.Plugins.InMemory;
 using RayTree.Plugins.PostgreSQL.Outbox;
 using RayTree.Plugins.PostgreSQL.Outbox.Notification;
 using RayTree.Plugins.Serializers.Json;
-using Testcontainers.PostgreSql;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
 
 [NonParallelizable]
 public class NotificationBasedPublisherTests : IAsyncDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16-alpine")
-        .Build();
+    private readonly IContainer _postgres = PostgresContainerFactory.Create();
 
     private EntityChangeTracker _tracker = null!;
     private InMemoryQueue _queue = null!;
@@ -56,12 +55,13 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
 
         _tracker = builder.Build();
 
-        _publisher = new NotificationBasedPublisher(_tracker.Publisher, new NotificationBasedPublisherOptions
-        {
-            ConnectionString = _postgres.GetConnectionString(),
-            ChannelName = ChannelName,
-            FallbackPollingInterval = TimeSpan.FromMilliseconds(300)
-        }, NullLoggerFactory.Instance);
+        _publisher = new NotificationBasedPublisher(_tracker.Publisher,
+            new NotificationBasedPublisherOptions
+            {
+                ConnectionString = _postgres.GetConnectionString(),
+                ChannelName = ChannelName,
+                FallbackPollingInterval = TimeSpan.FromMilliseconds(300)
+            }, NullLoggerFactory.Instance);
     }
 
     [TearDown]

@@ -1,18 +1,16 @@
+using DotNet.Testcontainers.Containers;
 using Npgsql;
 using RayTree.Core.Tracking;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.PostgreSQL.Outbox;
 using RayTree.Plugins.PostgreSQL.Repository;
-using Testcontainers.PostgreSql;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
 
 [NonParallelizable]
-
 public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16-alpine")
-        .Build();
+    private readonly IContainer _postgres = PostgresContainerFactory.Create();
 
     private EntityChangeTracker _tracker = null!;
 
@@ -29,13 +27,11 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
         builder.ForEntity<TestUser>(e => e
             .UseRepository(new PostgreSqlRepository<TestUser>(new()
             {
-                ConnectionString = _postgres.GetConnectionString(),
-                TableName = "test_users"
+                ConnectionString = _postgres.GetConnectionString(), TableName = "test_users"
             }))
             .UseOutbox(new PostgreSqlOutbox<TestUser>(new()
             {
-                ConnectionString = _postgres.GetConnectionString(),
-                OutboxTableName = "test_users_outbox"
+                ConnectionString = _postgres.GetConnectionString(), OutboxTableName = "test_users_outbox"
             }))
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())

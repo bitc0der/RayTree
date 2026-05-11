@@ -259,18 +259,4 @@ public class RabbitMqPublisherTests
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         field!.SetValue(publisher, channel);
     }
-
-    private static void SetConnectionAndChannelViaReflection(
-        RabbitMqPublisher publisher,
-        IConnection connection,
-        IChannel channel)
-    {
-        var connField = typeof(RabbitMqPublisher).GetField("_connection",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        connField!.SetValue(publisher, connection);
-
-        var chanField = typeof(RabbitMqPublisher).GetField("_channel",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        chanField!.SetValue(publisher, channel);
-    }
 }

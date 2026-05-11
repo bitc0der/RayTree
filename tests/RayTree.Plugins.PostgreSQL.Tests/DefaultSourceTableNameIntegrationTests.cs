@@ -1,14 +1,13 @@
+using DotNet.Testcontainers.Containers;
 using Npgsql;
 using RayTree.Plugins.PostgreSQL.Repository;
-using Testcontainers.PostgreSql;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
 
 [NonParallelizable]
 public class DefaultSourceTableNameIntegrationTests : IAsyncDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16-alpine")
-        .Build();
+    private readonly IContainer _postgres = PostgresContainerFactory.Create();
 
     [OneTimeSetUp]
     public Task OneTimeSetUp() => _postgres.StartAsync();
@@ -28,10 +27,11 @@ public class DefaultSourceTableNameIntegrationTests : IAsyncDisposable
 
         await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
         await conn.OpenAsync();
-        await using var cmd = new NpgsqlCommand("""
-                                                SELECT COUNT(*) FROM information_schema.tables
-                                                WHERE table_name = 'test_entity'
-                                                """, conn);
+        await using var cmd = new NpgsqlCommand(
+            """
+            SELECT COUNT(*) FROM information_schema.tables
+            WHERE table_name = 'test_entity'
+            """, conn);
         var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         Assert.That(count, Is.EqualTo(1));
     }
