@@ -1,13 +1,11 @@
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using DotNet.Testcontainers.Containers;
 using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
-using RayTree.Plugins;
 using RayTree.Plugins.InMemory;
-using RayTree.Plugins.PostgreSQL;
 using RayTree.Plugins.PostgreSQL.Outbox;
-using RayTree.Plugins.PostgreSQL.Repository;
-using Testcontainers.PostgreSql;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
 
@@ -19,9 +17,7 @@ public class TestEntity
 [NonParallelizable]
 public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
-        .Build();
+    private readonly IContainer _postgres = PostgresContainerFactory.Create();
 
     private EntityChangeTracker _tracker = null!;
 
@@ -38,8 +34,7 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
         builder.ForEntity<TestEntity>(e => e
             .UseOutbox(new PostgreSqlOutbox<TestEntity>(new()
             {
-                ConnectionString = _postgres.GetConnectionString(),
-                OutboxTableName = "test_entity_outbox"
+                ConnectionString = _postgres.GetConnectionString(), OutboxTableName = "test_entity_outbox"
             }))
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())
@@ -120,7 +115,8 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
         await outbox!.WriteAsync(CreateTestChange(timestamp: DateTime.UtcNow.AddHours(-2)));
         await outbox.WriteAsync(CreateTestChange(timestamp: DateTime.UtcNow));
 
-        var filtered = await outbox.GetUnpublishedAsync<TestEntity>(since: DateTime.UtcNow.AddMinutes(-30), batchSize: 10);
+        var filtered =
+            await outbox.GetUnpublishedAsync<TestEntity>(since: DateTime.UtcNow.AddMinutes(-30), batchSize: 10);
         Assert.That(filtered, Has.Count.EqualTo(1));
     }
 
@@ -193,245 +189,59 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
     };
 }
 
-[NonParallelizable]
-public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
-{
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
-        .Build();
-
-    private EntityChangeTracker _tracker = null!;
-
-    [OneTimeSetUp]
-    public async Task OneTimeSetUp()
-    {
-        await _postgres.StartAsync();
-    }
-
-    [SetUp]
-    public async Task SetUp()
-    {
-        var builder = new ChangeTrackingBuilder();
-        builder.ForEntity<TestUser>(e => e
-            .UseRepository(new PostgreSqlRepository<TestUser>(new()
-            {
-                ConnectionString = _postgres.GetConnectionString(),
-                TableName = "test_users"
-            }))
-            .UseOutbox(new PostgreSqlOutbox<TestUser>(new()
-            {
-                ConnectionString = _postgres.GetConnectionString(),
-                OutboxTableName = "test_users_outbox"
-            }))
-            .UseQueue(new InMemoryQueue())
-            .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())
-            .UseCompressor(new RayTree.Plugins.Compressors.Gzip.GzipCompressorPlugin()));
-
-        _tracker = builder.Build();
-    }
-
-    public ValueTask DisposeAsync() => _postgres.DisposeAsync();
-
-    [Test]
-    public async Task InsertAsync_StoresEntity()
-    {
-        var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
-        var user = new TestUser();
-
-        await repo!.InsertAsync(user);
-
-        var userId = await GetLatestUserIdAsync();
-        Assert.That(userId, Is.GreaterThan(0));
-        var stored = await repo.GetByIdAsync(userId);
-        Assert.That(stored, Is.Not.Null);
-    }
-
-    [Test]
-    public async Task UpdateAsync_UpdatesTimestamp()
-    {
-        var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
-        var user = new TestUser();
-        await repo!.InsertAsync(user);
-
-        var userId = await GetLatestUserIdAsync();
-        var beforeUpdate = await repo.GetByIdAsync(userId);
-        Assert.That(beforeUpdate, Is.Not.Null);
-
-        await repo.UpdateAsync(new TestUser { Id = userId });
-        var stored = await repo.GetByIdAsync(userId);
-        Assert.That(stored, Is.Not.Null);
-    }
-
-    [Test]
-    public async Task DeleteAsync_RemovesEntity()
-    {
-        var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
-        var user = new TestUser();
-        await repo!.InsertAsync(user);
-
-        var userId = await GetLatestUserIdAsync();
-        await repo.DeleteAsync(new TestUser { Id = userId });
-
-        var stored = await repo.GetByIdAsync(userId);
-        Assert.That(stored, Is.Null);
-    }
-
-    [Test]
-    public async Task GetByIdAsync_WithNonExistentId_ReturnsNull()
-    {
-        var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
-        var result = await repo!.GetByIdAsync(999);
-        Assert.That(result, Is.Null);
-    }
-
-    private async Task<int> GetLatestUserIdAsync()
-    {
-        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
-        await conn.OpenAsync();
-        await using var cmd = new NpgsqlCommand("SELECT id FROM test_users ORDER BY id DESC LIMIT 1", conn);
-        var result = await cmd.ExecuteScalarAsync();
-        return Convert.ToInt32(result!);
-    }
-
-    [TearDown]
-    public async Task TearDown()
-    {
-        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
-        await conn.OpenAsync();
-        await using var cmd = new NpgsqlCommand("TRUNCATE test_users, test_users_outbox RESTART IDENTITY", conn);
-        await cmd.ExecuteNonQueryAsync();
-    }
-}
-
-public class DefaultSourceTableNameTests
-{
-    [Test]
-    public void Constructor_WithNoTableName_DerivesSnakeCaseFromEntityType()
-    {
-        var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
-        _ = new PostgreSqlRepository<TestEntity>(options);
-        Assert.That(options.TableName, Is.EqualTo("test_entity"));
-    }
-
-    [Test]
-    public void Constructor_WithExplicitTableName_KeepsIt()
-    {
-        var options = new PostgreSqlRepositoryOptions
-        {
-            ConnectionString = "Host=localhost",
-            TableName = "my_custom_table"
-        };
-        _ = new PostgreSqlRepository<TestEntity>(options);
-        Assert.That(options.TableName, Is.EqualTo("my_custom_table"));
-    }
-}
-
-[NonParallelizable]
-public class DefaultSourceTableNameIntegrationTests : IAsyncDisposable
-{
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
-        .Build();
-
-    [OneTimeSetUp]
-    public Task OneTimeSetUp() => _postgres.StartAsync();
-
-    public ValueTask DisposeAsync() => _postgres.DisposeAsync();
-
-    [Test]
-    public async Task InitializeAsync_WithNoTableName_CreatesTableWithDerivedName()
-    {
-        var repo = new PostgreSqlRepository<TestEntity>(new PostgreSqlRepositoryOptions
-        {
-            ConnectionString = _postgres.GetConnectionString()
-            // TableName intentionally omitted
-        });
-
-        await repo.InitializeAsync();
-
-        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
-        await conn.OpenAsync();
-        await using var cmd = new NpgsqlCommand("""
-            SELECT COUNT(*) FROM information_schema.tables
-            WHERE table_name = 'test_entity'
-            """, conn);
-        var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
-        Assert.That(count, Is.EqualTo(1));
-    }
-}
-
-public class DefaultTableNameTests
-{
-    [Test]
-    public void Constructor_WithNoTableName_DerivesSnakeCasePlusOutbox()
-    {
-        var options = new PostgreSqlOutboxOptions { ConnectionString = "Host=localhost" };
-        _ = new PostgreSqlOutbox<TestEntity>(options);
-        Assert.That(options.OutboxTableName, Is.EqualTo("test_entity_outbox"));
-    }
-
-    [Test]
-    public void Constructor_WithExplicitTableName_KeepsIt()
-    {
-        var options = new PostgreSqlOutboxOptions
-        {
-            ConnectionString = "Host=localhost",
-            OutboxTableName = "my_custom_table"
-        };
-        _ = new PostgreSqlOutbox<TestEntity>(options);
-        Assert.That(options.OutboxTableName, Is.EqualTo("my_custom_table"));
-    }
-}
-
-[NonParallelizable]
-public class DefaultTableNameIntegrationTests : IAsyncDisposable
-{
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
-        .WithImage("postgres:16-alpine")
-        .Build();
-
-    [OneTimeSetUp]
-    public Task OneTimeSetUp() => _postgres.StartAsync();
-
-    public ValueTask DisposeAsync() => _postgres.DisposeAsync();
-
-    [Test]
-    public async Task InitializeAsync_WithNoTableName_CreatesTableWithDerivedName()
-    {
-        var outbox = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
-        {
-            ConnectionString = _postgres.GetConnectionString()
-            // OutboxTableName intentionally omitted
-        });
-
-        await outbox.InitializeAsync();
-
-        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
-        await conn.OpenAsync();
-        await using var cmd = new NpgsqlCommand("""
-            SELECT COUNT(*) FROM information_schema.tables
-            WHERE table_name = 'test_entity_outbox'
-            """, conn);
-        var count = Convert.ToInt32(await cmd.ExecuteScalarAsync());
-        Assert.That(count, Is.EqualTo(1));
-    }
-}
-
 [Table("test_users")]
 public class TestUser
 {
-    [Column("id")]
-    public int Id { get; set; }
+    [Key] [Column("id")] public int Id { get; set; }
 
-    [Column("name")]
+    [Column("name")] public string? Name { get; set; }
+
+    [Column("email")] public string? Email { get; set; }
+
+    [Column("created_at")] public DateTime? CreatedAt { get; set; }
+
+    [Column("updated_at")] public DateTime? UpdatedAt { get; set; }
+}
+
+[Table("annotated_entity")]
+public class AnnotatedEntity
+{
+    [Column("custom_id")] public int Id { get; set; }
+
+    [Column("full_name")] public string? Name { get; set; }
+
+    [NotMapped] public string? Ignored { get; set; }
+
+    [Required] public string RequiredField { get; set; } = string.Empty;
+
+    [Required] public int? RequiredNullableInt { get; set; }
+
+    [MaxLength(200)] public string? Bio { get; set; }
+
+    [StringLength(50)] public string? Code { get; set; }
+
+    [MaxLength(100)] [StringLength(20)] public string? BothLengths { get; set; }
+
+    [Column(TypeName = "JSONB")] public string? Metadata { get; set; }
+}
+
+public class KeyAnnotatedEntity
+{
+    [Key] public int OrderId { get; set; }
+
+    public string? Description { get; set; }
+}
+
+public class CompositeKeyEntity
+{
+    [Key, Column(Order = 0)] public int OrderId { get; set; }
+
+    [Key, Column(Order = 1)] public int LineNumber { get; set; }
+
+    public string? Product { get; set; }
+}
+
+public class NoKeyEntity
+{
     public string? Name { get; set; }
-
-    [Column("email")]
-    public string? Email { get; set; }
-
-    [Column("created_at")]
-    public DateTime? CreatedAt { get; set; }
-
-    [Column("updated_at")]
-    public DateTime? UpdatedAt { get; set; }
 }

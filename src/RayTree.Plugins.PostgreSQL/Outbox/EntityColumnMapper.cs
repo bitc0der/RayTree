@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Reflection;
 using System.Text.RegularExpressions;
 
@@ -18,13 +20,47 @@ public static class EntityColumnMapper
         {
             if (!prop.CanRead || !prop.CanWrite)
                 continue;
-            var isNullable = !prop.PropertyType.IsValueType || Nullable.GetUnderlyingType(prop.PropertyType) != null;
+            if (prop.IsDefined(typeof(NotMappedAttribute), inherit: true))
+                continue;
+
+            var columnAttr = prop.GetCustomAttribute<ColumnAttribute>(inherit: true);
             var underlyingType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-            result.Add(new PropertyColumn(prop, "state_" + ToSnakeCase(prop.Name), ToPostgresType(underlyingType),
-                isNullable));
+            result.Add(new PropertyColumn(
+                prop,
+                ResolveColumnName(prop, columnAttr),
+                ResolveColumnType(prop, columnAttr, underlyingType),
+                ResolveNullability(prop)));
         }
 
         return result;
+    }
+
+    public static string GetTableName(Type entityType)
+        => entityType.GetCustomAttribute<TableAttribute>()?.Name ?? ToSnakeCase(entityType.Name);
+
+    public static IReadOnlyList<PropertyInfo> GetKeyProperties(Type entityType)
+    {
+        var props = entityType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        var keyed = props
+            .Where(p => p.CanRead && p.CanWrite && p.IsDefined(typeof(KeyAttribute), inherit: true))
+            .OrderBy(p =>
+            {
+                var order = p.GetCustomAttribute<ColumnAttribute>(inherit: true)?.Order ?? -1;
+                return order >= 0 ? order : int.MaxValue;
+            })
+            .ThenBy(p => Array.IndexOf(props, p))
+            .ToList();
+
+        if (keyed.Count > 0)
+            return keyed;
+
+        var idProp = props.FirstOrDefault(p => p.Name == "Id" && p.CanRead && p.CanWrite);
+        if (idProp != null)
+            return [idProp];
+
+        throw new InvalidOperationException(
+            $"Entity type '{entityType.Name}' has no [Key]-annotated property and no 'Id' convention property. " +
+            $"Annotate a property with [Key] or add a property named 'Id'.");
     }
 
     public static string ToSnakeCase(string name)
@@ -43,4 +79,33 @@ public static class EntityColumnMapper
         _ when type == typeof(DateTime) || type == typeof(DateTimeOffset) => "TIMESTAMPTZ",
         _ => "TEXT"
     };
+
+    private static string ResolveColumnName(PropertyInfo prop, ColumnAttribute? columnAttr)
+    {
+        var suffix = columnAttr?.Name is { Length: > 0 } name ? name : ToSnakeCase(prop.Name);
+        return "state_" + suffix;
+    }
+
+    private static string ResolveColumnType(PropertyInfo prop, ColumnAttribute? columnAttr, Type underlyingType)
+    {
+        if (columnAttr?.TypeName is { Length: > 0 } typeName)
+            return typeName;
+
+        if (underlyingType == typeof(string))
+        {
+            var maxLength = prop.GetCustomAttribute<MaxLengthAttribute>(inherit: true)?.Length
+                            ?? prop.GetCustomAttribute<StringLengthAttribute>(inherit: true)?.MaximumLength;
+            if (maxLength > 0)
+                return $"VARCHAR({maxLength})";
+        }
+
+        return ToPostgresType(underlyingType);
+    }
+
+    private static bool ResolveNullability(PropertyInfo prop)
+    {
+        if (prop.IsDefined(typeof(RequiredAttribute), inherit: true))
+            return false;
+        return !prop.PropertyType.IsValueType || Nullable.GetUnderlyingType(prop.PropertyType) != null;
+    }
 }

@@ -75,6 +75,177 @@ var tracker = builder.Build();
 var tracker = await builder.BuildAsync();
 ```
 
+## PostgreSQL Schema Customization
+
+`RayTree.Plugins.PostgreSQL` derives the outbox table schema automatically from the entity's public properties. The defaults can be overridden using standard `System.ComponentModel.DataAnnotations` and `System.ComponentModel.DataAnnotations.Schema` attributes — no extra dependencies required.
+
+### Table name — `[Table]`
+
+By default the outbox table is named `<snake_case_entity>_outbox` and the source table `<snake_case_entity>`. Decorate the entity class with `[Table]` to change the base name:
+
+```csharp
+[Table("orders")]
+public class Order
+{
+    public int Id { get; set; }
+    public decimal Total { get; set; }
+}
+
+// Outbox table: "orders_outbox"  (was "order_outbox" without the attribute)
+// Source table: "orders"         (was "order"        without the attribute)
+```
+
+The explicit `OutboxTableName` / `TableName` options still take precedence if set.
+
+### Column name — `[Column]`
+
+Each entity property maps to an outbox column named `state_<snake_case>`. Use `[Column]` to control the suffix:
+
+```csharp
+public class Order
+{
+    [Column("order_id")]
+    public int Id { get; set; }         // → column "state_order_id"
+
+    public decimal Total { get; set; }  // → column "state_total" (default)
+}
+```
+
+The `state_` prefix is always kept to prevent collisions with the fixed outbox metadata columns (`id`, `entity_id`, `change_type`, `timestamp`, `published`, `version`, `correlation_id`, `entity_type`).
+
+### PostgreSQL type — `[Column(TypeName = "...")]`
+
+Override the auto-mapped PostgreSQL type with an exact type string:
+
+```csharp
+public class Order
+{
+    [Column(TypeName = "JSONB")]
+    public string? Metadata { get; set; }   // → JSONB instead of TEXT
+
+    [Column(TypeName = "NUMERIC(18,4)")]
+    public decimal Total { get; set; }      // → NUMERIC(18,4) instead of NUMERIC
+}
+```
+
+### Variable-length strings — `[MaxLength]` / `[StringLength]`
+
+By default `string` properties map to `TEXT`. Add a length constraint to emit `VARCHAR(n)`:
+
+```csharp
+public class Order
+{
+    [MaxLength(100)]
+    public string? Reference { get; set; }      // → VARCHAR(100)
+
+    [StringLength(50)]
+    public string? StatusCode { get; set; }     // → VARCHAR(50)
+}
+```
+
+### Not-null constraint — `[Required]`
+
+Reference-type properties are nullable by default. Mark them `[Required]` to emit `NOT NULL`:
+
+```csharp
+public class Order
+{
+    [Required]
+    public string CustomerEmail { get; set; } = string.Empty;   // → TEXT NOT NULL
+}
+```
+
+### Excluding properties — `[NotMapped]`
+
+Properties decorated with `[NotMapped]` are excluded from the outbox schema entirely:
+
+```csharp
+public class Order
+{
+    public int Id { get; set; }
+
+    [NotMapped]
+    public string? CachedSummary { get; set; }   // populated in-process, not persisted
+}
+```
+
+### Primary key — `[Key]`
+
+Mark the business primary key with `[Key]`. `PostgreSqlRepository` uses it to build `WHERE` clauses for `UpdateAsync`, `DeleteAsync`, and `GetByIdAsync`, and adds a `UNIQUE` index on the corresponding column(s) in the source table. Falls back to a property named `Id` when no `[Key]` annotation is present; throws at construction time if neither exists.
+
+```csharp
+public class Order
+{
+    [Key]
+    public int OrderId { get; set; }   // WHERE state_order_id = @K0
+
+    public decimal Total { get; set; }
+}
+```
+
+`GetByIdAsync` takes `object[]` — one element per key, in the same order as declared:
+
+```csharp
+var order = await repo.GetByIdAsync([42]);
+```
+
+#### Composite primary keys
+
+Apply `[Key]` to multiple properties and use `[Column(Order = n)]` to control the column order:
+
+```csharp
+public class OrderLine
+{
+    [Key, Column(Order = 0)]
+    public int OrderId { get; set; }
+
+    [Key, Column(Order = 1)]
+    public int LineNumber { get; set; }
+
+    public string? Product { get; set; }
+}
+```
+
+Generated source table gets a `UNIQUE (state_order_id, state_line_number)` index. `GetByIdAsync` receives both values:
+
+```csharp
+var line = await repo.GetByIdAsync([orderId, lineNumber]);
+```
+
+### Complete example
+
+```csharp
+[Table("orders")]
+public class Order
+{
+    [Column("order_id")]
+    public int Id { get; set; }
+
+    [Required]
+    [MaxLength(200)]
+    public string CustomerEmail { get; set; } = string.Empty;
+
+    [Column(TypeName = "NUMERIC(18,4)")]
+    public decimal Total { get; set; }
+
+    [Column(TypeName = "JSONB")]
+    public string? LineItemsJson { get; set; }
+
+    [NotMapped]
+    public string? CachedSummary { get; set; }
+}
+```
+
+Generated outbox columns (alongside the fixed metadata columns):
+
+| Property | Column | Type | Nullable |
+|---|---|---|---|
+| `Id` | `state_order_id` | `INTEGER` | NO |
+| `CustomerEmail` | `state_customer_email` | `VARCHAR(200)` | NO |
+| `Total` | `state_total` | `NUMERIC(18,4)` | NO |
+| `LineItemsJson` | `state_line_items_json` | `JSONB` | YES |
+| `CachedSummary` | — | — | excluded |
+
 ## In-Memory Mode (Testing)
 
 ```csharp

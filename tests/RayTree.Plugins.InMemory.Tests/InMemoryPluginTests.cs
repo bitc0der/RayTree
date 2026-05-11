@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Text;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
@@ -134,7 +136,7 @@ public class InMemoryRepositoryTests
         var entity = new TestEntity { Id = 1, Name = "Test" };
 
         await repo.InsertAsync(entity);
-        var result = await repo.GetByIdAsync(1);
+        var result = await repo.GetByIdAsync([1]);
 
         Assert.That(result, Is.Not.Null);
         Assert.That(result!.Name, Is.EqualTo("Test"));
@@ -150,7 +152,7 @@ public class InMemoryRepositoryTests
         entity.Name = "Updated";
         await repo.UpdateAsync(entity);
 
-        var result = await repo.GetByIdAsync(1);
+        var result = await repo.GetByIdAsync([1]);
         Assert.That(result!.Name, Is.EqualTo("Updated"));
     }
 
@@ -162,7 +164,7 @@ public class InMemoryRepositoryTests
         await repo.InsertAsync(entity);
 
         await repo.DeleteAsync(entity);
-        var result = await repo.GetByIdAsync(1);
+        var result = await repo.GetByIdAsync([1]);
 
         Assert.That(result, Is.Null);
     }
@@ -177,6 +179,47 @@ public class InMemoryRepositoryTests
         repo.Clear();
 
         Assert.That(repo.GetAll(), Is.Empty);
+    }
+
+    [Test]
+    public void GetByIdAsync_WrongKeyValueCount_Throws()
+    {
+        var repo = new InMemoryRepository<TestEntity>();
+        Assert.That(
+            async () => await repo.GetByIdAsync([1, 2]),
+            Throws.ArgumentException.With.Message.Contains("Expected 1"));
+    }
+}
+
+public class InMemoryRepositoryCompositeKeyTests
+{
+    private class CompositeEntity
+    {
+        [Key, Column(Order = 0)] public string TenantId { get; set; } = string.Empty;
+        [Key, Column(Order = 1)] public string UserId { get; set; } = string.Empty;
+        public string? Name { get; set; }
+    }
+
+    [Test]
+    public async Task GetByIdAsync_CompositeKey_DoesNotCollideBetweenAmbiguousValues()
+    {
+        // With a pipe separator, ("a|b", "c") and ("a", "b|c") both produce the key "a|b|c".
+        // With the null-char separator they produce distinct keys, so the two entities must
+        // remain independent.
+        var repo = new InMemoryRepository<CompositeEntity>();
+        var e1 = new CompositeEntity { TenantId = "a|b", UserId = "c", Name = "first" };
+        var e2 = new CompositeEntity { TenantId = "a", UserId = "b|c", Name = "second" };
+
+        await repo.InsertAsync(e1);
+        await repo.InsertAsync(e2);
+
+        var r1 = await repo.GetByIdAsync(["a|b", "c"]);
+        var r2 = await repo.GetByIdAsync(["a", "b|c"]);
+
+        Assert.That(r1, Is.Not.Null);
+        Assert.That(r1!.Name, Is.EqualTo("first"));
+        Assert.That(r2, Is.Not.Null);
+        Assert.That(r2!.Name, Is.EqualTo("second"));
     }
 }
 

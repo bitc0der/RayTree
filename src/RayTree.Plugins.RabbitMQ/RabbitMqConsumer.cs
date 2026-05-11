@@ -14,45 +14,64 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
     private readonly RabbitMqConsumerOptions _options;
     private readonly ILogger<RabbitMqConsumer> _logger;
     private IConnection? _connection;
-    private IModel? _channel;
-    private readonly Channel<MessageEnvelope> _buffer =
-        Channel.CreateUnbounded<MessageEnvelope>();
+    private IChannel? _channel;
+
+    private readonly Channel<MessageEnvelope> _buffer = Channel.CreateUnbounded<MessageEnvelope>();
 
     public RabbitMqConsumer(RabbitMqConsumerOptions options, ILoggerFactory loggerFactory)
     {
-        _options = options       ?? throw new ArgumentNullException(nameof(options));
-        _logger  = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
-                       .CreateLogger<RabbitMqConsumer>();
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
+            .CreateLogger<RabbitMqConsumer>();
     }
 
-    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         var factory = new ConnectionFactory
         {
-            HostName               = _options.HostName,
-            Port                   = _options.Port,
-            UserName               = _options.UserName,
-            Password               = _options.Password,
-            DispatchConsumersAsync = true
+            HostName = _options.HostName,
+            Port = _options.Port,
+            UserName = _options.UserName,
+            Password = _options.Password
         };
 
-        _connection = factory.CreateConnection();
-        _channel    = _connection.CreateModel();
+        _connection = await factory.CreateConnectionAsync(cancellationToken);
+        _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
 
         if (_options.DeclareQueue)
-            _channel.QueueDeclare(_options.QueueName, durable: _options.Durable,
-                exclusive: false, autoDelete: false, arguments: null);
+            await _channel.QueueDeclareAsync(
+                queue: _options.QueueName,
+                durable: _options.Durable,
+                exclusive: false,
+                autoDelete: false,
+                arguments: null,
+                cancellationToken: cancellationToken
+            );
 
         if (!string.IsNullOrEmpty(_options.ExchangeName))
-            _channel.QueueBind(_options.QueueName, _options.ExchangeName, _options.BindingKey);
+            await _channel.QueueBindAsync(
+                queue: _options.QueueName,
+                exchange: _options.ExchangeName,
+                routingKey: _options.BindingKey,
+                cancellationToken: cancellationToken
+            );
 
-        _channel.BasicQos(prefetchSize: 0, prefetchCount: _options.PrefetchCount, global: false);
+        await _channel.BasicQosAsync(
+            prefetchSize: 0,
+            prefetchCount: _options.PrefetchCount,
+            global: false,
+            cancellationToken: cancellationToken
+        );
 
         var consumer = new AsyncEventingBasicConsumer(_channel);
-        consumer.Received += OnMessageReceived;
+        consumer.ReceivedAsync += OnMessageReceived;
 
-        _channel.BasicConsume(_options.QueueName, autoAck: false, consumer: consumer);
-        return Task.CompletedTask;
+        await _channel.BasicConsumeAsync(
+            queue: _options.QueueName,
+            autoAck: false,
+            consumer: consumer,
+            cancellationToken: cancellationToken
+        );
     }
 
     private async Task OnMessageReceived(object sender, BasicDeliverEventArgs ea)
@@ -60,35 +79,45 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         try
         {
             var envelope = ParseEnvelope(ea.BasicProperties, ea.Body.ToArray());
-            await _buffer.Writer.WriteAsync(envelope);
-            _channel!.BasicAck(ea.DeliveryTag, multiple: false);
+
+            await _buffer.Writer.WriteAsync(envelope, cancellationToken: ea.CancellationToken);
+            await _channel!.BasicAckAsync(ea.DeliveryTag, multiple: false, cancellationToken: ea.CancellationToken);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error processing RabbitMQ message from queue {QueueName}, requeuing",
-                _options.QueueName);
-            _channel!.BasicNack(ea.DeliveryTag, multiple: false, requeue: true);
+            _logger.LogWarning(
+                exception: ex,
+                message: "Error processing RabbitMQ message from queue {QueueName}, requeuing",
+                _options.QueueName
+            );
+
+            await _channel!.BasicNackAsync(
+                deliveryTag: ea.DeliveryTag,
+                multiple: false,
+                requeue: true,
+                cancellationToken: ea.CancellationToken
+            );
         }
     }
 
     public IAsyncEnumerable<MessageEnvelope> ConsumeAsync(CancellationToken cancellationToken = default)
         => _buffer.Reader.ReadAllAsync(cancellationToken);
 
-    private static MessageEnvelope ParseEnvelope(IBasicProperties props, byte[] body)
+    private static MessageEnvelope ParseEnvelope(IReadOnlyBasicProperties props, byte[] body)
     {
         var headers = props.Headers ?? new Dictionary<string, object?>();
 
         return new MessageEnvelope
         {
-            EntityType    = GetHeader(headers, "entity_type"),
-            EntityId      = GetHeader(headers, "entity_id"),
-            ChangeType    = Enum.Parse<ChangeType>(GetHeader(headers, "change_type")),
-            Version       = int.TryParse(GetHeader(headers, "version"), out var v) ? v : 0,
+            EntityType = GetHeader(headers, "entity_type"),
+            EntityId = GetHeader(headers, "entity_id"),
+            ChangeType = Enum.Parse<ChangeType>(GetHeader(headers, "change_type")),
+            Version = int.TryParse(GetHeader(headers, "version"), out var v) ? v : 0,
             CorrelationId = Guid.TryParse(props.MessageId, out var g) ? g : Guid.Empty,
-            Timestamp     = props.Timestamp.UnixTime > 0
+            Timestamp = props.Timestamp.UnixTime > 0
                 ? DateTimeOffset.FromUnixTimeSeconds(props.Timestamp.UnixTime).UtcDateTime
                 : DateTime.UtcNow,
-            Payload       = body
+            Payload = body
         };
     }
 
@@ -98,16 +127,16 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         return value switch
         {
             byte[] bytes => Encoding.UTF8.GetString(bytes),
-            string str   => str,
-            _            => value?.ToString() ?? string.Empty
+            string str => str,
+            _ => value?.ToString() ?? string.Empty
         };
     }
 
     public void Dispose()
     {
         _buffer.Writer.TryComplete();
-        _channel?.Close();
-        _connection?.Close();
+        _channel?.CloseAsync().GetAwaiter().GetResult();
+        _connection?.CloseAsync().GetAwaiter().GetResult();
         _channel?.Dispose();
         _connection?.Dispose();
     }

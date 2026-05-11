@@ -6,5 +6,9 @@
     <ProjectReference Include="..\..\src\RayTree.Plugins.Compressors.Gzip\RayTree.Plugins.Compressors.Gzip.csproj" />
     <PackageReference Include="Testcontainers" />
     <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Update="NUnit.Analyzers">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 </Project>

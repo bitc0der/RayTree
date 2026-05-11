@@ -9,4 +9,10 @@
     <ProjectReference Include="..\..\src\RayTree.Plugins.Compressors.Brotli\RayTree.Plugins.Compressors.Brotli.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.Compressors.Lz4\RayTree.Plugins.Compressors.Lz4.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Update="NUnit.Analyzers">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
 </Project>
