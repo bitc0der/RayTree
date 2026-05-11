@@ -16,7 +16,7 @@ namespace RayTree.Plugins.RabbitMQ.Tests;
 [NonParallelizable]
 public class RabbitMqEndToEndTests : IAsyncDisposable
 {
-    private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder("rabbitmq:3-alpine")
+    private readonly RabbitMqContainer _rabbitMq = new RabbitMqBuilder("rabbitmq:4.3.0-alpine")
         .Build();
 
     [OneTimeSetUp]
@@ -39,26 +39,27 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
 
     private RabbitMqPublisher BuildPublisher() => new(new RabbitMqPublisherOptions
     {
-        HostName        = _rabbitMq.Hostname,
-        Port            = _rabbitMq.GetMappedPublicPort(5672),
-        UserName        = RabbitMqBuilder.DefaultUsername,
-        Password        = RabbitMqBuilder.DefaultPassword,
-        ExchangeName    = "entity_changes",
-        ExchangeType    = "topic",
+        HostName = _rabbitMq.Hostname,
+        Port = _rabbitMq.GetMappedPublicPort(5672),
+        UserName = RabbitMqBuilder.DefaultUsername,
+        Password = RabbitMqBuilder.DefaultPassword,
+        ExchangeName = "entity_changes",
+        ExchangeType = "topic",
         DeclareExchange = true
     });
 
-    private RabbitMqConsumer BuildConsumer(string queueName) => new(new RabbitMqConsumerOptions
-    {
-        HostName     = _rabbitMq.Hostname,
-        Port         = _rabbitMq.GetMappedPublicPort(5672),
-        UserName     = RabbitMqBuilder.DefaultUsername,
-        Password     = RabbitMqBuilder.DefaultPassword,
-        QueueName    = queueName,
-        DeclareQueue = true,
-        ExchangeName = "entity_changes",
-        BindingKey   = "#"
-    }, NullLoggerFactory.Instance);
+    private RabbitMqConsumer BuildConsumer(string queueName) => new(
+        new RabbitMqConsumerOptions
+        {
+            HostName = _rabbitMq.Hostname,
+            Port = _rabbitMq.GetMappedPublicPort(5672),
+            UserName = RabbitMqBuilder.DefaultUsername,
+            Password = RabbitMqBuilder.DefaultPassword,
+            QueueName = queueName,
+            DeclareQueue = true,
+            ExchangeName = "entity_changes",
+            BindingKey = "#"
+        }, NullLoggerFactory.Instance);
 
     // -------------------------------------------------------------------------
     // Tests
@@ -85,8 +86,8 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
                 return Task.CompletedTask;
             });
 
-        using var cts     = new CancellationTokenSource();
-        var consumeTask   = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
+        using var cts = new CancellationTokenSource();
+        var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
 
         var tracker = BuildTracker(publisher);
         await tracker.InitializeAsync();
@@ -123,7 +124,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
                 return Task.CompletedTask;
             });
 
-        using var cts   = new CancellationTokenSource();
+        using var cts = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
 
         var tracker = BuildTracker(publisher);
@@ -150,7 +151,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         var consumer = BuildConsumer(queueName);
         await consumer.InitializeAsync();
 
-        var received    = new List<EntityChange>();
+        var received = new List<EntityChange>();
         var allReceived = new TaskCompletionSource<bool>();
 
         var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
@@ -164,7 +165,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
                 return Task.CompletedTask;
             });
 
-        using var cts   = new CancellationTokenSource();
+        using var cts = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
 
         var tracker = BuildTracker(publisher);

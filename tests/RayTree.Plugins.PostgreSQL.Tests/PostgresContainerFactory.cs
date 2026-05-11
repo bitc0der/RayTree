@@ -6,6 +6,6 @@ internal static class PostgresContainerFactory
 {
     public static PostgreSqlContainer Create()
     {
-        return new PostgreSqlBuilder(image: "postgres:16-alpine").Build();
+        return new PostgreSqlBuilder(image: "postgres:18.3-alpine").Build();
     }
 }
