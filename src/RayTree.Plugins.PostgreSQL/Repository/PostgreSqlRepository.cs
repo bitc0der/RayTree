@@ -23,12 +23,13 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         _options = options;
 
         var keyProperties = EntityColumnMapper.GetKeyProperties(typeof(TEntity));
-        var allColumns = EntityColumnMapper.GetColumns(typeof(TEntity)).ToDictionary(c => c.Property.Name);
-        _keyColumns = keyProperties.Select(p => allColumns[p.Name]).ToList();
+        var allEntityColumns = EntityColumnMapper.GetColumns(typeof(TEntity));
+        var byPropertyName = allEntityColumns.ToDictionary(c => c.Property.Name);
+        _keyColumns = keyProperties.Select(p => byPropertyName[p.Name]).ToList();
 
         _insertSql = BuildInsertSql();
         _whereClause = BuildWhereClause();
-        _columnToProperty = _keyColumns.ToDictionary(c => c.ColumnName, c => c.Property);
+        _columnToProperty = allEntityColumns.ToDictionary(c => c.ColumnName, c => c.Property);
     }
 
     private string BuildInsertSql()
@@ -131,15 +132,12 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         var entity = Activator.CreateInstance<TEntity>();
         for (var i = 0; i < reader.FieldCount; i++)
         {
-            var colName = reader.GetName(i);
-            var prop = typeof(TEntity).GetProperty(colName)
-                       ?? (_columnToProperty.TryGetValue(colName, out var mapped) ? mapped : null);
-            if (prop != null && prop.CanWrite && !reader.IsDBNull(i))
-            {
-                var value = reader.GetValue(i);
-                var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-                prop.SetValue(entity, Convert.ChangeType(value, targetType));
-            }
+            if (!_columnToProperty.TryGetValue(reader.GetName(i), out var prop) || reader.IsDBNull(i))
+                continue;
+
+            var value = reader.GetValue(i);
+            var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+            prop.SetValue(entity, Convert.ChangeType(value, targetType));
         }
 
         return entity;

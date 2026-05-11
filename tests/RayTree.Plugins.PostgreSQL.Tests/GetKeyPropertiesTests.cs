@@ -1,7 +1,16 @@
+using System.ComponentModel.DataAnnotations;
 using RayTree.Plugins.PostgreSQL.Outbox;
 using RayTree.Plugins.PostgreSQL.Repository;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
+
+// Composite key with no [Column(Order)] — order must follow declaration order.
+public class CompositeKeyNoOrderEntity
+{
+    [Key] public int TenantId { get; set; }
+    [Key] public int UserId { get; set; }
+    public string? Name { get; set; }
+}
 
 public class GetKeyPropertiesTests
 {
@@ -69,5 +78,14 @@ public class GetKeyPropertiesTests
         Assert.That(
             async () => await repo.GetByIdAsync([1]),
             Throws.ArgumentException.With.Message.Contains("Expected 2"));
+    }
+
+    [Test]
+    public void GetKeyProperties_CompositeKeyWithoutColumnOrder_FallsBackToDeclarationOrder()
+    {
+        var keys = EntityColumnMapper.GetKeyProperties(typeof(CompositeKeyNoOrderEntity));
+        Assert.That(keys, Has.Count.EqualTo(2));
+        Assert.That(keys[0].Name, Is.EqualTo("TenantId"));
+        Assert.That(keys[1].Name, Is.EqualTo("UserId"));
     }
 }

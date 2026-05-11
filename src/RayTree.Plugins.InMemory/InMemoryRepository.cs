@@ -45,7 +45,7 @@ public class InMemoryRepository<TEntity> : IRepository<TEntity> where TEntity : 
                 $"Expected {_keyProperties.Count} key value(s) for {typeof(TEntity).Name}, got {keyValues.Length}.",
                 nameof(keyValues));
 
-        var key = string.Join("|", keyValues.Select(v => v?.ToString() ?? string.Empty));
+        var key = string.Join('\0', keyValues.Select(v => v?.ToString() ?? string.Empty));
         _store.TryGetValue(key, out var entity);
         return Task.FromResult(entity);
     }
@@ -55,8 +55,11 @@ public class InMemoryRepository<TEntity> : IRepository<TEntity> where TEntity : 
     public void Clear() => _store.Clear();
 
     private string BuildKey(TEntity entity)
-        => string.Join("|", _keyProperties.Select(p => p.GetValue(entity)?.ToString() ?? string.Empty));
+        => string.Join('\0', _keyProperties.Select(p => p.GetValue(entity)?.ToString() ?? string.Empty));
 
+    // Key resolution mirrors EntityColumnMapper.GetKeyProperties in RayTree.Plugins.PostgreSQL.
+    // InMemory has no dependency on that package, so the logic is intentionally co-located here.
+    // If the resolution rules change, update both places.
     private static IReadOnlyList<PropertyInfo> ResolveKeyProperties()
     {
         var props = typeof(TEntity).GetProperties(BindingFlags.Public | BindingFlags.Instance);
