@@ -42,9 +42,10 @@ Each public read/write property on the entity gets a `state_<snake_case_name>` c
 ```csharp
 public class Product
 {
-    public int    Id    { get; set; }
-    public string Name  { get; set; } = null!;
-    public decimal Price { get; set; }
+    public int      Id    { get; set; }
+    public string   Name  { get; set; } = null!;
+    public decimal  Price { get; set; }
+    public string[] Tags  { get; set; } = [];
 }
 ```
 
@@ -55,6 +56,7 @@ Generates additional columns:
 | `state_id`     | `INTEGER` |
 | `state_name`   | `TEXT`    |
 | `state_price`  | `NUMERIC` |
+| `state_tags`   | `TEXT[]`  |
 
 ### Indexes
 
@@ -67,21 +69,27 @@ Generates additional columns:
 
 `EntityColumnMapper` maps entity property types to PostgreSQL column types for `state_*` columns:
 
-| C# Type                         | PostgreSQL Type    |
-|---------------------------------|--------------------|
-| `int`                           | `INTEGER`          |
-| `long`                          | `BIGINT`           |
-| `short`, `byte`, `sbyte`        | `SMALLINT`         |
-| `string`                        | `TEXT`             |
-| `decimal`                       | `NUMERIC`          |
-| `float`                         | `REAL`             |
-| `double`                        | `DOUBLE PRECISION` |
-| `bool`                          | `BOOLEAN`          |
-| `Guid`                          | `UUID`             |
-| `DateTime`, `DateTimeOffset`    | `TIMESTAMPTZ`      |
-| anything else                   | `TEXT`             |
+| C# Type                         | PostgreSQL Type      |
+|---------------------------------|----------------------|
+| `int`                           | `INTEGER`            |
+| `long`                          | `BIGINT`             |
+| `short`, `byte`, `sbyte`        | `SMALLINT`           |
+| `string`                        | `TEXT`               |
+| `decimal`                       | `NUMERIC`            |
+| `float`                         | `REAL`               |
+| `double`                        | `DOUBLE PRECISION`   |
+| `bool`                          | `BOOLEAN`            |
+| `Guid`                          | `UUID`               |
+| `DateTime`, `DateTimeOffset`    | `TIMESTAMPTZ`        |
+| `T[]` (1D array of any above)   | `<mapped type>[]`    |
+| anything else                   | `TEXT`               |
 
-Nullable types and reference types produce nullable columns. Value types produce `NOT NULL` columns.
+Array rules:
+- 1D arrays of any supported primitive type are mapped to the corresponding PostgreSQL array column, e.g. `int[]` → `INTEGER[]`, `string[]` → `TEXT[]`, `Guid[]` → `UUID[]`.
+- Nullable-element arrays (e.g. `int?[]`) strip the nullable wrapper before mapping the element type — the column type is the same as for a non-nullable element array.
+- Multi-dimensional arrays are not supported; declare the column type explicitly via `[Column(TypeName = "INTEGER[][]")]` if needed.
+
+Nullable types and reference types (including arrays) produce nullable columns. Value types produce `NOT NULL` columns. Add `[Required]` to force `NOT NULL` on a reference type or nullable value type.
 
 ## Default Table Names
 
