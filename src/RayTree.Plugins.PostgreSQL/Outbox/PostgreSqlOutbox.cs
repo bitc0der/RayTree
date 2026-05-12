@@ -204,30 +204,30 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
     private async Task<int> BatchDeleteAsync(string publishedFilter, DateTime cutoff, CancellationToken cancellationToken)
     {
-        var batchSize = _options.CleanupBatchSize;
         var total = 0;
         int deleted;
 
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
+        await using var cmd = new NpgsqlCommand($"""
+                                                 DELETE FROM {_options.OutboxTableName}
+                                                 WHERE id IN (
+                                                     SELECT id FROM {_options.OutboxTableName}
+                                                     WHERE {publishedFilter} AND timestamp < @Cutoff
+                                                     ORDER BY id
+                                                     LIMIT @BatchSize
+                                                 )
+                                                 """, conn);
+        cmd.Parameters.Add(new NpgsqlParameter("Cutoff", cutoff));
+        cmd.Parameters.Add(new NpgsqlParameter("BatchSize", _options.CleanupBatchSize));
+
         do
         {
-            await using var cmd = new NpgsqlCommand($"""
-                                                     DELETE FROM {_options.OutboxTableName}
-                                                     WHERE id IN (
-                                                         SELECT id FROM {_options.OutboxTableName}
-                                                         WHERE {publishedFilter} AND timestamp < @Cutoff
-                                                         ORDER BY id
-                                                         LIMIT @BatchSize
-                                                     )
-                                                     """, conn);
-            cmd.Parameters.Add(new NpgsqlParameter("Cutoff", cutoff));
-            cmd.Parameters.Add(new NpgsqlParameter("BatchSize", batchSize));
             deleted = await cmd.ExecuteNonQueryAsync(cancellationToken);
             total += deleted;
         }
-        while (deleted == batchSize && !cancellationToken.IsCancellationRequested);
+        while (deleted == _options.CleanupBatchSize && !cancellationToken.IsCancellationRequested);
 
         return total;
     }
