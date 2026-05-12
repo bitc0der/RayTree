@@ -137,7 +137,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
 
             var value = reader.GetValue(i);
             var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-            prop.SetValue(entity, Convert.ChangeType(value, targetType));
+            prop.SetValue(entity, EntityColumnMapper.ConvertFromDb(value, targetType));
         }
 
         return entity;

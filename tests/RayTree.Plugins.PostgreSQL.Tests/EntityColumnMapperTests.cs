@@ -91,4 +91,48 @@ public class EntityColumnMapperTests
     public void GetTableName_WithoutTableAttribute_ReturnsSnakeCaseName()
         => Assert.That(EntityColumnMapper.GetTableName(typeof(TestEntity)), Is.EqualTo("test_entity"));
 
+    [Test]
+    public void ToPostgresType_IntArray_ReturnsIntegerArray()
+        => Assert.That(EntityColumnMapper.ToPostgresType(typeof(int[])), Is.EqualTo("INTEGER[]"));
+
+    [Test]
+    public void ToPostgresType_LongArray_ReturnsBigintArray()
+        => Assert.That(EntityColumnMapper.ToPostgresType(typeof(long[])), Is.EqualTo("BIGINT[]"));
+
+    [Test]
+    public void ToPostgresType_BoolArray_ReturnsBooleanArray()
+        => Assert.That(EntityColumnMapper.ToPostgresType(typeof(bool[])), Is.EqualTo("BOOLEAN[]"));
+
+    [Test]
+    public void ToPostgresType_GuidArray_ReturnsUuidArray()
+        => Assert.That(EntityColumnMapper.ToPostgresType(typeof(Guid[])), Is.EqualTo("UUID[]"));
+
+    [Test]
+    public void ToPostgresType_StringArray_ReturnsTextArray()
+        => Assert.That(EntityColumnMapper.ToPostgresType(typeof(string[])), Is.EqualTo("TEXT[]"));
+
+    [Test]
+    public void GetColumns_IntArrayProperty_MapsToIntegerArrayColumn()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(ArrayEntity));
+        var col = columns.Single(c => c.Property.Name == "Tags");
+        Assert.That(col.ColumnType, Is.EqualTo("INTEGER[]"));
+    }
+
+    [Test]
+    public void GetColumns_StringArrayProperty_MapsToTextArrayColumn()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(ArrayEntity));
+        var col = columns.Single(c => c.Property.Name == "Labels");
+        Assert.That(col.ColumnType, Is.EqualTo("TEXT[]"));
+    }
+
+    [Test]
+    public void GetColumns_NullableIntArrayProperty_MapsToIntegerArrayColumn()
+    {
+        var columns = EntityColumnMapper.GetColumns(typeof(ArrayEntity));
+        var col = columns.Single(c => c.Property.Name == "OptionalScores");
+        Assert.That(col.ColumnType, Is.EqualTo("INTEGER[]"));
+    }
+
 }

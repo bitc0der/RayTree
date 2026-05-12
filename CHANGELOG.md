@@ -6,6 +6,57 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.5-pre-release]
+
+### Added
+
+#### Primitive array support for PostgreSQL outbox and repository
+
+- 1D arrays of primitive types are now stored as native PostgreSQL array columns.
+  `EntityColumnMapper.ToPostgresType` maps `T[]` to the corresponding `PG_TYPE[]`:
+
+  | C# type | PostgreSQL column |
+  |---|---|
+  | `int[]` | `INTEGER[]` |
+  | `long[]` | `BIGINT[]` |
+  | `short[]` / `byte[]` / `sbyte[]` | `SMALLINT[]` |
+  | `float[]` | `REAL[]` |
+  | `double[]` | `DOUBLE PRECISION[]` |
+  | `decimal[]` | `NUMERIC[]` |
+  | `bool[]` | `BOOLEAN[]` |
+  | `Guid[]` | `UUID[]` |
+  | `DateTime[]` / `DateTimeOffset[]` | `TIMESTAMPTZ[]` |
+  | `string[]` | `TEXT[]` |
+
+- Nullable-element arrays (e.g. `int?[]`) strip the nullable wrapper before mapping
+  the element type — the column type is the same as for a non-nullable element array.
+- Multi-dimensional arrays are not supported; use `[Column(TypeName = "...")]` to
+  declare the column type explicitly when needed.
+- New `EntityColumnMapper.ConvertFromDb(object value, Type targetType)` helper is
+  used by both `PostgreSqlOutbox.ReadEntityChange` and `PostgreSqlRepository.MapEntity`
+  to read values back. It checks assignability first (Npgsql returns the correct CLR
+  array type natively) and falls back to `Convert.ChangeType` for scalar numeric
+  coercions.
+
+#### Documentation
+
+- `docs/database-migration.md` C# → PostgreSQL type mapping table extended with
+  array types and array-specific rules.
+
+### Fixed
+
+- `OutboxPublisherService.MaybeRunCleanupAsync` previously advanced `_lastCleanup`
+  before running the cleanup operations, so a transient DB failure would still delay
+  the next retry by a full `CleanupInterval`. The timestamp is now only advanced when
+  both operations complete successfully; a failure leaves the timer unchanged so the
+  next poll tick retries immediately.
+- `PostgreSqlOutbox.BatchDeleteAsync` was allocating a new `NpgsqlCommand` on every
+  batch iteration. The command is now created once outside the loop and reused across
+  all `ExecuteNonQueryAsync` calls, reducing allocation and repeated query-parse
+  overhead on large cleanup runs.
+
+---
+
 ## [0.0.4-pre-release]
 
 ### Added
@@ -60,6 +111,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New **Outbox rotation** section in `docs/README.md` covering configuration,
   `appsettings.json` binding, batch size tuning, log levels, and manual rotation
   via `OutboxCleanupService`.
+
+### Breaking Changes
+
+- `IOutbox` gains a new method `CleanupStaleUnpublishedAsync(TimeSpan staleThreshold, CancellationToken)`.
+  Any external implementation of `IOutbox` must add this method. The built-in implementations
+  (`InMemoryOutbox`, `PostgreSqlOutbox<TEntity>`) are updated automatically.
 
 ### Fixed
 

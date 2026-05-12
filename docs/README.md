@@ -329,7 +329,7 @@ After every poll batch, `OutboxPublisherService` checks whether the configured i
 
 Rotation fires **eagerly on the first tick** (so stale rows from before a restart are cleaned up immediately), then respects `CleanupInterval` for subsequent runs.
 
-Cleanup errors are isolated: a transient database failure logs an error but does not abort the publish loop or stop the service.
+Cleanup errors are isolated: a transient database failure logs an error but does not abort the publish loop or stop the service. When either operation fails, the interval timer is not advanced, so the next poll tick retries immediately rather than waiting a full `CleanupInterval`.
 
 ### Configuration — `OutboxPublisherOptions`
 

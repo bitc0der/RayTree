@@ -189,8 +189,8 @@ public class OutboxPublisherService : IDisposable
     {
         if (DateTime.UtcNow - _lastCleanup < _options.CleanupInterval) return;
 
-        _lastCleanup = DateTime.UtcNow;
         var outbox = _publisher.GetOutbox(_entityType);
+        var succeeded = true;
 
         _logger.LogDebug("Outbox rotation starting for {EntityType} (retention: {Retention})",
             _entityType.Name, _options.CleanupRetentionPeriod);
@@ -207,6 +207,7 @@ public class OutboxPublisherService : IDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            succeeded = false;
             _logger.LogError(ex, "Outbox published cleanup failed for {EntityType}", _entityType.Name);
         }
 
@@ -225,9 +226,13 @@ public class OutboxPublisherService : IDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                succeeded = false;
                 _logger.LogError(ex, "Outbox stale unpublished cleanup failed for {EntityType}", _entityType.Name);
             }
         }
+
+        if (succeeded)
+            _lastCleanup = DateTime.UtcNow;
     }
 
     public void Dispose()
