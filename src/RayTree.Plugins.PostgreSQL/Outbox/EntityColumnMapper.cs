@@ -66,19 +66,31 @@ public static class EntityColumnMapper
     public static string ToSnakeCase(string name)
         => Regex.Replace(name, "(?<!^)([A-Z])", "_$1").ToLowerInvariant();
 
-    public static string ToPostgresType(Type type) => type switch
+    public static string ToPostgresType(Type type)
     {
-        _ when type == typeof(short) || type == typeof(byte) || type == typeof(sbyte) => "SMALLINT",
-        _ when type == typeof(int) => "INTEGER",
-        _ when type == typeof(long) => "BIGINT",
-        _ when type == typeof(float) => "REAL",
-        _ when type == typeof(double) => "DOUBLE PRECISION",
-        _ when type == typeof(decimal) => "NUMERIC",
-        _ when type == typeof(bool) => "BOOLEAN",
-        _ when type == typeof(Guid) => "UUID",
-        _ when type == typeof(DateTime) || type == typeof(DateTimeOffset) => "TIMESTAMPTZ",
-        _ => "TEXT"
-    };
+        if (type.IsArray && type.GetArrayRank() == 1)
+        {
+            var elementType = Nullable.GetUnderlyingType(type.GetElementType()!) ?? type.GetElementType()!;
+            return ToPostgresType(elementType) + "[]";
+        }
+
+        return type switch
+        {
+            _ when type == typeof(short) || type == typeof(byte) || type == typeof(sbyte) => "SMALLINT",
+            _ when type == typeof(int) => "INTEGER",
+            _ when type == typeof(long) => "BIGINT",
+            _ when type == typeof(float) => "REAL",
+            _ when type == typeof(double) => "DOUBLE PRECISION",
+            _ when type == typeof(decimal) => "NUMERIC",
+            _ when type == typeof(bool) => "BOOLEAN",
+            _ when type == typeof(Guid) => "UUID",
+            _ when type == typeof(DateTime) || type == typeof(DateTimeOffset) => "TIMESTAMPTZ",
+            _ => "TEXT"
+        };
+    }
+
+    public static object ConvertFromDb(object value, Type targetType)
+        => targetType.IsAssignableFrom(value.GetType()) ? value : Convert.ChangeType(value, targetType);
 
     private static string ResolveColumnName(PropertyInfo prop, ColumnAttribute? columnAttr)
     {

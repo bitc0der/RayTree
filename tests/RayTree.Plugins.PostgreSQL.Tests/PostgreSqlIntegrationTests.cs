@@ -273,3 +273,86 @@ public class NoKeyEntity
 {
     public string? Name { get; set; }
 }
+
+public class ArrayEntity
+{
+    public int Id { get; set; }
+    public int[] Tags { get; set; } = [];
+    public string[] Labels { get; set; } = [];
+    public int[]? OptionalScores { get; set; }
+}
+
+[NonParallelizable]
+public class PostgreSqlOutboxArrayIntegrationTests : IAsyncDisposable
+{
+    private readonly IContainer _postgres = PostgresContainerFactory.Create();
+    private PostgreSqlOutbox<ArrayEntity> _outbox = null!;
+
+    [OneTimeSetUp]
+    public async Task OneTimeSetUp() => await _postgres.StartAsync();
+
+    [SetUp]
+    public async Task SetUp()
+    {
+        _outbox = new PostgreSqlOutbox<ArrayEntity>(new PostgreSqlOutboxOptions
+        {
+            ConnectionString = _postgres.GetConnectionString(),
+            OutboxTableName  = "array_entity_outbox"
+        });
+        await _outbox.InitializeAsync();
+    }
+
+    public ValueTask DisposeAsync() => _postgres.DisposeAsync();
+
+    [TearDown]
+    public async Task TearDown()
+    {
+        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand("TRUNCATE array_entity_outbox RESTART IDENTITY", conn);
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    [Test]
+    public async Task WriteAsync_WithArrayState_RoundTripsArrayData()
+    {
+        var change = new EntityChange<ArrayEntity>
+        {
+            EntityType = typeof(ArrayEntity).FullName!,
+            EntityId   = "1",
+            ChangeType = ChangeType.Insert,
+            State      = new ArrayEntity
+            {
+                Id             = 1,
+                Tags           = [10, 20, 30],
+                Labels         = ["alpha", "beta"],
+                OptionalScores = [1, 2, 3]
+            }
+        };
+
+        await _outbox.WriteAsync(change);
+        var stored = await _outbox.GetByIdAsync<ArrayEntity>(change.Id);
+
+        Assert.That(stored!.State, Is.Not.Null);
+        Assert.That(stored.State!.Tags,           Is.EqualTo(new[] { 10, 20, 30 }));
+        Assert.That(stored.State.Labels,          Is.EqualTo(new[] { "alpha", "beta" }));
+        Assert.That(stored.State.OptionalScores,  Is.EqualTo(new[] { 1, 2, 3 }));
+    }
+
+    [Test]
+    public async Task WriteAsync_WithNullArrayProperty_RoundTripsNull()
+    {
+        var change = new EntityChange<ArrayEntity>
+        {
+            EntityType = typeof(ArrayEntity).FullName!,
+            EntityId   = "2",
+            ChangeType = ChangeType.Insert,
+            State      = new ArrayEntity { Id = 2, Tags = [5], Labels = ["x"], OptionalScores = null }
+        };
+
+        await _outbox.WriteAsync(change);
+        var stored = await _outbox.GetByIdAsync<ArrayEntity>(change.Id);
+
+        Assert.That(stored!.State!.OptionalScores, Is.Null);
+    }
+}

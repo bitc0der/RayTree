@@ -277,7 +277,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
                 {
                     var value = reader.GetValue(8 + i);
                     var targetType = Nullable.GetUnderlyingType(col.Property.PropertyType) ?? col.Property.PropertyType;
-                    col.Property.SetValue(entity, Convert.ChangeType(value, targetType));
+                    col.Property.SetValue(entity, EntityColumnMapper.ConvertFromDb(value, targetType));
                 }
             }
 
