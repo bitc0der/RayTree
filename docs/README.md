@@ -316,6 +316,116 @@ builder.Services
 }
 ```
 
+## Outbox rotation
+
+The outbox table grows as changes are written and published. Rotation automatically deletes old rows so the table stays bounded. It runs as part of the normal publisher poll loop — no extra hosted service or scheduler is needed.
+
+### How it works
+
+After every poll batch, `OutboxPublisherService` checks whether the configured interval has elapsed and, if so, deletes:
+
+1. **Published rows** older than `CleanupRetentionPeriod` — rows that have already been sent to the broker and are safe to remove.
+2. **Stale unpublished rows** older than `StaleUnpublishedThreshold` *(opt-in)* — rows that have been sitting in the outbox without being published, which usually indicates a stuck or dead queue.
+
+Rotation fires **eagerly on the first tick** (so stale rows from before a restart are cleaned up immediately), then respects `CleanupInterval` for subsequent runs.
+
+Cleanup errors are isolated: a transient database failure logs an error but does not abort the publish loop or stop the service.
+
+### Configuration — `OutboxPublisherOptions`
+
+Pass options when wiring up the builder, or bind them from `appsettings.json` via `AddChangeTracking`.
+
+```csharp
+builder.ForEntity<Order>(e => e
+    .UseOutbox(new PostgreSqlOutbox<Order>(new PostgreSqlOutboxOptions
+    {
+        ConnectionString = connectionString
+    }))
+    .UseQueue(rabbitPublisher)
+    .UsePublisherOptions(new OutboxPublisherOptions
+    {
+        // How often to poll the outbox for new changes.
+        PollingInterval = TimeSpan.FromSeconds(5),       // default: 5 s
+
+        // How many unpublished changes to process per poll cycle.
+        BatchSize = 100,                                 // default: 100
+
+        // How old a published row must be before rotation removes it.
+        CleanupRetentionPeriod = TimeSpan.FromDays(7),   // default: 7 days
+
+        // How frequently rotation runs (first tick is always immediate).
+        CleanupInterval = TimeSpan.FromHours(1),         // default: 1 h
+
+        // Optional: remove unpublished rows older than this threshold.
+        // Logs a Warning when any are found — treat this as an operator alert.
+        // Disabled (null) by default.
+        StaleUnpublishedThreshold = TimeSpan.FromDays(30)
+    }));
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `CleanupRetentionPeriod` | `TimeSpan` | 7 days | Minimum age of a **published** row before it is deleted. |
+| `CleanupInterval` | `TimeSpan` | 1 hour | How often the rotation check runs. First run is always immediate on startup. |
+| `StaleUnpublishedThreshold` | `TimeSpan?` | `null` (disabled) | When set, **unpublished** rows older than this age are also removed. A `Warning` log is emitted whenever rows are deleted — use it as an alert for queue health issues. |
+
+### `appsettings.json` (Generic Host)
+
+```json
+{
+  "ChangeTracking": {
+    "Publisher": {
+      "CleanupRetentionPeriod": "7.00:00:00",
+      "CleanupInterval": "01:00:00",
+      "StaleUnpublishedThreshold": "30.00:00:00"
+    }
+  }
+}
+```
+
+### PostgreSQL batch size — `PostgreSqlOutboxOptions.CleanupBatchSize`
+
+The PostgreSQL outbox deletes in batches to avoid large single-statement locks and WAL spikes. Each rotation cycle issues repeated `DELETE … WHERE id IN (SELECT id … LIMIT @BatchSize)` statements until no rows remain.
+
+```csharp
+new PostgreSqlOutboxOptions
+{
+    ConnectionString = connectionString,
+    CleanupBatchSize = 1000   // default: 1000 rows per DELETE statement
+}
+```
+
+Reduce this value if you see lock contention or WAL pressure during cleanup on large, busy tables.
+
+### Log messages
+
+| Level | Event |
+|---|---|
+| `Debug` | Rotation starting (every cycle) |
+| `Information` | Published rows deleted (count > 0) |
+| `Debug` | No published rows to remove |
+| `Warning` | Stale unpublished rows deleted — indicates a queue health problem |
+| `Debug` | No stale unpublished rows found |
+| `Error` | Rotation failed (isolated — publish loop continues) |
+
+### Manual rotation — `OutboxCleanupService`
+
+`OutboxCleanupService` is available as a singleton in the DI container for ad-hoc or scheduled cleanup outside the normal poll cycle (e.g. a maintenance endpoint or a Hangfire job):
+
+```csharp
+public class MaintenanceController(OutboxCleanupService cleanup) : ControllerBase
+{
+    [HttpPost("outbox/rotate")]
+    public async Task<IActionResult> Rotate(CancellationToken ct)
+    {
+        var deleted = await cleanup.RunCleanupAsync(ct);
+        return Ok(new { deleted });
+    }
+}
+```
+
+`RunCleanupAsync` calls `CleanupPublishedAsync` on every registered outbox and returns the total number of rows deleted. It uses the same `CleanupRetentionPeriod` that was configured on `OutboxPublisherOptions`.
+
 ## Cleanup
 
 `EntityChangeTracker` implements `IDisposable`. Disposing it stops all publisher services:
