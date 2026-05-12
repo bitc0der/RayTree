@@ -197,18 +197,65 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
     public async Task<int> CleanupPublishedAsync(TimeSpan retentionPeriod,
         CancellationToken cancellationToken = default)
     {
+        var cutoff = DateTime.UtcNow - retentionPeriod;
+        var batchSize = _options.CleanupBatchSize;
+        var total = 0;
+        int deleted;
+
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
-        await using var cmd = new NpgsqlCommand($"""
-                                                 DELETE FROM {_options.OutboxTableName}
-                                                 WHERE published = TRUE AND timestamp < @Cutoff
-                                                 """, conn)
+        do
         {
-            Parameters = { new("Cutoff", DateTime.UtcNow - retentionPeriod) }
-        };
+            await using var cmd = new NpgsqlCommand($"""
+                                                     DELETE FROM {_options.OutboxTableName}
+                                                     WHERE id IN (
+                                                         SELECT id FROM {_options.OutboxTableName}
+                                                         WHERE published = TRUE AND timestamp < @Cutoff
+                                                         ORDER BY id
+                                                         LIMIT @BatchSize
+                                                     )
+                                                     """, conn);
+            cmd.Parameters.Add(new NpgsqlParameter("Cutoff", cutoff));
+            cmd.Parameters.Add(new NpgsqlParameter("BatchSize", batchSize));
+            deleted = await cmd.ExecuteNonQueryAsync(cancellationToken);
+            total += deleted;
+        }
+        while (deleted == batchSize && !cancellationToken.IsCancellationRequested);
 
-        return await cmd.ExecuteNonQueryAsync(cancellationToken);
+        return total;
+    }
+
+    public async Task<int> CleanupStaleUnpublishedAsync(TimeSpan staleThreshold,
+        CancellationToken cancellationToken = default)
+    {
+        var cutoff = DateTime.UtcNow - staleThreshold;
+        var batchSize = _options.CleanupBatchSize;
+        var total = 0;
+        int deleted;
+
+        await using var conn = new NpgsqlConnection(_options.ConnectionString);
+        await conn.OpenAsync(cancellationToken);
+
+        do
+        {
+            await using var cmd = new NpgsqlCommand($"""
+                                                     DELETE FROM {_options.OutboxTableName}
+                                                     WHERE id IN (
+                                                         SELECT id FROM {_options.OutboxTableName}
+                                                         WHERE published = FALSE AND timestamp < @Cutoff
+                                                         ORDER BY id
+                                                         LIMIT @BatchSize
+                                                     )
+                                                     """, conn);
+            cmd.Parameters.Add(new NpgsqlParameter("Cutoff", cutoff));
+            cmd.Parameters.Add(new NpgsqlParameter("BatchSize", batchSize));
+            deleted = await cmd.ExecuteNonQueryAsync(cancellationToken);
+            total += deleted;
+        }
+        while (deleted == batchSize && !cancellationToken.IsCancellationRequested);
+
+        return total;
     }
 
     public async Task<EntityChange<T>?> GetByIdAsync<T>(long id, CancellationToken cancellationToken = default)

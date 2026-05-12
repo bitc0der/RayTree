@@ -145,6 +145,62 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
     }
 
     [Test]
+    public async Task CleanupPublishedAsync_DeletesInBatches()
+    {
+        var outbox = _tracker.Publisher.GetOutbox(typeof(TestEntity)) as PostgreSqlOutbox<TestEntity>;
+
+        // Write 5 old published changes; batch size = 2 → forces multiple DELETE rounds
+        for (var i = 0; i < 5; i++)
+        {
+            var change = CreateTestChange(timestamp: DateTime.UtcNow.AddHours(-3));
+            await outbox!.WriteAsync(change);
+            await outbox.MarkPublishedAsync(change.Id);
+        }
+
+        var outboxWithSmallBatch = new PostgreSqlOutbox<TestEntity>(new()
+        {
+            ConnectionString = _postgres.GetConnectionString(),
+            OutboxTableName  = "test_entity_outbox",
+            CleanupBatchSize = 2
+        });
+
+        var deleted = await outboxWithSmallBatch.CleanupPublishedAsync(TimeSpan.FromHours(1));
+        Assert.That(deleted, Is.EqualTo(5));
+    }
+
+    [Test]
+    public async Task CleanupStaleUnpublishedAsync_RemovesOldUnpublishedChanges()
+    {
+        var outbox = _tracker.Publisher.GetOutbox(typeof(TestEntity)) as PostgreSqlOutbox<TestEntity>;
+
+        var staleChange  = CreateTestChange(timestamp: DateTime.UtcNow.AddDays(-31));
+        var recentChange = CreateTestChange(timestamp: DateTime.UtcNow);
+
+        await outbox!.WriteAsync(staleChange);
+        await outbox.WriteAsync(recentChange);
+
+        var deleted = await outbox.CleanupStaleUnpublishedAsync(TimeSpan.FromDays(30));
+        Assert.That(deleted, Is.EqualTo(1));
+
+        var remaining = await outbox.GetUnpublishedAsync<TestEntity>(10);
+        Assert.That(remaining, Has.Count.EqualTo(1));
+        Assert.That(remaining[0].Id, Is.EqualTo(recentChange.Id));
+    }
+
+    [Test]
+    public async Task CleanupStaleUnpublishedAsync_DoesNotRemovePublishedChanges()
+    {
+        var outbox = _tracker.Publisher.GetOutbox(typeof(TestEntity)) as PostgreSqlOutbox<TestEntity>;
+
+        var oldPublished = CreateTestChange(timestamp: DateTime.UtcNow.AddDays(-31));
+        await outbox!.WriteAsync(oldPublished);
+        await outbox.MarkPublishedAsync(oldPublished.Id);
+
+        var deleted = await outbox.CleanupStaleUnpublishedAsync(TimeSpan.FromDays(30));
+        Assert.That(deleted, Is.EqualTo(0));
+    }
+
+    [Test]
     public async Task WriteAsync_StoresCorrelationId()
     {
         var outbox = _tracker.Publisher.GetOutbox(typeof(TestEntity)) as PostgreSqlOutbox<TestEntity>;

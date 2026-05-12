@@ -36,7 +36,7 @@ public static class ServiceCollectionExtensions
             var tracker = sp.GetRequiredService<EntityChangeTracker>();
             var outboxes = tracker.Publisher.GetOutboxes().Values;
             var logger = sp.GetRequiredService<ILogger<OutboxCleanupService>>();
-            return new OutboxCleanupService(outboxes, logger, options.PollingInterval * 10);
+            return new OutboxCleanupService(outboxes, logger, options.CleanupRetentionPeriod);
         });
 
         services.AddHostedService<ChangeTrackingHostedService>();
