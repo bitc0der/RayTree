@@ -18,6 +18,7 @@ public class OutboxPublisherService : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private Task? _pollingTask;
     private volatile bool _stopping;
+    private DateTime _lastCleanup = DateTime.MinValue;
 
     private static readonly MethodInfo GetUnpublishedMethod = typeof(OutboxPublisherService)
         .GetMethod(nameof(GetUnpublishedCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -62,7 +63,10 @@ public class OutboxPublisherService : IDisposable
             try
             {
                 if (!_stopping)
+                {
                     await ProcessBatchAsync(cancellationToken);
+                    await MaybeRunCleanupAsync(cancellationToken);
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
@@ -180,6 +184,51 @@ public class OutboxPublisherService : IDisposable
         CancellationToken ct)
         where TEntity : class
         => serializer.SerializeAsync(change, destination, ct);
+
+    private async Task MaybeRunCleanupAsync(CancellationToken cancellationToken)
+    {
+        if (DateTime.UtcNow - _lastCleanup < _options.CleanupInterval) return;
+
+        _lastCleanup = DateTime.UtcNow;
+        var outbox = _publisher.GetOutbox(_entityType);
+
+        _logger.LogDebug("Outbox rotation starting for {EntityType} (retention: {Retention})",
+            _entityType.Name, _options.CleanupRetentionPeriod);
+
+        try
+        {
+            var deleted = await outbox.CleanupPublishedAsync(_options.CleanupRetentionPeriod, cancellationToken);
+            if (deleted > 0)
+                _logger.LogInformation("Outbox rotation removed {Deleted} published record(s) for {EntityType}",
+                    deleted, _entityType.Name);
+            else
+                _logger.LogDebug("Outbox rotation found no published records to remove for {EntityType}",
+                    _entityType.Name);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Outbox published cleanup failed for {EntityType}", _entityType.Name);
+        }
+
+        if (_options.StaleUnpublishedThreshold is { } threshold)
+        {
+            try
+            {
+                var stale = await outbox.CleanupStaleUnpublishedAsync(threshold, cancellationToken);
+                if (stale > 0)
+                    _logger.LogWarning(
+                        "Outbox rotation removed {Count} stale unpublished record(s) for {EntityType} older than {Threshold} — check queue health",
+                        stale, _entityType.Name, threshold);
+                else
+                    _logger.LogDebug("Outbox rotation found no stale unpublished records for {EntityType}",
+                        _entityType.Name);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Outbox stale unpublished cleanup failed for {EntityType}", _entityType.Name);
+            }
+        }
+    }
 
     public void Dispose()
     {

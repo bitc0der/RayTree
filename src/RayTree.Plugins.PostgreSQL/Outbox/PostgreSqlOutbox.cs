@@ -194,21 +194,42 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
                                  WHERE id = @Id
                                  """, new NpgsqlParameter("Id", id), cancellationToken);
 
-    public async Task<int> CleanupPublishedAsync(TimeSpan retentionPeriod,
+    public Task<int> CleanupPublishedAsync(TimeSpan retentionPeriod,
         CancellationToken cancellationToken = default)
+        => BatchDeleteAsync("published = TRUE", DateTime.UtcNow - retentionPeriod, cancellationToken);
+
+    public Task<int> CleanupStaleUnpublishedAsync(TimeSpan staleThreshold,
+        CancellationToken cancellationToken = default)
+        => BatchDeleteAsync("published = FALSE", DateTime.UtcNow - staleThreshold, cancellationToken);
+
+    private async Task<int> BatchDeleteAsync(string publishedFilter, DateTime cutoff, CancellationToken cancellationToken)
     {
+        var batchSize = _options.CleanupBatchSize;
+        var total = 0;
+        int deleted;
+
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
 
-        await using var cmd = new NpgsqlCommand($"""
-                                                 DELETE FROM {_options.OutboxTableName}
-                                                 WHERE published = TRUE AND timestamp < @Cutoff
-                                                 """, conn)
+        do
         {
-            Parameters = { new("Cutoff", DateTime.UtcNow - retentionPeriod) }
-        };
+            await using var cmd = new NpgsqlCommand($"""
+                                                     DELETE FROM {_options.OutboxTableName}
+                                                     WHERE id IN (
+                                                         SELECT id FROM {_options.OutboxTableName}
+                                                         WHERE {publishedFilter} AND timestamp < @Cutoff
+                                                         ORDER BY id
+                                                         LIMIT @BatchSize
+                                                     )
+                                                     """, conn);
+            cmd.Parameters.Add(new NpgsqlParameter("Cutoff", cutoff));
+            cmd.Parameters.Add(new NpgsqlParameter("BatchSize", batchSize));
+            deleted = await cmd.ExecuteNonQueryAsync(cancellationToken);
+            total += deleted;
+        }
+        while (deleted == batchSize && !cancellationToken.IsCancellationRequested);
 
-        return await cmd.ExecuteNonQueryAsync(cancellationToken);
+        return total;
     }
 
     public async Task<EntityChange<T>?> GetByIdAsync<T>(long id, CancellationToken cancellationToken = default)

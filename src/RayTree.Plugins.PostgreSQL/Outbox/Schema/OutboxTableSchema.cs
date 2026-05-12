@@ -44,6 +44,12 @@ public class OutboxTableSchema
                 },
                 new OutboxIndex
                 {
+                    Name = $"idx_{schemaName}_outbox_cleanup",
+                    Columns = ["timestamp"],
+                    Where = "published = TRUE"
+                },
+                new OutboxIndex
+                {
                     Name = $"idx_{schemaName}_outbox_entity", Columns = ["entity_type", "published", "timestamp"]
                 }
             ]

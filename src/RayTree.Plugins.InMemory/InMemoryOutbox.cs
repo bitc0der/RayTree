@@ -74,9 +74,21 @@ public class InMemoryOutbox : IOutbox
             .ToList();
 
         foreach (var id in toRemove)
-        {
             _store.TryRemove(id, out _);
-        }
+
+        return Task.FromResult(toRemove.Count);
+    }
+
+    public Task<int> CleanupStaleUnpublishedAsync(TimeSpan staleThreshold, CancellationToken cancellationToken = default)
+    {
+        var cutoff = DateTime.UtcNow - staleThreshold;
+        var toRemove = _store.Values
+            .Where(c => !c.Published && c.Timestamp < cutoff)
+            .Select(c => c.Id)
+            .ToList();
+
+        foreach (var id in toRemove)
+            _store.TryRemove(id, out _);
 
         return Task.FromResult(toRemove.Count);
     }

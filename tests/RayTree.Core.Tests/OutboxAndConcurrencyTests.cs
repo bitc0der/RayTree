@@ -2,7 +2,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using RayTree.Core.Distribution;
 using RayTree.Core.Models;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Outbox;
+using RayTree.Core.Plugins.Publisher;
+using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
 using RayTree.Plugins;
 
@@ -79,6 +82,153 @@ public class OutboxPublisherServiceTests
         var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
 
         Assert.DoesNotThrow(() => service.Dispose());
+    }
+
+    [Test]
+    public async Task PollLoop_CallsCleanupPublishedAsync_WhenIntervalElapses()
+    {
+        var outbox = new Mock<IOutbox>();
+        outbox.Setup(o => o.GetUnpublishedAsync<DummyEntity>(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<EntityChange<DummyEntity>>());
+        outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        var publisher = BuildPublisher(outbox.Object);
+        var options = new OutboxPublisherOptions
+        {
+            PollingInterval        = TimeSpan.FromMilliseconds(20),
+            CleanupInterval        = TimeSpan.Zero,
+            CleanupRetentionPeriod = TimeSpan.FromDays(7)
+        };
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+
+        await service.StartAsync();
+        await Task.Delay(80);
+        await service.StopAsync();
+
+        outbox.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Test]
+    public async Task PollLoop_CallsCleanupOnce_WhenIntervalHasNotElapsedAgain()
+    {
+        var outbox = new Mock<IOutbox>();
+        outbox.Setup(o => o.GetUnpublishedAsync<DummyEntity>(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<EntityChange<DummyEntity>>());
+        outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        var publisher = BuildPublisher(outbox.Object);
+        var options = new OutboxPublisherOptions
+        {
+            PollingInterval        = TimeSpan.FromMilliseconds(20),
+            CleanupInterval        = TimeSpan.FromHours(1),
+            CleanupRetentionPeriod = TimeSpan.FromDays(7)
+        };
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+
+        await service.StartAsync();
+        await Task.Delay(80);
+        await service.StopAsync();
+
+        // Eager first-tick cleanup runs exactly once; subsequent ticks within the 1-hour interval are skipped.
+        outbox.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Test]
+    public async Task PollLoop_CallsStaleUnpublishedCleanup_WhenThresholdIsSet()
+    {
+        var outbox = new Mock<IOutbox>();
+        outbox.Setup(o => o.GetUnpublishedAsync<DummyEntity>(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<EntityChange<DummyEntity>>());
+        outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+        outbox.Setup(o => o.CleanupStaleUnpublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        var publisher = BuildPublisher(outbox.Object);
+        var options = new OutboxPublisherOptions
+        {
+            PollingInterval         = TimeSpan.FromMilliseconds(20),
+            CleanupInterval         = TimeSpan.Zero,
+            CleanupRetentionPeriod  = TimeSpan.FromDays(7),
+            StaleUnpublishedThreshold = TimeSpan.FromDays(30)
+        };
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+
+        await service.StartAsync();
+        await Task.Delay(80);
+        await service.StopAsync();
+
+        outbox.Verify(o => o.CleanupStaleUnpublishedAsync(TimeSpan.FromDays(30), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Test]
+    public async Task PollLoop_DoesNotCallStaleUnpublishedCleanup_WhenThresholdIsNull()
+    {
+        var outbox = new Mock<IOutbox>();
+        outbox.Setup(o => o.GetUnpublishedAsync<DummyEntity>(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<EntityChange<DummyEntity>>());
+        outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        var publisher = BuildPublisher(outbox.Object);
+        var options = new OutboxPublisherOptions
+        {
+            PollingInterval           = TimeSpan.FromMilliseconds(20),
+            CleanupInterval           = TimeSpan.Zero,
+            CleanupRetentionPeriod    = TimeSpan.FromDays(7),
+            StaleUnpublishedThreshold = null
+        };
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+
+        await service.StartAsync();
+        await Task.Delay(80);
+        await service.StopAsync();
+
+        outbox.Verify(o => o.CleanupStaleUnpublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Test]
+    public async Task PollLoop_ContinuesAfterCleanupError()
+    {
+        var outbox = new Mock<IOutbox>();
+        outbox.Setup(o => o.GetUnpublishedAsync<DummyEntity>(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<EntityChange<DummyEntity>>());
+        outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db error"));
+
+        var publisher = BuildPublisher(outbox.Object);
+        var options = new OutboxPublisherOptions
+        {
+            PollingInterval        = TimeSpan.FromMilliseconds(20),
+            CleanupInterval        = TimeSpan.Zero,
+            CleanupRetentionPeriod = TimeSpan.FromDays(7)
+        };
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+
+        await service.StartAsync();
+        await Task.Delay(80);
+
+        // StopAsync completes cleanly — the poll loop was not killed by the cleanup error.
+        Assert.DoesNotThrowAsync(() => service.StopAsync());
+        outbox.Verify(o => o.GetUnpublishedAsync<DummyEntity>(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    private static ChangePublisher BuildPublisher(IOutbox outbox)
+    {
+        var queuePublisher = new Mock<IQueuePublisher>();
+        queuePublisher.Setup(p => p.PublishAsync(It.IsAny<MessageEnvelope>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var serializer = new Mock<IChangeSerializer>();
+
+        var cp = new ChangePublisher(NullLoggerFactory.Instance);
+        cp.RegisterOutbox(typeof(DummyEntity), outbox);
+        cp.RegisterPublisher(typeof(DummyEntity), queuePublisher.Object);
+        cp.RegisterSerializer(typeof(DummyEntity), serializer.Object);
+        cp.RegisterCompressor(typeof(DummyEntity), new NoOpCompressorPlugin());
+        return cp;
     }
 
     private class DummyEntity { public int Id { get; set; } }

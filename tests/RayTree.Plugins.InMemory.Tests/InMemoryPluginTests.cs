@@ -84,11 +84,47 @@ public class InMemoryOutboxTests
         await outbox.WriteAsync(newChange);
         await outbox.MarkPublishedAsync(oldChange.Id);
 
-        await outbox.CleanupPublishedAsync(TimeSpan.FromHours(1));
+        var deleted = await outbox.CleanupPublishedAsync(TimeSpan.FromHours(1));
         var all = outbox.GetAll();
 
+        Assert.That(deleted, Is.EqualTo(1));
         Assert.That(all, Has.Count.EqualTo(1));
         Assert.That(all[0].Id, Is.EqualTo(newChange.Id));
+    }
+
+    [Test]
+    public async Task CleanupStaleUnpublishedAsync_RemovesOldUnpublishedChanges()
+    {
+        var outbox = new InMemoryOutbox();
+        var staleChange = CreateTestChange();
+        staleChange.Timestamp = DateTime.UtcNow.AddDays(-31);
+        var recentChange = CreateTestChange();
+
+        await outbox.WriteAsync(staleChange);
+        await outbox.WriteAsync(recentChange);
+
+        var deleted = await outbox.CleanupStaleUnpublishedAsync(TimeSpan.FromDays(30));
+        var all = outbox.GetAll();
+
+        Assert.That(deleted, Is.EqualTo(1));
+        Assert.That(all, Has.Count.EqualTo(1));
+        Assert.That(all[0].Id, Is.EqualTo(recentChange.Id));
+    }
+
+    [Test]
+    public async Task CleanupStaleUnpublishedAsync_DoesNotRemovePublishedChanges()
+    {
+        var outbox = new InMemoryOutbox();
+        var oldPublished = CreateTestChange();
+        oldPublished.Timestamp = DateTime.UtcNow.AddDays(-31);
+
+        await outbox.WriteAsync(oldPublished);
+        await outbox.MarkPublishedAsync(oldPublished.Id);
+
+        var deleted = await outbox.CleanupStaleUnpublishedAsync(TimeSpan.FromDays(30));
+
+        Assert.That(deleted, Is.EqualTo(0));
+        Assert.That(outbox.GetAll(), Has.Count.EqualTo(1));
     }
 
     [Test]

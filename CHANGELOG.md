@@ -6,6 +6,88 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.4-pre-release]
+
+### Added
+
+#### Outbox rotation integrated into the publisher loop
+
+- `OutboxPublisherService` now runs `MaybeRunCleanupAsync` after every poll batch.
+  Rotation fires eagerly on the first tick (so stale rows from before a restart are
+  cleaned up immediately), then respects `OutboxPublisherOptions.CleanupInterval`
+  for subsequent runs.
+- Cleanup errors are isolated in their own `try/catch`; a transient DB failure logs
+  an error but does not abort the publish loop.
+- No separate hosted service or external scheduler is needed — rotation is tied to
+  the existing publisher lifetime.
+
+#### Stale unpublished record cleanup
+
+- New `IOutbox.CleanupStaleUnpublishedAsync(TimeSpan staleThreshold, CancellationToken)`
+  method. When records have been in the outbox without being published for longer
+  than `staleThreshold`, they are deleted. A `Warning` log is emitted whenever any
+  are found — treat this as an operator signal for queue health issues.
+- Implemented in `InMemoryOutbox` and `PostgreSqlOutbox<TEntity>`.
+- Opt-in via `OutboxPublisherOptions.StaleUnpublishedThreshold` (default `null` —
+  disabled).
+
+#### New `OutboxPublisherOptions` rotation properties
+
+| Property | Default | Description |
+|---|---|---|
+| `CleanupRetentionPeriod` | 7 days | Minimum age of a published row before it is deleted. |
+| `CleanupInterval` | 1 hour | How often rotation runs; first tick is always immediate. |
+| `StaleUnpublishedThreshold` | `null` | When set, unpublished rows older than this are also removed. |
+
+#### PostgreSQL batched cleanup
+
+- `PostgreSqlOutbox.CleanupPublishedAsync` and `CleanupStaleUnpublishedAsync` now
+  delete in batches using `DELETE … WHERE id IN (SELECT id … ORDER BY id LIMIT
+  @BatchSize)` loops. This avoids large single-statement locks and WAL spikes on
+  busy tables.
+- `PostgreSqlOutboxOptions.CleanupBatchSize` (default `1000`) controls the rows
+  deleted per statement.
+
+#### New PostgreSQL partial index
+
+- `idx_*_outbox_cleanup` — `(timestamp) WHERE published = TRUE` — added to the
+  schema so `CleanupPublishedAsync` uses an index scan instead of a sequential scan.
+  Created via `CREATE INDEX IF NOT EXISTS`, so existing tables pick it up on next
+  startup.
+
+#### Documentation
+
+- New **Outbox rotation** section in `docs/README.md` covering configuration,
+  `appsettings.json` binding, batch size tuning, log levels, and manual rotation
+  via `OutboxCleanupService`.
+
+### Fixed
+
+- `ServiceCollectionExtensions` was passing `options.PollingInterval * 10` (50 s by
+  default) as the retention period for `OutboxCleanupService`. It now correctly uses
+  `options.CleanupRetentionPeriod` (default 7 days).
+- PostgreSQL integration tests no longer race with the background `OutboxPublisherService`
+  poll loop. The outbox is created directly in `SetUp` without starting a publisher,
+  eliminating a non-deterministic failure where the poller marked records as
+  published between two `WriteAsync` calls in the same test.
+
+### Dependencies
+
+| Package | From | To |
+|---|---|---|
+| `Microsoft.EntityFrameworkCore` | `8.0.26` | `10.0.7` |
+| `Microsoft.EntityFrameworkCore.InMemory` | `8.0.26` | `10.0.7` |
+| `Microsoft.EntityFrameworkCore.Relational` | `8.0.11` | `10.0.7` |
+| `Microsoft.Extensions.DependencyInjection` | `8.0.1` | `10.0.7` |
+| `Microsoft.Extensions.Hosting` | `8.0.1` | `10.0.7` |
+| `Microsoft.Extensions.Configuration.Binder` | `8.0.2` | `10.0.7` |
+| `Npgsql.EntityFrameworkCore.PostgreSQL` | `8.0.11` | `10.0.1` |
+| `Microsoft.Extensions.Options` | `8.0.2` | removed (unused) |
+| `System.IO.Pipelines` | `8.0.0` | removed (unused) |
+| `StackExchange.Redis` | `2.8.16` | removed (no implementation) |
+
+---
+
 ## [0.0.3-pre-release]
 
 ### Added
