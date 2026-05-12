@@ -333,34 +333,36 @@ Cleanup errors are isolated: a transient database failure logs an error but does
 
 ### Configuration — `OutboxPublisherOptions`
 
-Pass options when wiring up the builder, or bind them from `appsettings.json` via `AddChangeTracking`.
+Publisher options are global (not per entity) and are set on the top-level builder via `UsePublisherOptions`. When using the Generic Host they can alternatively be bound from `appsettings.json` via `AddChangeTracking` (see below).
 
 ```csharp
+var builder = new ChangeTrackingBuilder(loggerFactory);
+
+// Rotation options are set at the builder level, not inside ForEntity.
+builder.UsePublisherOptions(o =>
+{
+    // How old a published row must be before rotation removes it.
+    o.CleanupRetentionPeriod = TimeSpan.FromDays(7);   // default: 7 days
+
+    // How frequently rotation runs (first tick is always immediate).
+    o.CleanupInterval = TimeSpan.FromHours(1);          // default: 1 h
+
+    // Optional: remove unpublished rows older than this threshold.
+    // Logs a Warning when any are found — treat this as an operator alert.
+    // Disabled (null) by default.
+    o.StaleUnpublishedThreshold = TimeSpan.FromDays(30);
+});
+
 builder.ForEntity<Order>(e => e
     .UseOutbox(new PostgreSqlOutbox<Order>(new PostgreSqlOutboxOptions
     {
         ConnectionString = connectionString
     }))
     .UseQueue(rabbitPublisher)
-    .UsePublisherOptions(new OutboxPublisherOptions
-    {
-        // How often to poll the outbox for new changes.
-        PollingInterval = TimeSpan.FromSeconds(5),       // default: 5 s
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseCompressor(new GzipCompressorPlugin()));
 
-        // How many unpublished changes to process per poll cycle.
-        BatchSize = 100,                                 // default: 100
-
-        // How old a published row must be before rotation removes it.
-        CleanupRetentionPeriod = TimeSpan.FromDays(7),   // default: 7 days
-
-        // How frequently rotation runs (first tick is always immediate).
-        CleanupInterval = TimeSpan.FromHours(1),         // default: 1 h
-
-        // Optional: remove unpublished rows older than this threshold.
-        // Logs a Warning when any are found — treat this as an operator alert.
-        // Disabled (null) by default.
-        StaleUnpublishedThreshold = TimeSpan.FromDays(30)
-    }));
+var tracker = builder.Build();
 ```
 
 | Option | Type | Default | Description |

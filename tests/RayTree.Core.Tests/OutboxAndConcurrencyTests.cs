@@ -164,6 +164,32 @@ public class OutboxPublisherServiceTests
     }
 
     [Test]
+    public async Task PollLoop_DoesNotCallStaleUnpublishedCleanup_WhenThresholdIsNull()
+    {
+        var outbox = new Mock<IOutbox>();
+        outbox.Setup(o => o.GetUnpublishedAsync<DummyEntity>(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<EntityChange<DummyEntity>>());
+        outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        var publisher = BuildPublisher(outbox.Object);
+        var options = new OutboxPublisherOptions
+        {
+            PollingInterval           = TimeSpan.FromMilliseconds(20),
+            CleanupInterval           = TimeSpan.Zero,
+            CleanupRetentionPeriod    = TimeSpan.FromDays(7),
+            StaleUnpublishedThreshold = null
+        };
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+
+        await service.StartAsync();
+        await Task.Delay(80);
+        await service.StopAsync();
+
+        outbox.Verify(o => o.CleanupStaleUnpublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Test]
     public async Task PollLoop_ContinuesAfterCleanupError()
     {
         var outbox = new Mock<IOutbox>();
