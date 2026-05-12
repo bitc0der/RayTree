@@ -61,6 +61,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `appsettings.json` binding, batch size tuning, log levels, and manual rotation
   via `OutboxCleanupService`.
 
+### Breaking Changes
+
+- `IOutbox` gains a new method `CleanupStaleUnpublishedAsync(TimeSpan staleThreshold, CancellationToken)`.
+  Any external implementation of `IOutbox` must add this method. The built-in implementations
+  (`InMemoryOutbox`, `PostgreSqlOutbox<TEntity>`) are updated automatically.
+
 ### Fixed
 
 - `ServiceCollectionExtensions` was passing `options.PollingInterval * 10` (50 s by
