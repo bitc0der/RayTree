@@ -1,6 +1,6 @@
 using Npgsql;
 
-namespace RayTree.Plugins.PostgreSQL.Outbox.Schema;
+namespace RayTree.Plugins.PostgreSQL.Schema;
 
 public static class SchemaInspector
 {

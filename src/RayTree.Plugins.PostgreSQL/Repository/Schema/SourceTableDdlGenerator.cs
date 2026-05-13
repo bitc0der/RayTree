@@ -58,7 +58,7 @@ public static class SourceTableDdlGenerator
 
     public static string GenerateAddColumn(string tableName, SourceTableColumn col)
     {
-        var sb = new System.Text.StringBuilder($"ALTER TABLE {tableName} ADD COLUMN {col.Name} {col.Type}");
+        var sb = new StringBuilder($"ALTER TABLE {tableName} ADD COLUMN {col.Name} {col.Type}");
         if (!col.IsNullable && !col.IsPrimaryKey && !col.IsIdentity)
             sb.Append(" NOT NULL");
         if (col.Default != null)

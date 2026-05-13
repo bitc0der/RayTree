@@ -1,4 +1,4 @@
-namespace RayTree.Plugins.PostgreSQL.Outbox.Schema;
+namespace RayTree.Plugins.PostgreSQL.Schema;
 
 public static class PostgreSqlTypeNormalizer
 {
@@ -15,7 +15,7 @@ public static class PostgreSqlTypeNormalizer
         ["_text"] = "TEXT",
         ["_varchar"] = "TEXT",
         ["_timestamptz"] = "TIMESTAMPTZ",
-        ["_timestamp"] = "TIMESTAMPTZ"
+        ["_timestamp"] = "TIMESTAMP"
     };
 
     public static string Normalize(string dataType, string? udtName, int? charMaxLength)
