@@ -20,6 +20,8 @@ public class NotificationBasedPublisher : IDisposable
     private NpgsqlConnection? _connection;
     private Task? _listenTask;
     private Task? _fallbackTask;
+    private volatile bool _listenerHealthy = true;
+    private bool _firstFallbackPoll = true;
 
     private static readonly MethodInfo GetByIdMethod = typeof(NotificationBasedPublisher)
         .GetMethod(nameof(GetByIdCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -92,13 +94,16 @@ public class NotificationBasedPublisher : IDisposable
             try
             {
                 await _connection!.WaitAsync(cancellationToken);
+                _listenerHealthy = true;
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
+                _listenerHealthy = false;
                 _logger.LogWarning(ex, "Error waiting for PostgreSQL notifications on {ChannelName}, falling back to polling",
                     _options.ChannelName);
-                await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
+                try { await Task.Delay(_options.FallbackPollingInterval, cancellationToken); }
+                catch (OperationCanceledException) { break; }
             }
         }
     }
@@ -109,7 +114,15 @@ public class NotificationBasedPublisher : IDisposable
         {
             try
             {
-                await ProcessUnpublishedChangesAsync(cancellationToken);
+                // Always run on the first tick to drain records written before the listener
+                // was established (e.g., from a previous run). After that, only poll when
+                // the LISTEN connection is unhealthy — the notification path handles the rest.
+                if (_firstFallbackPoll || !_listenerHealthy)
+                {
+                    _firstFallbackPoll = false;
+                    await ProcessUnpublishedChangesAsync(cancellationToken);
+                }
+
                 await Task.Delay(_options.FallbackPollingInterval, cancellationToken);
             }
             catch (OperationCanceledException) { break; }
@@ -117,7 +130,7 @@ public class NotificationBasedPublisher : IDisposable
             {
                 _logger.LogWarning(ex, "Error in fallback polling loop");
                 try { await Task.Delay(_options.FallbackPollingInterval, cancellationToken); }
-                catch { }
+                catch (OperationCanceledException) { break; }
             }
         }
     }
@@ -126,6 +139,9 @@ public class NotificationBasedPublisher : IDisposable
     {
         Task.Run(async () =>
         {
+            IOutbox? outbox = null;
+            var claimed = false;
+            var claimedId = 0L;
             try
             {
                 var payload = JsonSerializer.Deserialize<NotificationPayload>(e.Payload);
@@ -134,19 +150,35 @@ public class NotificationBasedPublisher : IDisposable
                 var entityType = Type.GetType(payload.EntityType);
                 if (entityType == null) return;
 
-                var outbox     = _publisher.GetOutbox(entityType);
+                outbox     = _publisher.GetOutbox(entityType);
                 var publisher  = _publisher.GetPublisher(entityType);
                 var serializer = _publisher.GetSerializer(entityType);
                 var compressor = _publisher.GetCompressor(entityType);
 
+                // Atomically claim the record before publishing to prevent races with
+                // the fallback polling loop and OutboxPublisherService.
+                if (!await outbox.TryClaimForPublishingAsync(payload.Id, _cts.Token)) return;
+                claimed   = true;
+                claimedId = payload.Id;
+
                 var change = await GetByIdAsync(outbox, entityType, payload.Id, _cts.Token);
-                if (change == null || change.Published) return;
+                if (change == null)
+                {
+                    // Record was cleaned up between claim and fetch; revert so the
+                    // slot is not silently lost.
+                    await outbox.RevertClaimAsync(claimedId, CancellationToken.None);
+                    claimed = false;
+                    return;
+                }
 
                 await PublishChangeAsync(change, entityType, publisher, serializer, compressor, _cts.Token);
-                await outbox.MarkPublishedAsync(change.Id, _cts.Token);
+                claimed = false; // publish succeeded; claim is intentionally kept
             }
             catch (Exception ex)
             {
+                if (claimed && outbox != null)
+                    await outbox.RevertClaimAsync(claimedId, CancellationToken.None);
+
                 _logger.LogWarning(ex, "Error processing PostgreSQL notification");
             }
         });
@@ -195,15 +227,19 @@ public class NotificationBasedPublisher : IDisposable
             foreach (var change in changes)
             {
                 if (cancellationToken.IsCancellationRequested) break;
+
+                if (!await outbox.TryClaimForPublishingAsync(change.Id, cancellationToken))
+                    continue;
+
                 try
                 {
                     await PublishChangeAsync(change, entityType, publisher, serializer, compressor, cancellationToken);
-                    await outbox.MarkPublishedAsync(change.Id, cancellationToken);
                 }
                 catch (Exception ex)
                 {
+                    await outbox.RevertClaimAsync(change.Id, CancellationToken.None);
                     _logger.LogWarning(ex,
-                        "Failed to publish change {ChangeId} for {EntityType}, will retry in next polling cycle",
+                        "Failed to publish change {ChangeId} for {EntityType}, reverted claim; will retry",
                         change.Id, entityType.Name);
                 }
             }

@@ -194,6 +194,26 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
                                  WHERE id = @Id
                                  """, new NpgsqlParameter("Id", id), cancellationToken);
 
+    public async Task<bool> TryClaimForPublishingAsync(long id, CancellationToken cancellationToken = default)
+    {
+        await using var conn = new NpgsqlConnection(_options.ConnectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand($"""
+                                                 UPDATE {_options.OutboxTableName}
+                                                 SET published = TRUE
+                                                 WHERE id = @Id AND published = FALSE
+                                                 """, conn);
+        cmd.Parameters.Add(new NpgsqlParameter("Id", id));
+        return await cmd.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    public Task RevertClaimAsync(long id, CancellationToken cancellationToken = default)
+        => ExecuteNonQueryAsync($"""
+                                 UPDATE {_options.OutboxTableName}
+                                 SET published = FALSE
+                                 WHERE id = @Id
+                                 """, new NpgsqlParameter("Id", id), cancellationToken);
+
     public Task<int> CleanupPublishedAsync(TimeSpan retentionPeriod,
         CancellationToken cancellationToken = default)
         => BatchDeleteAsync("published = TRUE", DateTime.UtcNow - retentionPeriod, cancellationToken);

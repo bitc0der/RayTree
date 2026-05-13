@@ -74,9 +74,13 @@ public class OutboxPublisherService : IDisposable
                 _logger.LogError(ex, "Error processing outbox batch for {EntityType}", _entityType.Name);
             }
 
+            var delay = _options.UseNotificationChannel && _options.FallbackPollingInterval.HasValue
+                ? _options.FallbackPollingInterval.Value
+                : _options.PollingInterval;
+
             try
             {
-                await Task.Delay(_options.PollingInterval, cancellationToken);
+                await Task.Delay(delay, cancellationToken);
             }
             catch (OperationCanceledException) { break; }
         }
