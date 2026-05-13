@@ -6,6 +6,72 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.6-pre-release]
+
+### Fixed
+
+#### Duplicate publish prevention in `NotificationBasedPublisher`
+
+- `OutboxPublisherService` was ignoring `OutboxPublisherOptions.UseNotificationChannel`
+  and always polling at `PollingInterval` (default 5 s), racing with
+  `NotificationBasedPublisher` to publish the same record. When
+  `UseNotificationChannel = true` the service now uses `FallbackPollingInterval`
+  instead, demoting itself to a safety-net role while `NotificationBasedPublisher`
+  handles normal delivery.
+- `NotificationBasedPublisher.FallbackPollingLoopAsync` was running on every tick
+  unconditionally, publishing every change a second time in parallel with the
+  `OnNotification` fast-path. The loop now polls only on the first tick at startup
+  (to drain records written before the listener was established) and when the LISTEN
+  connection is unhealthy (`_listenerHealthy = false`).
+- `OnNotification` had a TOCTOU race: it read `change.Published`, then raced to
+  publish before calling `MarkPublishedAsync`, allowing two concurrent publishers to
+  both publish the same record. `OnNotification` and `ProcessUnpublishedChangesAsync`
+  now atomically claim records via `IOutbox.TryClaimForPublishingAsync` before
+  publishing. On publish failure the claim is reverted via `IOutbox.RevertClaimAsync`
+  so the fallback loop can retry.
+
+#### Deduplication correctness in `ChangeSubscriber`
+
+- `ChangeSubscriber` marked a message's `CorrelationId` as processed **before**
+  invoking handlers. When a handler exhausted retries and threw (`SkipOnFailure =
+  false`), the correlation ID remained in the store. With a persistent dedup store
+  (e.g. Redis), the message broker's redelivered copy would then be silently dropped
+  forever. The subscriber now calls `IDeduplicationStore.RevertProcessedAsync` before
+  rethrowing, so the redelivered message is accepted and retried.
+- `IDeduplicationStore.CleanupAsync` and `SubscriberOptions.DeduplicationRetention`
+  existed but were never wired up, causing `InMemoryDeduplicationStore` to grow
+  without bound. `ChangeSubscriber` now calls `MaybeDedupCleanupAsync` after each
+  successfully processed message, gated by the new
+  `SubscriberOptions.DeduplicationCleanupInterval` (default 1 h).
+- `IDeduplicationStore.IsProcessedAsync` was defined on the interface and implemented
+  but never called anywhere. Removed (breaking change for external implementations —
+  delete the method).
+
+### Added
+
+- `IOutbox.TryClaimForPublishingAsync(long id, CancellationToken)` — atomically
+  transitions a record from `published = FALSE` to `published = TRUE` and returns
+  `true` if this caller made the transition (i.e. the record was unpublished).
+  Returns `false` when another publisher already claimed it.
+- `IOutbox.RevertClaimAsync(long id, CancellationToken)` — sets `published = FALSE`,
+  undoing a claim after a publish failure so the record remains visible to the
+  fallback polling loop.
+- `IDeduplicationStore.RevertProcessedAsync(string correlationId, CancellationToken)`
+  — removes a correlation ID from the store so a redelivered message can be retried
+  after a handler failure.
+- `SubscriberOptions.DeduplicationCleanupInterval` (default 1 h) — how often
+  `ChangeSubscriber` triggers `IDeduplicationStore.CleanupAsync` to evict entries
+  older than `DeduplicationRetention`.
+
+### Breaking Changes
+
+- `IOutbox` gains two new methods: `TryClaimForPublishingAsync` and `RevertClaimAsync`.
+  External implementations must add both.
+- `IDeduplicationStore` loses `IsProcessedAsync` and gains `RevertProcessedAsync`.
+  External implementations must remove the former and add the latter.
+
+---
+
 ## [0.0.5-pre-release]
 
 ### Added
