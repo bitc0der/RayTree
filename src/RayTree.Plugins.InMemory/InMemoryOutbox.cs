@@ -8,6 +8,7 @@ namespace RayTree.Plugins.InMemory;
 public class InMemoryOutbox : IOutbox
 {
     private readonly ConcurrentDictionary<long, EntityChange> _store = new();
+    private readonly object _claimLock = new();
     private long _nextId;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -58,9 +59,26 @@ public class InMemoryOutbox : IOutbox
     public Task MarkPublishedAsync(long id, CancellationToken cancellationToken = default)
     {
         if (_store.TryGetValue(id, out var change))
-        {
             change.Published = true;
+
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> TryClaimForPublishingAsync(long id, CancellationToken cancellationToken = default)
+    {
+        lock (_claimLock)
+        {
+            if (!_store.TryGetValue(id, out var change) || change.Published)
+                return Task.FromResult(false);
+            change.Published = true;
+            return Task.FromResult(true);
         }
+    }
+
+    public Task RevertClaimAsync(long id, CancellationToken cancellationToken = default)
+    {
+        if (_store.TryGetValue(id, out var change))
+            change.Published = false;
 
         return Task.CompletedTask;
     }

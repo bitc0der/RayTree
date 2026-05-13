@@ -6,6 +6,116 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.6-pre-release]
+
+### Fixed
+
+#### Duplicate publish prevention in `NotificationBasedPublisher`
+
+- `OutboxPublisherService` was ignoring `OutboxPublisherOptions.UseNotificationChannel`
+  and always polling at `PollingInterval` (default 5 s), racing with
+  `NotificationBasedPublisher` to publish the same record. When
+  `UseNotificationChannel = true` the service now uses `FallbackPollingInterval`
+  instead, demoting itself to a safety-net role while `NotificationBasedPublisher`
+  handles normal delivery.
+- `NotificationBasedPublisher.FallbackPollingLoopAsync` was running on every tick
+  unconditionally, publishing every change a second time in parallel with the
+  `OnNotification` fast-path. The loop now polls only on the first tick at startup
+  (to drain records written before the listener was established) and when the LISTEN
+  connection is unhealthy (`_listenerHealthy = false`).
+- `OnNotification` had a TOCTOU race: it read `change.Published`, then raced to
+  publish before calling `MarkPublishedAsync`, allowing two concurrent publishers to
+  both publish the same record. `OnNotification` and `ProcessUnpublishedChangesAsync`
+  now atomically claim records via `IOutbox.TryClaimForPublishingAsync` before
+  publishing. On publish failure the claim is reverted via `IOutbox.RevertClaimAsync`
+  so the fallback loop can retry.
+
+#### Deduplication correctness in `ChangeSubscriber`
+
+- `ChangeSubscriber` marked a message's `CorrelationId` as processed **before**
+  invoking handlers. When a handler exhausted retries and threw (`SkipOnFailure =
+  false`), the correlation ID remained in the store. With a persistent dedup store
+  (e.g. Redis), the message broker's redelivered copy would then be silently dropped
+  forever. The subscriber now calls `IDeduplicationStore.RevertProcessedAsync` before
+  rethrowing, so the redelivered message is accepted and retried.
+- `IDeduplicationStore.CleanupAsync` and `SubscriberOptions.DeduplicationRetention`
+  existed but were never wired up, causing `InMemoryDeduplicationStore` to grow
+  without bound. `ChangeSubscriber` now calls `MaybeDedupCleanupAsync` after each
+  successfully processed message, gated by the new
+  `SubscriberOptions.DeduplicationCleanupInterval` (default 1 h).
+- `IDeduplicationStore.IsProcessedAsync` was defined on the interface and implemented
+  but never called anywhere. Removed (breaking change for external implementations —
+  delete the method).
+
+#### Ordering defaults for `MaxPublishConcurrency` and `MaxDegreeOfParallelism`
+
+- `OutboxPublisherOptions.MaxPublishConcurrency`, `NotificationBasedPublisherOptions.MaxPublishConcurrency`,
+  and `SubscriberOptions.MaxDegreeOfParallelism` were all introduced with a default of
+  `Environment.ProcessorCount`. Concurrent publishing enqueues messages in non-deterministic
+  order, breaking per-partition ordering guarantees; `TrackMultiple_AllChangesDeliveredInOrder`
+  (Kafka) failed non-deterministically as a result. All three default to `1` (sequential).
+  Increase explicitly when ordering is not required.
+
+### Added
+
+- `IOutbox.TryClaimForPublishingAsync(long id, CancellationToken)` — atomically
+  transitions a record from `published = FALSE` to `published = TRUE` and returns
+  `true` if this caller made the transition (i.e. the record was unpublished).
+  Returns `false` when another publisher already claimed it.
+- `IOutbox.RevertClaimAsync(long id, CancellationToken)` — sets `published = FALSE`,
+  undoing a claim after a publish failure so the record remains visible to the
+  fallback polling loop.
+- `IDeduplicationStore.RevertProcessedAsync(string correlationId, CancellationToken)`
+  — removes a correlation ID from the store so a redelivered message can be retried
+  after a handler failure.
+- `SubscriberOptions.DeduplicationCleanupInterval` (default 1 h) — how often
+  `ChangeSubscriber` triggers `IDeduplicationStore.CleanupAsync` to evict entries
+  older than `DeduplicationRetention`.
+
+#### High-load throughput improvements
+
+- `OutboxPublisherOptions.MaxPublishConcurrency` (default 1 — sequential) —
+  `OutboxPublisherService.ProcessBatchAsync` now uses `Parallel.ForEachAsync` bounded
+  by this option. Default is 1 to preserve per-partition message ordering; increase
+  explicitly when ordering is not required and throughput matters more.
+- `OutboxPublisherService` skips the inter-batch sleep when the batch was full
+  (`changes.Count == BatchSize`), draining a backlog immediately rather than waiting
+  one full `PollingInterval` between each batch.
+- `SubscriberOptions.MaxDegreeOfParallelism` (default 1) — `ConsumeFromConsumerAsync`
+  and `ConsumeFromQueueAsync` now use `Parallel.ForEachAsync` bounded by this option.
+  Default is 1 (sequential) to preserve per-partition message ordering (e.g. Kafka);
+  increase explicitly when handlers are order-independent and throughput matters more.
+- `NotificationBasedPublisherOptions.MaxConcurrentNotifications` (default 16) —
+  `OnNotification` is now bounded by a `SemaphoreSlim`; notifications that arrive
+  while at capacity are dropped and will be delivered by the fallback polling loop.
+- `NotificationBasedPublisherOptions.MaxPublishConcurrency` (default 1 — sequential)
+  — `ProcessUnpublishedChangesAsync` uses `Parallel.ForEachAsync` bounded by this
+  option. Same ordering rationale as `OutboxPublisherOptions.MaxPublishConcurrency`.
+
+#### Logging improvements
+
+- `NotificationBasedPublisher`: LISTEN connection loss now logs at `Warning` only
+  on the first unhealthy tick (suppressed on subsequent ticks while still unhealthy);
+  recovery logs at `Information` so operators can confirm the fast-path is restored.
+- `NotificationBasedPublisher.OnNotification`: logs at `Debug` when
+  `TryClaimForPublishingAsync` returns `false` (record already claimed by another
+  publisher), making claim contention visible under high load.
+- `ChangeSubscriber.ProcessMessageAsync`: logs successful message dispatch at `Debug`
+  and dedup-mark revert (handler exhausted all retries, `SkipOnFailure = false`) at
+  `Warning` before rethrowing, so operators can correlate repeated handler failures
+  with redelivery.
+- `ChangeTrackingHostedService`: consumer loop start log now includes the entity type
+  name — e.g. `"Starting change tracking consumer loop for OrderEntity (1 of 3)"`.
+
+### Breaking Changes
+
+- `IOutbox` gains two new methods: `TryClaimForPublishingAsync` and `RevertClaimAsync`.
+  External implementations must add both.
+- `IDeduplicationStore` loses `IsProcessedAsync` and gains `RevertProcessedAsync`.
+  External implementations must remove the former and add the latter.
+
+---
+
 ## [0.0.5-pre-release]
 
 ### Added

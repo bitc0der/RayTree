@@ -60,11 +60,12 @@ public class OutboxPublisherService : IDisposable
     {
         while (!cancellationToken.IsCancellationRequested)
         {
+            var batchWasFull = false;
             try
             {
                 if (!_stopping)
                 {
-                    await ProcessBatchAsync(cancellationToken);
+                    batchWasFull = await ProcessBatchAsync(cancellationToken);
                     await MaybeRunCleanupAsync(cancellationToken);
                 }
             }
@@ -74,28 +75,42 @@ public class OutboxPublisherService : IDisposable
                 _logger.LogError(ex, "Error processing outbox batch for {EntityType}", _entityType.Name);
             }
 
+            // When the batch was full more records are likely waiting — loop immediately
+            // rather than sleeping so we drain the backlog without artificial delay.
+            if (batchWasFull) continue;
+
+            var delay = _options.UseNotificationChannel && _options.FallbackPollingInterval.HasValue
+                ? _options.FallbackPollingInterval.Value
+                : _options.PollingInterval;
+
             try
             {
-                await Task.Delay(_options.PollingInterval, cancellationToken);
+                await Task.Delay(delay, cancellationToken);
             }
             catch (OperationCanceledException) { break; }
         }
     }
 
-    private async Task ProcessBatchAsync(CancellationToken cancellationToken)
+    // Returns true when the batch was full, signalling the caller to loop immediately.
+    private async Task<bool> ProcessBatchAsync(CancellationToken cancellationToken)
     {
-        var outbox      = _publisher.GetOutbox(_entityType);
-        var publisher   = _publisher.GetPublisher(_entityType);
-        var serializer  = _publisher.GetSerializer(_entityType);
-        var compressor  = _publisher.GetCompressor(_entityType);
+        var outbox     = _publisher.GetOutbox(_entityType);
+        var publisher  = _publisher.GetPublisher(_entityType);
+        var serializer = _publisher.GetSerializer(_entityType);
+        var compressor = _publisher.GetCompressor(_entityType);
 
         var changes = await GetUnpublishedAsync(outbox, _options.BatchSize, cancellationToken);
 
-        foreach (var change in changes)
-        {
-            if (cancellationToken.IsCancellationRequested) break;
-            await PublishWithRetryAsync(change, outbox, publisher, serializer, compressor, cancellationToken);
-        }
+        await Parallel.ForEachAsync(changes,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = _options.MaxPublishConcurrency,
+                CancellationToken      = cancellationToken
+            },
+            async (change, token) =>
+                await PublishWithRetryAsync(change, outbox, publisher, serializer, compressor, token));
+
+        return changes.Count == _options.BatchSize;
     }
 
     private async Task PublishWithRetryAsync(

@@ -33,12 +33,12 @@ public class ChangeTrackingHostedService : IHostedService
             var queues = subscriber.Queues;
             var total  = queues.Count;
             var index  = 0;
-            foreach (var (_, consumer) in queues)
+            foreach (var (entityType, consumer) in queues)
             {
                 index++;
                 _logger.LogInformation(
-                    "Starting change tracking consumer loop {Index} of {Total}",
-                    index, total);
+                    "Starting change tracking consumer loop for {EntityType} ({Index} of {Total})",
+                    entityType.Name, index, total);
                 _consumeTasks.Add(Task.Run(() => _tracker.ConsumeFromConsumerAsync(consumer, ct), ct));
             }
         }
