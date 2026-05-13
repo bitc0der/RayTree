@@ -29,6 +29,7 @@ public class ChangeSubscriber : IDisposable
     private readonly SubscriberOptions _options;
     private readonly ILogger<ChangeSubscriber> _logger;
     private readonly CancellationTokenSource _cts = new();
+    private readonly SemaphoreSlim _cleanupGate = new(1, 1);
     private DateTime _lastDedupCleanup = DateTime.MinValue;
 
     // Reflection helper: DeserializeCoreAsync<TEntity>(serializer, stream, ct) → Task<EntityChange>
@@ -118,8 +119,15 @@ public class ChangeSubscriber : IDisposable
     public async Task ConsumeFromConsumerAsync(IQueueConsumer consumer,
         CancellationToken cancellationToken = default)
     {
-        await foreach (var envelope in consumer.ConsumeAsync(cancellationToken))
-            await ProcessMessageAsync(envelope, cancellationToken);
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism,
+            CancellationToken      = cancellationToken
+        };
+        await Parallel.ForEachAsync(
+            consumer.ConsumeAsync(cancellationToken),
+            parallelOptions,
+            async (envelope, token) => await ProcessMessageAsync(envelope, token));
     }
 
     public async Task ConsumeFromQueueAsync<TQueue>(
@@ -127,8 +135,15 @@ public class ChangeSubscriber : IDisposable
         Func<TQueue, CancellationToken, IAsyncEnumerable<MessageEnvelope>> reader,
         CancellationToken cancellationToken = default)
     {
-        await foreach (var envelope in reader(queue, cancellationToken))
-            await ProcessMessageAsync(envelope, cancellationToken);
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism,
+            CancellationToken      = cancellationToken
+        };
+        await Parallel.ForEachAsync(
+            reader(queue, cancellationToken),
+            parallelOptions,
+            async (envelope, token) => await ProcessMessageAsync(envelope, token));
     }
 
     // -------------------------------------------------------------------------
@@ -192,16 +207,26 @@ public class ChangeSubscriber : IDisposable
 
     private async Task MaybeDedupCleanupAsync(CancellationToken cancellationToken)
     {
+        // Quick check without acquiring the gate — avoid contention on every message.
         if (DateTime.UtcNow - _lastDedupCleanup < _options.DeduplicationCleanupInterval) return;
 
+        // Only one concurrent caller runs cleanup; others skip rather than queue.
+        if (!_cleanupGate.Wait(0)) return;
         try
         {
+            // Double-check after acquiring so a concurrent caller that already ran doesn't repeat it.
+            if (DateTime.UtcNow - _lastDedupCleanup < _options.DeduplicationCleanupInterval) return;
+
             await _dedupStore.CleanupAsync(_options.DeduplicationRetention, cancellationToken);
             _lastDedupCleanup = DateTime.UtcNow;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "Deduplication store cleanup failed");
+        }
+        finally
+        {
+            _cleanupGate.Release();
         }
     }
 
@@ -327,5 +352,6 @@ public class ChangeSubscriber : IDisposable
     {
         _cts.Cancel();
         _cts.Dispose();
+        _cleanupGate.Dispose();
     }
 }

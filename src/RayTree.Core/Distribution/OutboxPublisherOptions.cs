@@ -12,4 +12,6 @@ public class OutboxPublisherOptions
     public TimeSpan CleanupRetentionPeriod { get; set; } = TimeSpan.FromDays(7);
     public TimeSpan CleanupInterval { get; set; } = TimeSpan.FromHours(1);
     public TimeSpan? StaleUnpublishedThreshold { get; set; }
+    /// <summary>Maximum number of changes within a batch that are published in parallel.</summary>
+    public int MaxPublishConcurrency { get; set; } = Environment.ProcessorCount;
 }

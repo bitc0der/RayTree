@@ -17,6 +17,7 @@ public class NotificationBasedPublisher : IDisposable
     private readonly NotificationBasedPublisherOptions _options;
     private readonly ILogger<NotificationBasedPublisher> _logger;
     private readonly CancellationTokenSource _cts = new();
+    private readonly SemaphoreSlim _notificationSemaphore;
     private NpgsqlConnection? _connection;
     private Task? _listenTask;
     private Task? _fallbackTask;
@@ -37,10 +38,12 @@ public class NotificationBasedPublisher : IDisposable
         NotificationBasedPublisherOptions options,
         ILoggerFactory loggerFactory)
     {
-        _publisher = publisher    ?? throw new ArgumentNullException(nameof(publisher));
-        _options   = options      ?? throw new ArgumentNullException(nameof(options));
-        _logger    = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
-                         .CreateLogger<NotificationBasedPublisher>();
+        _publisher            = publisher    ?? throw new ArgumentNullException(nameof(publisher));
+        _options              = options      ?? throw new ArgumentNullException(nameof(options));
+        _logger               = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
+                                    .CreateLogger<NotificationBasedPublisher>();
+        _notificationSemaphore = new SemaphoreSlim(options.MaxConcurrentNotifications,
+                                                   options.MaxConcurrentNotifications);
     }
 
     public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
@@ -137,6 +140,15 @@ public class NotificationBasedPublisher : IDisposable
 
     private void OnNotification(object? sender, NpgsqlNotificationEventArgs e)
     {
+        // Reject immediately when at capacity; the fallback poll will deliver the record.
+        if (!_notificationSemaphore.Wait(0))
+        {
+            _logger.LogDebug(
+                "Notification concurrency limit reached ({Limit}); record will be delivered by fallback poll",
+                _options.MaxConcurrentNotifications);
+            return;
+        }
+
         Task.Run(async () =>
         {
             IOutbox? outbox = null;
@@ -150,13 +162,13 @@ public class NotificationBasedPublisher : IDisposable
                 var entityType = Type.GetType(payload.EntityType);
                 if (entityType == null) return;
 
-                outbox     = _publisher.GetOutbox(entityType);
+                outbox         = _publisher.GetOutbox(entityType);
                 var publisher  = _publisher.GetPublisher(entityType);
                 var serializer = _publisher.GetSerializer(entityType);
                 var compressor = _publisher.GetCompressor(entityType);
 
-                // Atomically claim the record before publishing to prevent races with
-                // the fallback polling loop and OutboxPublisherService.
+                // Atomically claim before publishing to prevent races with the fallback
+                // polling loop and OutboxPublisherService.
                 if (!await outbox.TryClaimForPublishingAsync(payload.Id, _cts.Token)) return;
                 claimed   = true;
                 claimedId = payload.Id;
@@ -164,15 +176,13 @@ public class NotificationBasedPublisher : IDisposable
                 var change = await GetByIdAsync(outbox, entityType, payload.Id, _cts.Token);
                 if (change == null)
                 {
-                    // Record was cleaned up between claim and fetch; revert so the
-                    // slot is not silently lost.
                     await outbox.RevertClaimAsync(claimedId, CancellationToken.None);
                     claimed = false;
                     return;
                 }
 
                 await PublishChangeAsync(change, entityType, publisher, serializer, compressor, _cts.Token);
-                claimed = false; // publish succeeded; claim is intentionally kept
+                claimed = false;
             }
             catch (Exception ex)
             {
@@ -180,6 +190,10 @@ public class NotificationBasedPublisher : IDisposable
                     await outbox.RevertClaimAsync(claimedId, CancellationToken.None);
 
                 _logger.LogWarning(ex, "Error processing PostgreSQL notification");
+            }
+            finally
+            {
+                _notificationSemaphore.Release();
             }
         });
     }
@@ -224,25 +238,27 @@ public class NotificationBasedPublisher : IDisposable
             var compressor = _publisher.GetCompressor(entityType);
             var changes    = await GetUnpublishedAsync(outbox, entityType, 100, cancellationToken);
 
-            foreach (var change in changes)
-            {
-                if (cancellationToken.IsCancellationRequested) break;
-
-                if (!await outbox.TryClaimForPublishingAsync(change.Id, cancellationToken))
-                    continue;
-
-                try
+            await Parallel.ForEachAsync(changes,
+                new ParallelOptions
                 {
-                    await PublishChangeAsync(change, entityType, publisher, serializer, compressor, cancellationToken);
-                }
-                catch (Exception ex)
+                    MaxDegreeOfParallelism = _options.MaxPublishConcurrency,
+                    CancellationToken      = cancellationToken
+                },
+                async (change, token) =>
                 {
-                    await outbox.RevertClaimAsync(change.Id, CancellationToken.None);
-                    _logger.LogWarning(ex,
-                        "Failed to publish change {ChangeId} for {EntityType}, reverted claim; will retry",
-                        change.Id, entityType.Name);
-                }
-            }
+                    if (!await outbox.TryClaimForPublishingAsync(change.Id, token)) return;
+                    try
+                    {
+                        await PublishChangeAsync(change, entityType, publisher, serializer, compressor, token);
+                    }
+                    catch (Exception ex)
+                    {
+                        await outbox.RevertClaimAsync(change.Id, CancellationToken.None);
+                        _logger.LogWarning(ex,
+                            "Failed to publish change {ChangeId} for {EntityType}, reverted claim; will retry",
+                            change.Id, entityType.Name);
+                    }
+                });
         }
     }
 
@@ -305,6 +321,7 @@ public class NotificationBasedPublisher : IDisposable
     {
         StopAsync().GetAwaiter().GetResult();
         _cts.Dispose();
+        _notificationSemaphore.Dispose();
         _connection?.Dispose();
     }
 }
