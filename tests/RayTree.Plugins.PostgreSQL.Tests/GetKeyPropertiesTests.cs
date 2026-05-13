@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Plugins.PostgreSQL.Outbox;
 using RayTree.Plugins.PostgreSQL.Repository;
 
@@ -51,14 +52,14 @@ public class GetKeyPropertiesTests
     public void Constructor_WithKeyAttribute_ResolvesKeyAtStartup()
     {
         var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
-        Assert.That(() => new PostgreSqlRepository<KeyAnnotatedEntity>(options), Throws.Nothing);
+        Assert.That(() => new PostgreSqlRepository<KeyAnnotatedEntity>(options, NullLoggerFactory.Instance), Throws.Nothing);
     }
 
     [Test]
     public void Constructor_WithCompositeKey_ResolvesKeyAtStartup()
     {
         var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
-        Assert.That(() => new PostgreSqlRepository<CompositeKeyEntity>(options), Throws.Nothing);
+        Assert.That(() => new PostgreSqlRepository<CompositeKeyEntity>(options, NullLoggerFactory.Instance), Throws.Nothing);
     }
 
     [Test]
@@ -66,7 +67,7 @@ public class GetKeyPropertiesTests
     {
         var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
         Assert.That(
-            () => new PostgreSqlRepository<NoKeyEntity>(options),
+            () => new PostgreSqlRepository<NoKeyEntity>(options, NullLoggerFactory.Instance),
             Throws.InvalidOperationException.With.Message.Contains("NoKeyEntity"));
     }
 
@@ -74,7 +75,7 @@ public class GetKeyPropertiesTests
     public void GetByIdAsync_WrongKeyValueCount_Throws()
     {
         var options = new PostgreSqlRepositoryOptions { ConnectionString = "Host=localhost" };
-        var repo = new PostgreSqlRepository<CompositeKeyEntity>(options);
+        var repo = new PostgreSqlRepository<CompositeKeyEntity>(options, NullLoggerFactory.Instance);
         Assert.That(
             async () => await repo.GetByIdAsync([1]),
             Throws.ArgumentException.With.Message.Contains("Expected 2"));

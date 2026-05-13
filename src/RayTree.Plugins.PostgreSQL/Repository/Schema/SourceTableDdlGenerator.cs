@@ -56,6 +56,17 @@ public static class SourceTableDdlGenerator
         return sql;
     }
 
+    public static string GenerateAddColumn(string tableName, SourceTableColumn col)
+    {
+        var sb = new System.Text.StringBuilder($"ALTER TABLE {tableName} ADD COLUMN {col.Name} {col.Type}");
+        if (!col.IsNullable && !col.IsPrimaryKey && !col.IsIdentity)
+            sb.Append(" NOT NULL");
+        if (col.Default != null)
+            sb.Append($" DEFAULT {col.Default}");
+        sb.Append(';');
+        return sb.ToString();
+    }
+
     public static SourceTableSchema CreateDefault(
         string entityTypeName,
         IReadOnlyList<SourceTableColumn> keyColumns,

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Plugins.PostgreSQL.Outbox;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
@@ -8,7 +9,7 @@ public class DefaultTableNameTests
     public void Constructor_WithNoTableName_DerivesSnakeCasePlusOutbox()
     {
         var options = new PostgreSqlOutboxOptions { ConnectionString = "Host=localhost" };
-        _ = new PostgreSqlOutbox<TestEntity>(options);
+        _ = new PostgreSqlOutbox<TestEntity>(options, NullLoggerFactory.Instance);
         Assert.That(options.OutboxTableName, Is.EqualTo("test_entity_outbox"));
     }
 
@@ -20,7 +21,7 @@ public class DefaultTableNameTests
             ConnectionString = "Host=localhost",
             OutboxTableName = "my_custom_table"
         };
-        _ = new PostgreSqlOutbox<TestEntity>(options);
+        _ = new PostgreSqlOutbox<TestEntity>(options, NullLoggerFactory.Instance);
         Assert.That(options.OutboxTableName, Is.EqualTo("my_custom_table"));
     }
 }

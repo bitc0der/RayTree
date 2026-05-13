@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Outbox;
@@ -14,10 +15,13 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
     private readonly IReadOnlyList<EntityColumnMapper.PropertyColumn> _propertyColumns;
     private readonly string _insertSql;
     private readonly string _selectColumns;
+    private readonly ILogger<PostgreSqlOutbox<TEntity>> _logger;
 
-    public PostgreSqlOutbox(PostgreSqlOutboxOptions options)
+    public PostgreSqlOutbox(PostgreSqlOutboxOptions options, ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _logger = loggerFactory.CreateLogger<PostgreSqlOutbox<TEntity>>();
 
         if (string.IsNullOrWhiteSpace(options.OutboxTableName))
             options.OutboxTableName = EntityColumnMapper.GetTableName(typeof(TEntity)) + "_outbox";
@@ -62,6 +66,9 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         var outboxDdl = OutboxSchemaGenerator.GenerateCreateTable(outboxSchema, includeIndexes: true);
         await ExecuteDdlDirectly(_options.ConnectionString, outboxDdl, cancellationToken);
 
+        if (_options.AutoMigrate)
+            await MigrateSchemaAsync(cancellationToken);
+
         if (_options.UseNotificationChannel && !string.IsNullOrEmpty(_options.NotificationChannel))
         {
             var functionName = $"notify_{_options.OutboxTableName}_change";
@@ -77,6 +84,74 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
                 NotificationBasedPublisher.GenerateNotifyTrigger(triggerName, _options.OutboxTableName, functionName);
             await ExecuteDdlDirectly(_options.ConnectionString, triggerDdl, cancellationToken);
         }
+    }
+
+    private async Task MigrateSchemaAsync(CancellationToken cancellationToken)
+    {
+        var actual = await SchemaInspector.GetColumnsAsync(
+            _options.ConnectionString, _options.OutboxTableName, cancellationToken);
+
+        var desiredByName = _propertyColumns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var col in _propertyColumns)
+        {
+            if (actual.ContainsKey(col.ColumnName))
+                continue;
+
+            if (!col.IsNullable)
+            {
+                var hasRows = await TableHasRowsAsync(_options.ConnectionString, _options.OutboxTableName, cancellationToken);
+                if (hasRows)
+                    throw new InvalidOperationException(
+                        $"Cannot auto-migrate: column '{col.ColumnName}' is NOT NULL with no default and table " +
+                        $"'{_options.OutboxTableName}' already has rows. Add a DEFAULT or migrate manually.");
+            }
+
+            var ddl = OutboxSchemaGenerator.GenerateAddColumn(
+                _options.OutboxTableName,
+                new OutboxColumn { Name = col.ColumnName, Type = col.ColumnType, IsNullable = col.IsNullable });
+
+            try
+            {
+                await ExecuteDdlDirectly(_options.ConnectionString, ddl, cancellationToken);
+                _logger.LogInformation(
+                    "Auto-migrated: added column {Column} ({Type}) to {Table}",
+                    col.ColumnName, col.ColumnType, _options.OutboxTableName);
+            }
+            catch (PostgresException ex) when (ex.SqlState == "42701")
+            {
+                // Duplicate column — concurrent startup race; treat as success
+            }
+        }
+
+        foreach (var (name, _) in actual)
+        {
+            if (!name.StartsWith("state_", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!desiredByName.ContainsKey(name))
+                _logger.LogWarning(
+                    "Column '{Column}' exists in '{Table}' but has no matching entity property — consider dropping it manually",
+                    name, _options.OutboxTableName);
+        }
+
+        foreach (var col in _propertyColumns)
+        {
+            if (!actual.TryGetValue(col.ColumnName, out var existing))
+                continue;
+            if (!string.Equals(existing.NormalizedType, col.ColumnType, StringComparison.OrdinalIgnoreCase))
+                _logger.LogWarning(
+                    "Column '{Column}' in '{Table}' has type '{Actual}' but entity expects '{Expected}' — type changes must be migrated manually",
+                    col.ColumnName, _options.OutboxTableName, existing.NormalizedType, col.ColumnType);
+        }
+    }
+
+    private static async Task<bool> TableHasRowsAsync(string connectionString, string tableName,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand($"SELECT EXISTS(SELECT 1 FROM {tableName} LIMIT 1)", conn);
+        return (bool)(await cmd.ExecuteScalarAsync(cancellationToken))!;
     }
 
     private static async Task ExecuteDdlDirectly(string connectionString, string ddl,

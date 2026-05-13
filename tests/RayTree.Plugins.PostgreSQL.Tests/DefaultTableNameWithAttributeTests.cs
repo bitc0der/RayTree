@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Plugins.PostgreSQL.Outbox;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
@@ -8,7 +9,7 @@ public class DefaultTableNameWithAttributeTests
     public void Constructor_WithTableAttribute_DerivesOutboxNameFromAttribute()
     {
         var options = new PostgreSqlOutboxOptions { ConnectionString = "Host=localhost" };
-        _ = new PostgreSqlOutbox<AnnotatedEntity>(options);
+        _ = new PostgreSqlOutbox<AnnotatedEntity>(options, NullLoggerFactory.Instance);
         Assert.That(options.OutboxTableName, Is.EqualTo("annotated_entity_outbox"));
     }
 }

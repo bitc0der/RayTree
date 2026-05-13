@@ -8,4 +8,5 @@ public class PostgreSqlOutboxOptions
     public string? NotificationChannel { get; set; }
     public TimeSpan? FallbackPollingInterval { get; set; }
     public int CleanupBatchSize { get; set; } = 1000;
+    public bool AutoMigrate { get; set; }
 }

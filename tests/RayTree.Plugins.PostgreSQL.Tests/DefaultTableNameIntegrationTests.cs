@@ -1,4 +1,5 @@
 using DotNet.Testcontainers.Containers;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using RayTree.Plugins.PostgreSQL.Outbox;
 
@@ -21,7 +22,7 @@ public class DefaultTableNameIntegrationTests : IAsyncDisposable
         {
             ConnectionString = _postgres.GetConnectionString()
             // OutboxTableName intentionally omitted
-        });
+        }, NullLoggerFactory.Instance);
 
         await outbox.InitializeAsync();
 

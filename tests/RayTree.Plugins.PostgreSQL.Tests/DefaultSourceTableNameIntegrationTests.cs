@@ -1,4 +1,5 @@
 using DotNet.Testcontainers.Containers;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using RayTree.Plugins.PostgreSQL.Repository;
 
@@ -21,7 +22,7 @@ public class DefaultSourceTableNameIntegrationTests : IAsyncDisposable
         {
             ConnectionString = _postgres.GetConnectionString()
             // TableName intentionally omitted
-        });
+        }, NullLoggerFactory.Instance);
 
         await repo.InitializeAsync();
 

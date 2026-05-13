@@ -1,7 +1,9 @@
 using System.Reflection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using RayTree.Core.Plugins.Repository;
 using RayTree.Plugins.PostgreSQL.Outbox;
+using RayTree.Plugins.PostgreSQL.Outbox.Schema;
 using RayTree.Plugins.PostgreSQL.Repository.Schema;
 
 namespace RayTree.Plugins.PostgreSQL.Repository;
@@ -14,9 +16,12 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     private readonly string _insertSql;
     private readonly string _whereClause;
     private readonly Dictionary<string, PropertyInfo> _columnToProperty;
+    private readonly ILogger<PostgreSqlRepository<TEntity>> _logger;
 
-    public PostgreSqlRepository(PostgreSqlRepositoryOptions options)
+    public PostgreSqlRepository(PostgreSqlRepositoryOptions options, ILoggerFactory loggerFactory)
     {
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _logger = loggerFactory.CreateLogger<PostgreSqlRepository<TEntity>>();
         if (string.IsNullOrWhiteSpace(options.TableName))
             options.TableName = EntityColumnMapper.GetTableName(typeof(TEntity));
 
@@ -50,6 +55,77 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, keySourceColumns, _options.TableName);
         var sourceDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true);
         await ExecuteDdlDirectly(_options.ConnectionString, sourceDdl, cancellationToken);
+
+        if (_options.AutoMigrate)
+            await MigrateSchemaAsync(cancellationToken);
+    }
+
+    private static readonly HashSet<string> s_InfraColumns =
+        new(["id", "created_at", "updated_at", "version"], StringComparer.OrdinalIgnoreCase);
+
+    private async Task MigrateSchemaAsync(CancellationToken cancellationToken)
+    {
+        var actual = await SchemaInspector.GetColumnsAsync(
+            _options.ConnectionString, _options.TableName, cancellationToken);
+
+        var desiredByName = _keyColumns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var col in _keyColumns)
+        {
+            if (actual.ContainsKey(col.ColumnName))
+                continue;
+
+            var hasRows = await TableHasRowsAsync(_options.ConnectionString, _options.TableName, cancellationToken);
+            if (hasRows)
+                throw new InvalidOperationException(
+                    $"Cannot auto-migrate: column '{col.ColumnName}' is NOT NULL with no default and table " +
+                    $"'{_options.TableName}' already has rows. Add a DEFAULT or migrate manually.");
+
+            var ddl = SourceTableDdlGenerator.GenerateAddColumn(
+                _options.TableName,
+                new SourceTableColumn { Name = col.ColumnName, Type = col.ColumnType, IsNullable = false });
+
+            try
+            {
+                await ExecuteDdlDirectly(_options.ConnectionString, ddl, cancellationToken);
+                _logger.LogInformation(
+                    "Auto-migrated: added column {Column} ({Type}) to {Table}",
+                    col.ColumnName, col.ColumnType, _options.TableName);
+            }
+            catch (PostgresException ex) when (ex.SqlState == "42701")
+            {
+                // Duplicate column — concurrent startup race; treat as success
+            }
+        }
+
+        foreach (var (name, _) in actual)
+        {
+            if (s_InfraColumns.Contains(name))
+                continue;
+            if (!desiredByName.ContainsKey(name))
+                _logger.LogWarning(
+                    "Column '{Column}' exists in '{Table}' but has no matching entity property — consider dropping it manually",
+                    name, _options.TableName);
+        }
+
+        foreach (var col in _keyColumns)
+        {
+            if (!actual.TryGetValue(col.ColumnName, out var existing))
+                continue;
+            if (!string.Equals(existing.NormalizedType, col.ColumnType, StringComparison.OrdinalIgnoreCase))
+                _logger.LogWarning(
+                    "Column '{Column}' in '{Table}' has type '{Actual}' but entity expects '{Expected}' — type changes must be migrated manually",
+                    col.ColumnName, _options.TableName, existing.NormalizedType, col.ColumnType);
+        }
+    }
+
+    private static async Task<bool> TableHasRowsAsync(string connectionString, string tableName,
+        CancellationToken cancellationToken)
+    {
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand($"SELECT EXISTS(SELECT 1 FROM {tableName} LIMIT 1)", conn);
+        return (bool)(await cmd.ExecuteScalarAsync(cancellationToken))!;
     }
 
     private static async Task ExecuteDdlDirectly(string connectionString, string ddl, CancellationToken cancellationToken)
