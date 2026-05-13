@@ -47,6 +47,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   but never called anywhere. Removed (breaking change for external implementations —
   delete the method).
 
+#### Ordering defaults for `MaxPublishConcurrency` and `MaxDegreeOfParallelism`
+
+- `OutboxPublisherOptions.MaxPublishConcurrency`, `NotificationBasedPublisherOptions.MaxPublishConcurrency`,
+  and `SubscriberOptions.MaxDegreeOfParallelism` were all introduced with a default of
+  `Environment.ProcessorCount`. Concurrent publishing enqueues messages in non-deterministic
+  order, breaking per-partition ordering guarantees; `TrackMultiple_AllChangesDeliveredInOrder`
+  (Kafka) failed non-deterministically as a result. All three default to `1` (sequential).
+  Increase explicitly when ordering is not required.
+
 ### Added
 
 - `IOutbox.TryClaimForPublishingAsync(long id, CancellationToken)` — atomically
@@ -62,6 +71,41 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `SubscriberOptions.DeduplicationCleanupInterval` (default 1 h) — how often
   `ChangeSubscriber` triggers `IDeduplicationStore.CleanupAsync` to evict entries
   older than `DeduplicationRetention`.
+
+#### High-load throughput improvements
+
+- `OutboxPublisherOptions.MaxPublishConcurrency` (default 1 — sequential) —
+  `OutboxPublisherService.ProcessBatchAsync` now uses `Parallel.ForEachAsync` bounded
+  by this option. Default is 1 to preserve per-partition message ordering; increase
+  explicitly when ordering is not required and throughput matters more.
+- `OutboxPublisherService` skips the inter-batch sleep when the batch was full
+  (`changes.Count == BatchSize`), draining a backlog immediately rather than waiting
+  one full `PollingInterval` between each batch.
+- `SubscriberOptions.MaxDegreeOfParallelism` (default 1) — `ConsumeFromConsumerAsync`
+  and `ConsumeFromQueueAsync` now use `Parallel.ForEachAsync` bounded by this option.
+  Default is 1 (sequential) to preserve per-partition message ordering (e.g. Kafka);
+  increase explicitly when handlers are order-independent and throughput matters more.
+- `NotificationBasedPublisherOptions.MaxConcurrentNotifications` (default 16) —
+  `OnNotification` is now bounded by a `SemaphoreSlim`; notifications that arrive
+  while at capacity are dropped and will be delivered by the fallback polling loop.
+- `NotificationBasedPublisherOptions.MaxPublishConcurrency` (default 1 — sequential)
+  — `ProcessUnpublishedChangesAsync` uses `Parallel.ForEachAsync` bounded by this
+  option. Same ordering rationale as `OutboxPublisherOptions.MaxPublishConcurrency`.
+
+#### Logging improvements
+
+- `NotificationBasedPublisher`: LISTEN connection loss now logs at `Warning` only
+  on the first unhealthy tick (suppressed on subsequent ticks while still unhealthy);
+  recovery logs at `Information` so operators can confirm the fast-path is restored.
+- `NotificationBasedPublisher.OnNotification`: logs at `Debug` when
+  `TryClaimForPublishingAsync` returns `false` (record already claimed by another
+  publisher), making claim contention visible under high load.
+- `ChangeSubscriber.ProcessMessageAsync`: logs successful message dispatch at `Debug`
+  and dedup-mark revert (handler exhausted all retries, `SkipOnFailure = false`) at
+  `Warning` before rethrowing, so operators can correlate repeated handler failures
+  with redelivery.
+- `ChangeTrackingHostedService`: consumer loop start log now includes the entity type
+  name — e.g. `"Starting change tracking consumer loop for OrderEntity (1 of 3)"`.
 
 ### Breaking Changes
 
