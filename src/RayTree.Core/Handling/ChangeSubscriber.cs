@@ -29,6 +29,7 @@ public class ChangeSubscriber : IDisposable
     private readonly SubscriberOptions _options;
     private readonly ILogger<ChangeSubscriber> _logger;
     private readonly CancellationTokenSource _cts = new();
+    private DateTime _lastDedupCleanup = DateTime.MinValue;
 
     // Reflection helper: DeserializeCoreAsync<TEntity>(serializer, stream, ct) → Task<EntityChange>
     private static readonly MethodInfo DeserializeMethod =
@@ -173,8 +174,35 @@ public class ChangeSubscriber : IDisposable
         // registered for this entity type.
         var change = await DeserializeEnvelopeAsync(envelope, entityType, cancellationToken);
 
-        foreach (var registration in matchingHandlers)
-            await InvokeWithRetryAsync(registration, change, cancellationToken);
+        try
+        {
+            foreach (var registration in matchingHandlers)
+                await InvokeWithRetryAsync(registration, change, cancellationToken);
+        }
+        catch
+        {
+            // Revert the dedup mark so the redelivered message can be retried.
+            // Only triggered when SkipOnFailure = false and all retries are exhausted.
+            await _dedupStore.RevertProcessedAsync(envelope.CorrelationId.ToString(), cancellationToken);
+            throw;
+        }
+
+        await MaybeDedupCleanupAsync(cancellationToken);
+    }
+
+    private async Task MaybeDedupCleanupAsync(CancellationToken cancellationToken)
+    {
+        if (DateTime.UtcNow - _lastDedupCleanup < _options.DeduplicationCleanupInterval) return;
+
+        try
+        {
+            await _dedupStore.CleanupAsync(_options.DeduplicationRetention, cancellationToken);
+            _lastDedupCleanup = DateTime.UtcNow;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "Deduplication store cleanup failed");
+        }
     }
 
     // -------------------------------------------------------------------------

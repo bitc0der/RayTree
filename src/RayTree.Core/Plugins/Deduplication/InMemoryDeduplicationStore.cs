@@ -7,13 +7,12 @@ public class InMemoryDeduplicationStore : IDeduplicationStore
     private readonly ConcurrentDictionary<string, DateTime> _processed = new();
 
     public Task<bool> TryMarkProcessedAsync(string correlationId, CancellationToken cancellationToken = default)
-    {
-        return Task.FromResult(_processed.TryAdd(correlationId, DateTime.UtcNow));
-    }
+        => Task.FromResult(_processed.TryAdd(correlationId, DateTime.UtcNow));
 
-    public Task<bool> IsProcessedAsync(string correlationId, CancellationToken cancellationToken = default)
+    public Task RevertProcessedAsync(string correlationId, CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(_processed.ContainsKey(correlationId));
+        _processed.TryRemove(correlationId, out _);
+        return Task.CompletedTask;
     }
 
     public Task CleanupAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken = default)
