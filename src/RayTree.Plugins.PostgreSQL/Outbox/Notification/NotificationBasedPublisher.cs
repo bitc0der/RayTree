@@ -97,14 +97,22 @@ public class NotificationBasedPublisher : IDisposable
             try
             {
                 await _connection!.WaitAsync(cancellationToken);
-                _listenerHealthy = true;
+                if (!_listenerHealthy)
+                {
+                    _listenerHealthy = true;
+                    _logger.LogInformation("PostgreSQL LISTEN connection on {ChannelName} recovered",
+                        _options.ChannelName);
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                _listenerHealthy = false;
-                _logger.LogWarning(ex, "Error waiting for PostgreSQL notifications on {ChannelName}, falling back to polling",
-                    _options.ChannelName);
+                if (_listenerHealthy)
+                {
+                    _listenerHealthy = false;
+                    _logger.LogWarning(ex, "PostgreSQL LISTEN connection on {ChannelName} lost, falling back to polling",
+                        _options.ChannelName);
+                }
                 try { await Task.Delay(_options.FallbackPollingInterval, cancellationToken); }
                 catch (OperationCanceledException) { break; }
             }
@@ -169,7 +177,12 @@ public class NotificationBasedPublisher : IDisposable
 
                 // Atomically claim before publishing to prevent races with the fallback
                 // polling loop and OutboxPublisherService.
-                if (!await outbox.TryClaimForPublishingAsync(payload.Id, _cts.Token)) return;
+                if (!await outbox.TryClaimForPublishingAsync(payload.Id, _cts.Token))
+                {
+                    _logger.LogDebug("Change {ChangeId} for {EntityType} already claimed by another publisher, skipping",
+                        payload.Id, payload.EntityType);
+                    return;
+                }
                 claimed   = true;
                 claimedId = payload.Id;
 

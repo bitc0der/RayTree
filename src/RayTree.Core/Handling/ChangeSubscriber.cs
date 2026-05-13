@@ -198,9 +198,15 @@ public class ChangeSubscriber : IDisposable
         {
             // Revert the dedup mark so the redelivered message can be retried.
             // Only triggered when SkipOnFailure = false and all retries are exhausted.
+            _logger.LogWarning(
+                "Handler for {EntityType} exhausted all retries on {CorrelationId}; reverting dedup mark so redelivered message can be retried",
+                entityType.Name, envelope.CorrelationId);
             await _dedupStore.RevertProcessedAsync(envelope.CorrelationId.ToString(), cancellationToken);
             throw;
         }
+
+        _logger.LogDebug("Processed {ChangeType} change for {EntityType} ({CorrelationId})",
+            envelope.ChangeType, entityType.Name, envelope.CorrelationId);
 
         await MaybeDedupCleanupAsync(cancellationToken);
     }
