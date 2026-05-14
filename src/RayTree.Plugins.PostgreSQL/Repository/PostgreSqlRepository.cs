@@ -53,11 +53,21 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             .Select(c => new SourceTableColumn { Name = c.ColumnName, Type = c.ColumnType, IsNullable = false })
             .ToList();
         var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, keySourceColumns, _options.TableName);
-        var sourceDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true);
-        await ExecuteDdlDirectly(_options.ConnectionString, sourceDdl, cancellationToken);
+
+        // Create table without indexes first so that migration can add missing key columns
+        // before any index referencing those columns is attempted.
+        var tableDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true, includeIndexes: false);
+        await ExecuteDdlDirectly(_options.ConnectionString, tableDdl, cancellationToken);
 
         if (_options.AutoMigrate)
             await MigrateSchemaAsync(cancellationToken);
+
+        // Create indexes after migration so all key columns are guaranteed to exist.
+        foreach (var index in sourceSchema.Indexes)
+        {
+            var indexDdl = SourceTableDdlGenerator.GenerateCreateIndex(sourceSchema.TableName, index);
+            await ExecuteDdlDirectly(_options.ConnectionString, indexDdl, cancellationToken);
+        }
     }
 
     private static readonly HashSet<string> s_InfraColumns =
