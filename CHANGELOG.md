@@ -6,6 +6,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.7-pre-release]
+
+### Added
+
+#### Automatic schema migration in `PostgreSqlOutbox<TEntity>` and `PostgreSqlRepository<TEntity>`
+
+Both classes now manage their PostgreSQL schema automatically on every `InitializeAsync` call — no `AutoMigrate` flag, always on.
+
+**Fresh table path** — when the table does not yet exist, a single `CREATE TABLE IF NOT EXISTS` statement creates all columns and indexes in one round-trip. The `IF NOT EXISTS` guard is kept as a concurrency safety net (e.g. two processes starting simultaneously).
+
+**Existing table path** — when the table already exists:
+
+- **Column diff** (`SchemaMigrator`): each desired column (entity property columns for outbox; key columns for repository) is compared against `information_schema.columns`. Missing columns are added via `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Adding a `NOT NULL` column without a default to a table that already has rows throws `InvalidOperationException` with a descriptive message (fail-fast — the developer must add a `DEFAULT` or migrate manually). Columns present in the database but not in the entity schema log a `Warning` ("consider dropping it manually"). Columns whose type differs from the expected type log a `Warning` ("type changes must be migrated manually").
+- **Index diff** (`IndexMigrator`): each desired index is compared against live `pg_index` catalog data (uniqueness, ordered column list, WHERE predicate). Indexes that do not exist are created. Indexes whose definition has changed (any of: uniqueness, column order, WHERE clause) are dropped (`DROP INDEX IF EXISTS public.{name}`) and recreated. Indexes that exist in the database but are not in the entity schema log a `Warning` ("consider dropping it manually"). WHERE clause comparison is case-insensitive and trimmed so `published = FALSE` (application) matches `published = false` (PostgreSQL catalog).
+
+New internal infrastructure supporting the above:
+
+| Class | Role |
+|---|---|
+| `SchemaInspector` | Static helper — `TableExistsAsync`, `GetColumnsAsync` (queries `information_schema.columns`), `GetIndexesAsync` (queries `pg_index` catalog, returns ordered columns via `unnest(indkey::smallint[]) WITH ORDINALITY`, WHERE via `pg_get_expr`), `ExecuteDdlAsync`, `TableHasRowsAsync` |
+| `SchemaMigrator` | Column diff logic — parameterised by a `generateAddColumn` delegate and an `isOrphanCandidate` predicate so it is reusable by both outbox and repository |
+| `IndexMigrator` | Index diff logic — `ApplyDiffAsync` with DROP+CREATE on mismatch, `Matches()` for definition comparison |
+| `PostgreSqlTypeNormalizer` | Maps `information_schema` type fields to canonical DDL strings (e.g. `character varying` + max-length → `VARCHAR(n)`, `ARRAY` + udt_name → `element_type[]`) |
+
+#### `ILoggerFactory` required constructor parameters
+
+`PostgreSqlOutbox<TEntity>` and `PostgreSqlRepository<TEntity>` now require `ILoggerFactory` as their second constructor parameter — following the same pattern as `KafkaConsumer` and `RabbitMqConsumer`. Logging is used for schema migration diagnostics (column/index added at `Information`; orphan column/index and type mismatch at `Warning`). Builder extension methods (`UsePostgreSqlOutbox`, `UsePostgreSqlRepository`) accept an optional `ILoggerFactory? loggerFactory = null` parameter that defaults to `NullLoggerFactory.Instance` when omitted, so existing builder call-sites compile without change.
+
+### Breaking Changes
+
+- `PostgreSqlOutbox<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.  
+  Before: `new PostgreSqlOutbox<TEntity>(options)`  
+  After: `new PostgreSqlOutbox<TEntity>(options, loggerFactory)`  
+  Builder call-sites are unaffected (the extension method absorbs the default).
+
+- `PostgreSqlRepository<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.  
+  Before: `new PostgreSqlRepository<TEntity>(options)`  
+  After: `new PostgreSqlRepository<TEntity>(options, loggerFactory)`  
+  Builder call-sites are unaffected.
+
+---
+
 ## [0.0.6-pre-release]
 
 ### Fixed

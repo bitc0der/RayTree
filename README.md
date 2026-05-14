@@ -23,7 +23,7 @@ EntityChangeTracker.TrackInsertAsync / TrackUpdateAsync / TrackDeleteAsync
 | `RayTree.Hosting` | `AddChangeTracking` for .NET Generic Host / ASP.NET Core |
 | `RayTree.EntityFrameworkCore` | `EntityChangeInterceptor` — auto-track EF Core `SaveChanges` |
 | `RayTree.Plugins.InMemory` | In-memory outbox, queue, and repository (tests / local dev) |
-| `RayTree.Plugins.PostgreSQL` | PostgreSQL outbox + NOTIFY/LISTEN fast-path publisher. Schema is derived from entity properties; customisable via `[Table]`, `[Column]`, `[NotMapped]`, `[Required]`, `[MaxLength]`, and `[StringLength]` attributes. |
+| `RayTree.Plugins.PostgreSQL` | PostgreSQL outbox + NOTIFY/LISTEN fast-path publisher. Schema is derived from entity properties and managed automatically — tables are created on first run and migrated on subsequent runs (new columns added, index definitions kept in sync). Customisable via `[Table]`, `[Column]`, `[NotMapped]`, `[Required]`, `[MaxLength]`, and `[StringLength]` attributes. See [Database Migration Guide](docs/database-migration.md). |
 | `RayTree.Plugins.RabbitMQ` | RabbitMQ publisher and consumer |
 | `RayTree.Plugins.Kafka` | Kafka publisher and consumer |
 | `RayTree.Plugins.Serializers.Json` | JSON serializer |
@@ -69,7 +69,7 @@ builder.Services.AddChangeTracking(builder.Configuration, b => b
     .UseSerializer<JsonSerializerPlugin>(_ => new JsonSerializerPlugin())
     .UseCompressor<NoOpCompressorPlugin>(_ => new NoOpCompressorPlugin())
     .ForEntity<Order>(e => e
-        .UseOutbox(new PostgreSqlOutbox<Order>(connectionString))
+        .UsePostgreSqlOutbox(new PostgreSqlOutboxOptions { ConnectionString = connectionString })
         .UseQueue(new RabbitMqPublisher(publisherOptions))
         .UseConsumer(new RabbitMqConsumer(consumerOptions))
         .OnInsert(async (change, ct) => { /* handle insert */ })
