@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using Npgsql;
 
 namespace RayTree.Plugins.PostgreSQL.Schema;
 
@@ -28,15 +27,15 @@ internal static class SchemaMigrator
 
             if (!col.IsNullable)
             {
-                tableHasRows ??= await TableHasRowsAsync(connectionString, tableName, cancellationToken);
+                tableHasRows ??= await SchemaInspector.TableHasRowsAsync(connectionString, tableName, cancellationToken);
                 if (tableHasRows.Value)
                     throw new InvalidOperationException(
                         $"Cannot add column '{col.Name}': it is NOT NULL with no default and table " +
                         $"'{tableName}' already has rows. Add a DEFAULT or migrate manually.");
             }
 
-            await ExecuteDdlAsync(connectionString, generateAddColumn(col), cancellationToken);
-            logger.LogInformation("Auto-migrated: added column {Column} ({Type}) to {Table}",
+            await SchemaInspector.ExecuteDdlAsync(connectionString, generateAddColumn(col), cancellationToken);
+            logger.LogInformation("Added column {Column} ({Type}) to {Table}",
                 col.Name, col.Type, tableName);
         }
 
@@ -57,23 +56,5 @@ internal static class SchemaMigrator
                     "Column '{Column}' in '{Table}' has type '{Actual}' but entity expects '{Expected}' — type changes must be migrated manually",
                     col.Name, tableName, existing.NormalizedType, col.Type);
         }
-    }
-
-    private static async Task<bool> TableHasRowsAsync(string connectionString, string tableName,
-        CancellationToken cancellationToken)
-    {
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand($"SELECT EXISTS(SELECT 1 FROM {tableName} LIMIT 1)", conn);
-        return (bool)(await cmd.ExecuteScalarAsync(cancellationToken))!;
-    }
-
-    private static async Task ExecuteDdlAsync(string connectionString, string ddl,
-        CancellationToken cancellationToken)
-    {
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(ddl, conn);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 }

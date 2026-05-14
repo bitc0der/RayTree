@@ -1,6 +1,6 @@
 namespace RayTree.Plugins.PostgreSQL.Schema;
 
-public static class PostgreSqlTypeNormalizer
+internal static class PostgreSqlTypeNormalizer
 {
     private static readonly Dictionary<string, string> s_UdtElementTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -18,7 +18,7 @@ public static class PostgreSqlTypeNormalizer
         ["_timestamp"] = "TIMESTAMP"
     };
 
-    public static string Normalize(string dataType, string? udtName, int? charMaxLength)
+    internal static string Normalize(string dataType, string? udtName, int? charMaxLength)
     {
         if (string.Equals(dataType, "ARRAY", StringComparison.OrdinalIgnoreCase))
             return NormalizeArray(udtName);

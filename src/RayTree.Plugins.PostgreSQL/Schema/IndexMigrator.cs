@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using Npgsql;
 
 namespace RayTree.Plugins.PostgreSQL.Schema;
 
@@ -25,13 +24,13 @@ internal static class IndexMigrator
         {
             if (!actual.TryGetValue(idx.Name, out var existing))
             {
-                await ExecuteDdlAsync(connectionString, GenerateCreateIndex(tableName, idx), cancellationToken);
+                await SchemaInspector.ExecuteDdlAsync(connectionString, GenerateCreateIndex(tableName, idx), cancellationToken);
                 logger.LogInformation("Created index {Index} on {Table}", idx.Name, tableName);
             }
             else if (!Matches(idx, existing))
             {
-                await ExecuteDdlAsync(connectionString, $"DROP INDEX IF EXISTS {idx.Name};", cancellationToken);
-                await ExecuteDdlAsync(connectionString, GenerateCreateIndex(tableName, idx), cancellationToken);
+                await SchemaInspector.ExecuteDdlAsync(connectionString, $"DROP INDEX IF EXISTS public.{idx.Name};", cancellationToken);
+                await SchemaInspector.ExecuteDdlAsync(connectionString, GenerateCreateIndex(tableName, idx), cancellationToken);
                 logger.LogInformation("Recreated index {Index} on {Table} (definition changed)", idx.Name, tableName);
             }
         }
@@ -60,14 +59,5 @@ internal static class IndexMigrator
         if (!string.IsNullOrEmpty(idx.Where))
             sql += $"\n    WHERE {idx.Where}";
         return sql + ";";
-    }
-
-    private static async Task ExecuteDdlAsync(string connectionString, string ddl,
-        CancellationToken cancellationToken)
-    {
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(ddl, conn);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 }

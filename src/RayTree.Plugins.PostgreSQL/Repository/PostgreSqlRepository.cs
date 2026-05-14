@@ -20,6 +20,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
 
     public PostgreSqlRepository(PostgreSqlRepositoryOptions options, ILoggerFactory loggerFactory)
     {
+        ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<PostgreSqlRepository<TEntity>>();
         if (string.IsNullOrWhiteSpace(options.TableName))
@@ -61,7 +62,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         {
             var tableDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true,
                 includeIndexes: true);
-            await ExecuteDdlDirectly(_options.ConnectionString, tableDdl, cancellationToken);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, tableDdl, cancellationToken);
             return;
         }
 
@@ -75,7 +76,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             if (existing.ContainsKey(col.ColumnName))
                 continue;
 
-            tableHasRows ??= await TableHasRowsAsync(_options.ConnectionString, _options.TableName, cancellationToken);
+            tableHasRows ??= await SchemaInspector.TableHasRowsAsync(_options.ConnectionString, _options.TableName, cancellationToken);
             if (tableHasRows.Value)
                 throw new InvalidOperationException(
                     $"Cannot add column '{col.ColumnName}': it is NOT NULL with no default and table " +
@@ -84,7 +85,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             var addColDdl = SourceTableDdlGenerator.GenerateAddColumn(
                 _options.TableName,
                 new SourceTableColumn { Name = col.ColumnName, Type = col.ColumnType, IsNullable = false });
-            await ExecuteDdlDirectly(_options.ConnectionString, addColDdl, cancellationToken);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, addColDdl, cancellationToken);
             _logger.LogInformation("Added column {Column} ({Type}) to {Table}",
                 col.ColumnName, col.ColumnType, _options.TableName);
         }
@@ -112,23 +113,6 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             .ToList();
         await IndexMigrator.ApplyDiffAsync(
             _options.ConnectionString, _options.TableName, desiredIndexes, _logger, cancellationToken);
-    }
-
-    private static async Task<bool> TableHasRowsAsync(string connectionString, string tableName,
-        CancellationToken cancellationToken)
-    {
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand($"SELECT EXISTS(SELECT 1 FROM {tableName} LIMIT 1)", conn);
-        return (bool)(await cmd.ExecuteScalarAsync(cancellationToken))!;
-    }
-
-    private static async Task ExecuteDdlDirectly(string connectionString, string ddl, CancellationToken cancellationToken)
-    {
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(ddl, conn);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task InsertAsync(TEntity entity, CancellationToken cancellationToken = default)

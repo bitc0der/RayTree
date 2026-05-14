@@ -317,6 +317,8 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var after = (await GetIndexesAsync())[indexName];
         Assert.That(after.Where, Is.Not.Null.And.Not.Empty, "Recreated index must have the WHERE clause restored");
+        Assert.That(after.Where, Does.Contain("published").IgnoreCase.And.Contain("false").IgnoreCase,
+            "Recreated index must filter on published = FALSE");
     }
 
     [Test]

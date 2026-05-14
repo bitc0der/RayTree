@@ -67,7 +67,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         if (!await SchemaInspector.TableExistsAsync(_options.ConnectionString, _options.OutboxTableName, cancellationToken))
         {
             var outboxDdl = OutboxSchemaGenerator.GenerateCreateTable(outboxSchema, includeIndexes: true);
-            await ExecuteDdlDirectly(_options.ConnectionString, outboxDdl, cancellationToken);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, outboxDdl, cancellationToken);
         }
         else
         {
@@ -85,15 +85,15 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
             var functionName = $"notify_{_options.OutboxTableName}_change";
             var triggerFunctionDdl = NotificationBasedPublisher.GenerateNotifyTriggerFunction(
                 functionName, _options.NotificationChannel);
-            await ExecuteDdlDirectly(_options.ConnectionString, triggerFunctionDdl, cancellationToken);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, triggerFunctionDdl, cancellationToken);
 
             var triggerName = $"{_options.OutboxTableName}_notify_trigger";
             var dropTriggerDdl = NotificationBasedPublisher.GenerateDropTrigger(triggerName, _options.OutboxTableName);
-            await ExecuteDdlDirectly(_options.ConnectionString, dropTriggerDdl, cancellationToken);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, dropTriggerDdl, cancellationToken);
 
             var triggerDdl =
                 NotificationBasedPublisher.GenerateNotifyTrigger(triggerName, _options.OutboxTableName, functionName);
-            await ExecuteDdlDirectly(_options.ConnectionString, triggerDdl, cancellationToken);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, triggerDdl, cancellationToken);
         }
     }
 
@@ -112,15 +112,6 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
             static name => name.StartsWith("state_", StringComparison.OrdinalIgnoreCase),
             _logger,
             cancellationToken);
-    }
-
-    private static async Task ExecuteDdlDirectly(string connectionString, string ddl,
-        CancellationToken cancellationToken)
-    {
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(ddl, conn);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task WriteAsync<T>(EntityChange<T> change, CancellationToken cancellationToken = default)
