@@ -1,9 +1,11 @@
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
 using RayTree.Plugins.PostgreSQL.Outbox.Notification;
 using RayTree.Plugins.PostgreSQL.Outbox.Schema;
+using RayTree.Plugins.PostgreSQL.Schema;
 
 namespace RayTree.Plugins.PostgreSQL.Outbox;
 
@@ -14,10 +16,13 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
     private readonly IReadOnlyList<EntityColumnMapper.PropertyColumn> _propertyColumns;
     private readonly string _insertSql;
     private readonly string _selectColumns;
+    private readonly ILogger<PostgreSqlOutbox<TEntity>> _logger;
 
-    public PostgreSqlOutbox(PostgreSqlOutboxOptions options)
+    public PostgreSqlOutbox(PostgreSqlOutboxOptions options, ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _logger = loggerFactory.CreateLogger<PostgreSqlOutbox<TEntity>>();
 
         if (string.IsNullOrWhiteSpace(options.OutboxTableName))
             options.OutboxTableName = EntityColumnMapper.GetTableName(typeof(TEntity)) + "_outbox";
@@ -59,33 +64,54 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         foreach (var col in _propertyColumns)
             outboxSchema.AddEntityPropertyColumn(col.Property.Name, col.ColumnName, col.ColumnType, col.IsNullable);
 
-        var outboxDdl = OutboxSchemaGenerator.GenerateCreateTable(outboxSchema, includeIndexes: true);
-        await ExecuteDdlDirectly(_options.ConnectionString, outboxDdl, cancellationToken);
+        if (!await SchemaInspector.TableExistsAsync(_options.ConnectionString, _options.OutboxTableName, cancellationToken))
+        {
+            var outboxDdl = OutboxSchemaGenerator.GenerateCreateTable(outboxSchema, includeIndexes: true);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, outboxDdl, cancellationToken);
+        }
+        else
+        {
+            await MigrateSchemaAsync(cancellationToken);
+
+            var desiredIndexes = outboxSchema.Indexes
+                .Select(i => new IndexMigrationSpec(i.Name, IsUnique: false, i.Columns, i.Where))
+                .ToList();
+            await IndexMigrator.ApplyDiffAsync(
+                _options.ConnectionString, _options.OutboxTableName, desiredIndexes, _logger, cancellationToken);
+        }
 
         if (_options.UseNotificationChannel && !string.IsNullOrEmpty(_options.NotificationChannel))
         {
             var functionName = $"notify_{_options.OutboxTableName}_change";
             var triggerFunctionDdl = NotificationBasedPublisher.GenerateNotifyTriggerFunction(
                 functionName, _options.NotificationChannel);
-            await ExecuteDdlDirectly(_options.ConnectionString, triggerFunctionDdl, cancellationToken);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, triggerFunctionDdl, cancellationToken);
 
             var triggerName = $"{_options.OutboxTableName}_notify_trigger";
             var dropTriggerDdl = NotificationBasedPublisher.GenerateDropTrigger(triggerName, _options.OutboxTableName);
-            await ExecuteDdlDirectly(_options.ConnectionString, dropTriggerDdl, cancellationToken);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, dropTriggerDdl, cancellationToken);
 
             var triggerDdl =
                 NotificationBasedPublisher.GenerateNotifyTrigger(triggerName, _options.OutboxTableName, functionName);
-            await ExecuteDdlDirectly(_options.ConnectionString, triggerDdl, cancellationToken);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, triggerDdl, cancellationToken);
         }
     }
 
-    private static async Task ExecuteDdlDirectly(string connectionString, string ddl,
-        CancellationToken cancellationToken)
+    private Task MigrateSchemaAsync(CancellationToken cancellationToken)
     {
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(ddl, conn);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        var desired = _propertyColumns
+            .Select(c => new ColumnMigrationSpec(c.ColumnName, c.ColumnType, c.IsNullable))
+            .ToList();
+        return SchemaMigrator.ApplyDiffAsync(
+            _options.ConnectionString,
+            _options.OutboxTableName,
+            desired,
+            col => OutboxSchemaGenerator.GenerateAddColumn(
+                _options.OutboxTableName,
+                new OutboxColumn { Name = col.Name, Type = col.Type, IsNullable = col.IsNullable }),
+            static name => name.StartsWith("state_", StringComparison.OrdinalIgnoreCase),
+            _logger,
+            cancellationToken);
     }
 
     public async Task WriteAsync<T>(EntityChange<T> change, CancellationToken cancellationToken = default)

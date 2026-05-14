@@ -1,7 +1,9 @@
 using System.Reflection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using RayTree.Core.Plugins.Repository;
 using RayTree.Plugins.PostgreSQL.Outbox;
+using RayTree.Plugins.PostgreSQL.Schema;
 using RayTree.Plugins.PostgreSQL.Repository.Schema;
 
 namespace RayTree.Plugins.PostgreSQL.Repository;
@@ -14,9 +16,13 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     private readonly string _insertSql;
     private readonly string _whereClause;
     private readonly Dictionary<string, PropertyInfo> _columnToProperty;
+    private readonly ILogger<PostgreSqlRepository<TEntity>> _logger;
 
-    public PostgreSqlRepository(PostgreSqlRepositoryOptions options)
+    public PostgreSqlRepository(PostgreSqlRepositoryOptions options, ILoggerFactory loggerFactory)
     {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(loggerFactory);
+        _logger = loggerFactory.CreateLogger<PostgreSqlRepository<TEntity>>();
         if (string.IsNullOrWhiteSpace(options.TableName))
             options.TableName = EntityColumnMapper.GetTableName(typeof(TEntity));
 
@@ -42,22 +48,71 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     private string BuildWhereClause()
         => string.Join(" AND ", _keyColumns.Select((c, i) => $"{c.ColumnName} = @K{i}"));
 
+    private static readonly HashSet<string> s_InfraColumns =
+        new(["id", "created_at", "updated_at", "version"], StringComparer.OrdinalIgnoreCase);
+
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         var keySourceColumns = _keyColumns
             .Select(c => new SourceTableColumn { Name = c.ColumnName, Type = c.ColumnType, IsNullable = false })
             .ToList();
         var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, keySourceColumns, _options.TableName);
-        var sourceDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true);
-        await ExecuteDdlDirectly(_options.ConnectionString, sourceDdl, cancellationToken);
-    }
 
-    private static async Task ExecuteDdlDirectly(string connectionString, string ddl, CancellationToken cancellationToken)
-    {
-        await using var conn = new NpgsqlConnection(connectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(ddl, conn);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
+        if (!await SchemaInspector.TableExistsAsync(_options.ConnectionString, _options.TableName, cancellationToken))
+        {
+            var tableDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true,
+                includeIndexes: true);
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, tableDdl, cancellationToken);
+            return;
+        }
+
+        // Existing table: diff against desired columns, add any that are missing.
+        var existing = await SchemaInspector.GetColumnsAsync(
+            _options.ConnectionString, _options.TableName, cancellationToken);
+
+        bool? tableHasRows = null;
+        foreach (var col in _keyColumns)
+        {
+            if (existing.ContainsKey(col.ColumnName))
+                continue;
+
+            tableHasRows ??= await SchemaInspector.TableHasRowsAsync(_options.ConnectionString, _options.TableName, cancellationToken);
+            if (tableHasRows.Value)
+                throw new InvalidOperationException(
+                    $"Cannot add column '{col.ColumnName}': it is NOT NULL with no default and table " +
+                    $"'{_options.TableName}' already has rows. Add a DEFAULT or migrate manually.");
+
+            var addColDdl = SourceTableDdlGenerator.GenerateAddColumn(
+                _options.TableName,
+                new SourceTableColumn { Name = col.ColumnName, Type = col.ColumnType, IsNullable = false });
+            await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, addColDdl, cancellationToken);
+            _logger.LogInformation("Added column {Column} ({Type}) to {Table}",
+                col.ColumnName, col.ColumnType, _options.TableName);
+        }
+
+        var desiredByName = _keyColumns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, _) in existing)
+        {
+            if (s_InfraColumns.Contains(name) || desiredByName.ContainsKey(name)) continue;
+            _logger.LogWarning(
+                "Column '{Column}' exists in '{Table}' but has no matching entity property — consider dropping it manually",
+                name, _options.TableName);
+        }
+        foreach (var col in _keyColumns)
+        {
+            if (existing.TryGetValue(col.ColumnName, out var ec) &&
+                !string.Equals(ec.NormalizedType, col.ColumnType, StringComparison.OrdinalIgnoreCase))
+                _logger.LogWarning(
+                    "Column '{Column}' in '{Table}' has type '{Actual}' but entity expects '{Expected}' — type changes must be migrated manually",
+                    col.ColumnName, _options.TableName, ec.NormalizedType, col.ColumnType);
+        }
+
+        // All desired columns are now present — sync indexes.
+        var desiredIndexes = sourceSchema.Indexes
+            .Select(i => new IndexMigrationSpec(i.Name, i.IsUnique, i.Columns, i.Where))
+            .ToList();
+        await IndexMigrator.ApplyDiffAsync(
+            _options.ConnectionString, _options.TableName, desiredIndexes, _logger, cancellationToken);
     }
 
     public async Task InsertAsync(TEntity entity, CancellationToken cancellationToken = default)

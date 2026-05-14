@@ -1,4 +1,5 @@
 using DotNet.Testcontainers.Containers;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using RayTree.Core.Tracking;
 using RayTree.Plugins.InMemory;
@@ -28,11 +29,11 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
             .UseRepository(new PostgreSqlRepository<TestUser>(new()
             {
                 ConnectionString = _postgres.GetConnectionString(), TableName = "test_users"
-            }))
+            }, NullLoggerFactory.Instance))
             .UseOutbox(new PostgreSqlOutbox<TestUser>(new()
             {
                 ConnectionString = _postgres.GetConnectionString(), OutboxTableName = "test_users_outbox"
-            }))
+            }, NullLoggerFactory.Instance))
             .UseQueue(new InMemoryQueue())
             .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())
             .UseCompressor(new RayTree.Plugins.Compressors.Gzip.GzipCompressorPlugin()));

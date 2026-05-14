@@ -41,7 +41,7 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
             OutboxTableName = OutboxTable,
             UseNotificationChannel = true,
             NotificationChannel = ChannelName
-        });
+        }, NullLoggerFactory.Instance);
 
         // Initialize outbox directly: creates table + trigger without starting background publisher services
         await _outbox.InitializeAsync();

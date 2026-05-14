@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using DotNet.Testcontainers.Containers;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
@@ -32,7 +33,7 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
         {
             ConnectionString = _postgres.GetConnectionString(),
             OutboxTableName  = "test_entity_outbox"
-        });
+        }, NullLoggerFactory.Instance);
         await _outbox.InitializeAsync();
     }
 
@@ -140,7 +141,7 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
             ConnectionString = _postgres.GetConnectionString(),
             OutboxTableName  = "test_entity_outbox",
             CleanupBatchSize = 2
-        });
+        }, NullLoggerFactory.Instance);
 
         var deleted = await outboxWithSmallBatch.CleanupPublishedAsync(TimeSpan.FromHours(1));
         Assert.That(deleted, Is.EqualTo(5));
@@ -298,7 +299,7 @@ public class PostgreSqlOutboxArrayIntegrationTests : IAsyncDisposable
         {
             ConnectionString = _postgres.GetConnectionString(),
             OutboxTableName  = "array_entity_outbox"
-        });
+        }, NullLoggerFactory.Instance);
         await _outbox.InitializeAsync();
     }
 

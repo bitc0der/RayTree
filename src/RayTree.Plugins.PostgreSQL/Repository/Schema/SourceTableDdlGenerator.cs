@@ -4,7 +4,8 @@ namespace RayTree.Plugins.PostgreSQL.Repository.Schema;
 
 public static class SourceTableDdlGenerator
 {
-    public static string GenerateCreateTable(SourceTableSchema schema, bool ifNotExists = true)
+    public static string GenerateCreateTable(SourceTableSchema schema, bool ifNotExists = true,
+        bool includeIndexes = true)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"CREATE TABLE {(ifNotExists ? "IF NOT EXISTS " : "")}{schema.TableName} (");
@@ -34,10 +35,13 @@ public static class SourceTableDdlGenerator
 
         sb.AppendLine(");");
 
-        foreach (var index in schema.Indexes)
+        if (includeIndexes)
         {
-            sb.AppendLine();
-            sb.AppendLine(GenerateCreateIndex(schema.TableName, index));
+            foreach (var index in schema.Indexes)
+            {
+                sb.AppendLine();
+                sb.AppendLine(GenerateCreateIndex(schema.TableName, index));
+            }
         }
 
         return sb.ToString();
@@ -54,6 +58,17 @@ public static class SourceTableDdlGenerator
 
         sql += ";";
         return sql;
+    }
+
+    public static string GenerateAddColumn(string tableName, SourceTableColumn col)
+    {
+        var sb = new StringBuilder($"ALTER TABLE {tableName} ADD COLUMN IF NOT EXISTS {col.Name} {col.Type}");
+        if (!col.IsNullable && !col.IsPrimaryKey && !col.IsIdentity)
+            sb.Append(" NOT NULL");
+        if (col.Default != null)
+            sb.Append($" DEFAULT {col.Default}");
+        sb.Append(';');
+        return sb.ToString();
     }
 
     public static SourceTableSchema CreateDefault(

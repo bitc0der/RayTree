@@ -20,16 +20,16 @@ A modular .NET 8.0 entity change tracking system with outbox pattern support, qu
 var builder = new ChangeTrackingBuilder(loggerFactory);
 
 builder.ForEntity<Product>(e => e
-    .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
+    .UsePostgreSqlOutbox(new PostgreSqlOutboxOptions
     {
         ConnectionString = connectionString
         // OutboxTableName defaults to "product_outbox"
-    }))
+    })
     .UseQueue(new InMemoryQueue())
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin()));
 
-// Build() automatically initializes database schema and starts publisher services
+// Build() automatically initializes database schema (creates or migrates) and starts publisher services
 var tracker = builder.Build();
 
 // Track changes manually
@@ -48,24 +48,26 @@ builder.UseJsonSerializer();
 builder.UseGzipCompressor();
 
 builder.ForEntity<Product>(e => e
-    .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
+    .UsePostgreSqlOutbox(new PostgreSqlOutboxOptions
     {
         ConnectionString = connectionString
-    }))
+    })
     .UseQueue(new InMemoryQueue()));
 // Inherits JsonSerializer + GzipCompressor from global defaults
 
 var tracker = builder.Build();
 ```
 
-## Auto-Initialization
+## Auto-Initialization and Schema Migration
 
 `Build()` and `BuildAsync()` automatically call `tracker.InitializeAsync()`, which:
 
-- Creates outbox tables (`CREATE TABLE IF NOT EXISTS`)
-- Creates source tables if a repository is registered
+- **Creates** outbox and source tables if they do not exist (`CREATE TABLE IF NOT EXISTS` with all columns and indexes in one statement)
+- **Migrates** existing tables on every startup — adds missing `state_*` columns, syncs indexes (creates new, drops and recreates changed definitions), and logs `Warning` for orphan columns/indexes and type mismatches
 - Sets up PostgreSQL NOTIFY triggers if `UseNotificationChannel = true`
 - Starts one `OutboxPublisherService` per registered entity type
+
+No manual migration step is needed for initial setup or when adding new entity properties — RayTree handles both automatically. See [Database Migration Guide](database-migration.md) for the full schema evolution reference.
 
 ```csharp
 // Sync (blocks until initialized)
@@ -354,10 +356,10 @@ builder.UsePublisherOptions(o =>
 });
 
 builder.ForEntity<Order>(e => e
-    .UseOutbox(new PostgreSqlOutbox<Order>(new PostgreSqlOutboxOptions
+    .UsePostgreSqlOutbox(new PostgreSqlOutboxOptions
     {
         ConnectionString = connectionString
-    }))
+    })
     .UseQueue(rabbitPublisher)
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin()));
