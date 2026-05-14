@@ -106,10 +106,12 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
                     col.ColumnName, _options.TableName, ec.NormalizedType, col.ColumnType);
         }
 
-        // All desired columns are now present — create indexes idempotently.
-        foreach (var index in sourceSchema.Indexes)
-            await ExecuteDdlDirectly(_options.ConnectionString,
-                SourceTableDdlGenerator.GenerateCreateIndex(sourceSchema.TableName, index), cancellationToken);
+        // All desired columns are now present — sync indexes.
+        var desiredIndexes = sourceSchema.Indexes
+            .Select(i => new IndexMigrationSpec(i.Name, i.IsUnique, i.Columns, i.Where))
+            .ToList();
+        await IndexMigrator.ApplyDiffAsync(
+            _options.ConnectionString, _options.TableName, desiredIndexes, _logger, cancellationToken);
     }
 
     private static async Task<bool> TableHasRowsAsync(string connectionString, string tableName,

@@ -72,6 +72,12 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         else
         {
             await MigrateSchemaAsync(cancellationToken);
+
+            var desiredIndexes = outboxSchema.Indexes
+                .Select(i => new IndexMigrationSpec(i.Name, IsUnique: false, i.Columns, i.Where))
+                .ToList();
+            await IndexMigrator.ApplyDiffAsync(
+                _options.ConnectionString, _options.OutboxTableName, desiredIndexes, _logger, cancellationToken);
         }
 
         if (_options.UseNotificationChannel && !string.IsNullOrEmpty(_options.NotificationChannel))
