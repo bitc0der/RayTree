@@ -54,15 +54,26 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             .ToList();
         var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, keySourceColumns, _options.TableName);
 
-        // Create table without indexes first so that migration can add missing key columns
-        // before any index referencing those columns is attempted.
-        var tableDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true, includeIndexes: false);
+        // On a fresh table all columns are created in the same DDL, so every index is valid:
+        // emit table + indexes together. On an existing table any index management is the
+        // responsibility of the AutoMigrate path (otherwise a key index could reference a
+        // column that has not been added yet).
+        var existingColumns = await SchemaInspector.GetColumnsAsync(
+            _options.ConnectionString, _options.TableName, cancellationToken);
+        var isFreshTable = existingColumns.Count == 0;
+
+        var tableDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true,
+            includeIndexes: isFreshTable);
         await ExecuteDdlDirectly(_options.ConnectionString, tableDdl, cancellationToken);
 
-        if (_options.AutoMigrate)
-            await MigrateSchemaAsync(cancellationToken);
+        if (!_options.AutoMigrate)
+            return;
 
-        // Create indexes after migration so all key columns are guaranteed to exist.
+        await MigrateSchemaAsync(cancellationToken);
+
+        // Migration has added any missing key columns, so every index in the schema is now
+        // safe to (re-)apply. CREATE INDEX IF NOT EXISTS makes this idempotent for indexes
+        // already created on the fresh-table path.
         foreach (var index in sourceSchema.Indexes)
         {
             var indexDdl = SourceTableDdlGenerator.GenerateCreateIndex(sourceSchema.TableName, index);
