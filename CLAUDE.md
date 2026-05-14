@@ -117,6 +117,51 @@ Follow `.editorconfig` at the repo root for all formatting and naming. Key conve
 
 Do not override these rules. If a rule from `.editorconfig` conflicts with a general suggestion, `.editorconfig` wins.
 
+## .NET Conventions
+
+### async / await
+
+- Every method that does I/O must be `async` and accept a `CancellationToken` as its last parameter. Never swallow or ignore the token.
+- Never use `async void` — use `async Task` instead. The sole exception is event handlers where the signature is imposed by the framework.
+- Do not use `.Result` or `.Wait()` on a `Task`. Always `await`. Blocking on async code deadlocks under `SynchronizationContext`.
+- Do not add `ConfigureAwait(false)` — this is a library, not an ASP.NET app, but the codebase does not apply it consistently so omit it everywhere for uniformity.
+- Name async methods with the `Async` suffix. Overloads that differ only by cancellation token still carry the suffix.
+
+### Exception handling
+
+- Catch the most specific exception type that is meaningful. Never `catch (Exception)` unless you are at a top-level loop boundary and log the error before continuing or rethrowing.
+- Do not swallow exceptions silently. If you catch and do not rethrow, log at `Error` with the original exception attached.
+- Use `OperationCanceledException` (not `TaskCanceledException`) as the canonical cancellation signal; let it propagate rather than catching it in inner loops.
+- Throw `InvalidOperationException` for programmer errors (wrong call order, missing required configuration). Throw `ArgumentException` / `ArgumentNullException` for bad caller input.
+- Avoid `try/catch` purely for control flow. Use `bool`-returning methods (e.g., `TryClaimForPublishingAsync`) instead.
+
+### Disposable
+
+- Implement `IAsyncDisposable` (not `IDisposable`) for types that own async resources (channels, connections, background tasks). Implement both only when a synchronous release path is genuinely needed.
+- Always `await using` or `using` in the consuming code; never call `Dispose()` / `DisposeAsync()` manually unless you own the lifetime explicitly.
+- Cancel the `CancellationTokenSource` before calling `Dispose()` on background-loop owners so the loop exits cleanly before the handle is released.
+
+### LINQ and collections
+
+- Do not enumerate an `IEnumerable<T>` more than once — call `.ToList()` or `.ToArray()` at the point of materialisation and reuse the result.
+- Return `IReadOnlyList<T>` or `IReadOnlyCollection<T>` from public APIs when the caller must not mutate the result. Return `IEnumerable<T>` only when lazy streaming is intentional.
+- Prefer `List<T>.ForEach` / `foreach` over LINQ `Select` + side-effects. LINQ is for projections, not mutations.
+- Avoid chaining more than three LINQ operators without assigning an intermediate result to a named variable — readability over one-liners.
+
+### Test conventions
+
+- Test method names follow the pattern `MethodUnderTest_Scenario_ExpectedBehaviour` (e.g., `WriteAsync_WhenEntityIsNull_ThrowsArgumentNullException`).
+- Each test follows Arrange / Act / Assert with a blank line between sections.
+- Assert only one logical outcome per test. Multiple `Assert` calls are fine when they all verify the same logical fact.
+- Do not share mutable state between tests in the same class. Each test arranges its own dependencies.
+- Unit tests must not touch the file system, network, or real time (`DateTime.UtcNow`). Inject `TimeProvider` or a clock abstraction if the production code reads the clock.
+
+### Strings and primitives
+
+- Use `string.Empty` instead of `""` for empty-string literals assigned to variables. Inline literals in interpolations are fine.
+- Prefer string interpolation (`$"..."`) over `string.Concat` or `+` for readability. Use `string.Format` only when formatting must be passed around as a delegate.
+- Avoid `ToString()` on nullable types — null-check or use `?.ToString() ?? string.Empty` explicitly.
+
 ## Design Principles
 
 All code in this repository must respect the following principles. When reviewing or modifying code, check for violations before accepting a change.
