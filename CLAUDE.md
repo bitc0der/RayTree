@@ -156,6 +156,14 @@ Do not override these rules. If a rule from `.editorconfig` conflicts with a gen
 - Do not share mutable state between tests in the same class. Each test arranges its own dependencies.
 - Unit tests must not touch the file system, network, or real time (`DateTime.UtcNow`). Inject `TimeProvider` or a clock abstraction if the production code reads the clock.
 
+### Span&lt;T&gt; and Memory&lt;T&gt;
+
+- Prefer `Span<T>` / `ReadOnlySpan<T>` over `byte[]` for synchronous, stack-local slicing (serialization scratch buffers, parsing). Do not store a `Span<T>` in a field or closure — it is stack-only.
+- Use `Memory<T>` / `ReadOnlyMemory<T>` when the slice must cross an `await` boundary or be stored on the heap (e.g., passed to an async I/O method).
+- Do not allocate a new `byte[]` just to pass a sub-range — use `.Slice(offset, length)` or `AsSpan()`/`AsMemory()` on the existing array.
+- When writing to a fixed-size destination prefer `Span<T>` overloads of `BinaryPrimitives`, `MemoryMarshal`, or `Encoding` over the array-allocating variants.
+- Avoid mixing `Span<T>` and `Memory<T>` in the same call chain without a deliberate reason; pick one ownership model per logical operation and stay consistent.
+
 ### Strings and primitives
 
 - Use `string.Empty` instead of `""` for empty-string literals assigned to variables. Inline literals in interpolations are fine.
