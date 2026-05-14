@@ -31,17 +31,13 @@ internal static class SchemaMigrator
                 tableHasRows ??= await TableHasRowsAsync(connectionString, tableName, cancellationToken);
                 if (tableHasRows.Value)
                     throw new InvalidOperationException(
-                        $"Cannot auto-migrate: column '{col.Name}' is NOT NULL with no default and table " +
+                        $"Cannot add column '{col.Name}': it is NOT NULL with no default and table " +
                         $"'{tableName}' already has rows. Add a DEFAULT or migrate manually.");
             }
 
-            try
-            {
-                await ExecuteDdlAsync(connectionString, generateAddColumn(col), cancellationToken);
-                logger.LogInformation("Auto-migrated: added column {Column} ({Type}) to {Table}",
-                    col.Name, col.Type, tableName);
-            }
-            catch (PostgresException ex) when (ex.SqlState == "42701") { }
+            await ExecuteDdlAsync(connectionString, generateAddColumn(col), cancellationToken);
+            logger.LogInformation("Auto-migrated: added column {Column} ({Type}) to {Table}",
+                col.Name, col.Type, tableName);
         }
 
         foreach (var (name, _) in actual)

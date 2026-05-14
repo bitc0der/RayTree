@@ -38,8 +38,7 @@ public class TypeChangedEntity
 }
 
 /// <summary>
-/// Captures Warning/Information log calls for assertion. Implements ILoggerFactory directly
-/// to avoid a dependency on Microsoft.Extensions.Logging (non-abstractions).
+/// Captures Warning/Information log calls for assertion.
 /// </summary>
 internal sealed class CapturingLoggerFactory : ILoggerFactory
 {
@@ -61,7 +60,7 @@ internal sealed class CapturingLoggerFactory : ILoggerFactory
 }
 
 [NonParallelizable]
-public class AutoMigrateOutboxTests : IAsyncDisposable
+public class SchemaEvolutionOutboxTests : IAsyncDisposable
 {
     private readonly IContainer _postgres = PostgresContainerFactory.Create();
 
@@ -70,7 +69,7 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
 
     public ValueTask DisposeAsync() => _postgres.DisposeAsync();
 
-    private const string OutboxTable = "auto_migrate_outbox_test";
+    private const string OutboxTable = "schema_evolution_outbox_test";
 
     private async Task DropTableIfExists()
     {
@@ -94,11 +93,10 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
     }
 
     [Test]
-    public async Task AutoMigrate_AddsNewNullableColumn_ToExistingOutboxTable()
+    public async Task AddsNewNullableColumn_ToExistingOutboxTable()
     {
         await DropTableIfExists();
 
-        // Create table with slim entity (no Description column)
         var slimOutbox = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
@@ -106,7 +104,6 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
         }, NullLoggerFactory.Instance);
         await slimOutbox.InitializeAsync();
 
-        // Insert a row so the table is non-empty
         await slimOutbox.WriteAsync(new EntityChange<SlimEntity>
         {
             EntityType = typeof(SlimEntity).FullName!,
@@ -115,12 +112,10 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
             State = new SlimEntity { Id = 1 }
         });
 
-        // Re-initialise with expanded entity and AutoMigrate = true
         var expandedOutbox = new PostgreSqlOutbox<ExpandedEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable,
-            AutoMigrate = true
+            OutboxTableName = OutboxTable
         }, NullLoggerFactory.Instance);
         await expandedOutbox.InitializeAsync();
 
@@ -128,7 +123,7 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
     }
 
     [Test]
-    public async Task AutoMigrate_WritesNewColumnData_AfterMigration()
+    public async Task WritesNewColumnData_AfterSchemaEvolution()
     {
         await DropTableIfExists();
 
@@ -141,8 +136,7 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
         var expanded = new PostgreSqlOutbox<ExpandedEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable,
-            AutoMigrate = true
+            OutboxTableName = OutboxTable
         }, NullLoggerFactory.Instance);
         await expanded.InitializeAsync();
 
@@ -160,11 +154,10 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
     }
 
     [Test]
-    public async Task AutoMigrate_WarnsAboutOrphanColumn_DoesNotDropIt()
+    public async Task WarnsAboutOrphanColumn_DoesNotDropIt()
     {
         await DropTableIfExists();
 
-        // Create table with expanded entity (has Description)
         var expanded = new PostgreSqlOutbox<ExpandedEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
@@ -177,8 +170,7 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
         var slim = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable,
-            AutoMigrate = true
+            OutboxTableName = OutboxTable
         }, factory);
         await slim.InitializeAsync();
 
@@ -192,11 +184,10 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
     }
 
     [Test]
-    public async Task AutoMigrate_WarnsAboutTypeMismatch_AppliesNoDdl()
+    public async Task WarnsAboutTypeMismatch_AppliesNoDdl()
     {
         await DropTableIfExists();
 
-        // Create table with ExpandedEntity (state_id = INTEGER, state_description = TEXT)
         var expanded = new PostgreSqlOutbox<ExpandedEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
@@ -209,8 +200,7 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
         var typeChanged = new PostgreSqlOutbox<TypeChangedEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable,
-            AutoMigrate = true
+            OutboxTableName = OutboxTable
         }, factory);
         await typeChanged.InitializeAsync();
 
@@ -222,7 +212,7 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
     }
 
     [Test]
-    public async Task AutoMigrate_RequiredColumnOnNonEmptyTable_ThrowsInvalidOperationException()
+    public async Task RequiredColumnOnNonEmptyTable_ThrowsInvalidOperationException()
     {
         await DropTableIfExists();
 
@@ -232,7 +222,6 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
 
-        // Insert a row to make the table non-empty
         await slim.WriteAsync(new EntityChange<SlimEntity>
         {
             EntityType = typeof(SlimEntity).FullName!,
@@ -244,8 +233,7 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
         var requiredOutbox = new PostgreSqlOutbox<RequiredFieldEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable,
-            AutoMigrate = true
+            OutboxTableName = OutboxTable
         }, NullLoggerFactory.Instance);
 
         var ex = Assert.ThrowsAsync<InvalidOperationException>(
@@ -257,7 +245,7 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
     }
 
     [Test]
-    public async Task AutoMigrate_RequiredColumnOnEmptyTable_Succeeds()
+    public async Task RequiredColumnOnEmptyTable_Succeeds()
     {
         await DropTableIfExists();
 
@@ -266,40 +254,15 @@ public class AutoMigrateOutboxTests : IAsyncDisposable
             ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
-        // Table is empty — no rows inserted
 
         var requiredOutbox = new PostgreSqlOutbox<RequiredFieldEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable,
-            AutoMigrate = true
+            OutboxTableName = OutboxTable
         }, NullLoggerFactory.Instance);
 
         Assert.DoesNotThrowAsync(async () => await requiredOutbox.InitializeAsync());
         Assert.That(await ColumnExists("state_required_field"), Is.True);
-    }
-
-    [Test]
-    public async Task AutoMigrate_False_DoesNotAddColumn()
-    {
-        await DropTableIfExists();
-
-        var slim = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
-        {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
-        }, NullLoggerFactory.Instance);
-        await slim.InitializeAsync();
-
-        // Re-init with expanded entity but AutoMigrate = false (default)
-        var expanded = new PostgreSqlOutbox<ExpandedEntity>(new PostgreSqlOutboxOptions
-        {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable
-            // AutoMigrate defaults to false
-        }, NullLoggerFactory.Instance);
-        await expanded.InitializeAsync();
-
-        Assert.That(await ColumnExists("state_description"), Is.False);
     }
 }
 
@@ -318,11 +281,11 @@ public class ExpandedSourceEntity
 public class RequiredSourceEntity
 {
     [Key] public int OrderId { get; set; }
-    [Key][Required] public int LineId { get; set; }
+    [Key] public int LineId { get; set; }
 }
 
 [NonParallelizable]
-public class AutoMigrateRepositoryTests : IAsyncDisposable
+public class SchemaEvolutionRepositoryTests : IAsyncDisposable
 {
     private readonly IContainer _postgres = PostgresContainerFactory.Create();
 
@@ -331,7 +294,7 @@ public class AutoMigrateRepositoryTests : IAsyncDisposable
 
     public ValueTask DisposeAsync() => _postgres.DisposeAsync();
 
-    private const string SourceTable = "auto_migrate_source_test";
+    private const string SourceTable = "schema_evolution_source_test";
 
     private async Task DropTableIfExists()
     {
@@ -355,58 +318,7 @@ public class AutoMigrateRepositoryTests : IAsyncDisposable
     }
 
     [Test]
-    public async Task AutoMigrate_AddsNewKeyColumn_ToExistingSourceTable()
-    {
-        await DropTableIfExists();
-
-        var slim = new PostgreSqlRepository<SlimSourceEntity>(new PostgreSqlRepositoryOptions
-        {
-            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
-        }, NullLoggerFactory.Instance);
-        await slim.InitializeAsync();
-
-        // Re-initialise with expanded entity (adds LineId key column) on empty table
-        var expanded = new PostgreSqlRepository<ExpandedSourceEntity>(new PostgreSqlRepositoryOptions
-        {
-            ConnectionString = _postgres.GetConnectionString(),
-            TableName = SourceTable,
-            AutoMigrate = true
-        }, NullLoggerFactory.Instance);
-        await expanded.InitializeAsync();
-
-        Assert.That(await ColumnExists("state_line_id"), Is.True);
-    }
-
-    [Test]
-    public async Task AutoMigrate_RequiredKeyColumnOnNonEmptyTable_ThrowsInvalidOperationException()
-    {
-        await DropTableIfExists();
-
-        var slim = new PostgreSqlRepository<SlimSourceEntity>(new PostgreSqlRepositoryOptions
-        {
-            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
-        }, NullLoggerFactory.Instance);
-        await slim.InitializeAsync();
-
-        // Insert a row so the table is non-empty
-        await slim.InsertAsync(new SlimSourceEntity { OrderId = 1 });
-
-        var expanded = new PostgreSqlRepository<RequiredSourceEntity>(new PostgreSqlRepositoryOptions
-        {
-            ConnectionString = _postgres.GetConnectionString(),
-            TableName = SourceTable,
-            AutoMigrate = true
-        }, NullLoggerFactory.Instance);
-
-        var ex = Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await expanded.InitializeAsync());
-
-        Assert.That(ex!.Message, Does.Contain(SourceTable));
-        Assert.That(ex.Message, Does.Contain("DEFAULT"));
-    }
-
-    [Test]
-    public async Task AutoMigrate_False_DoesNotAddColumn()
+    public async Task AddsNewKeyColumn_ToExistingSourceTable()
     {
         await DropTableIfExists();
 
@@ -420,10 +332,35 @@ public class AutoMigrateRepositoryTests : IAsyncDisposable
         {
             ConnectionString = _postgres.GetConnectionString(),
             TableName = SourceTable
-            // AutoMigrate defaults to false
         }, NullLoggerFactory.Instance);
         await expanded.InitializeAsync();
 
-        Assert.That(await ColumnExists("state_line_id"), Is.False);
+        Assert.That(await ColumnExists("state_line_id"), Is.True);
+    }
+
+    [Test]
+    public async Task RequiredKeyColumnOnNonEmptyTable_ThrowsInvalidOperationException()
+    {
+        await DropTableIfExists();
+
+        var slim = new PostgreSqlRepository<SlimSourceEntity>(new PostgreSqlRepositoryOptions
+        {
+            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
+        }, NullLoggerFactory.Instance);
+        await slim.InitializeAsync();
+
+        await slim.InsertAsync(new SlimSourceEntity { OrderId = 1 });
+
+        var expanded = new PostgreSqlRepository<RequiredSourceEntity>(new PostgreSqlRepositoryOptions
+        {
+            ConnectionString = _postgres.GetConnectionString(),
+            TableName = SourceTable
+        }, NullLoggerFactory.Instance);
+
+        var ex = Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await expanded.InitializeAsync());
+
+        Assert.That(ex!.Message, Does.Contain(SourceTable));
+        Assert.That(ex.Message, Does.Contain("DEFAULT"));
     }
 }

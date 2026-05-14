@@ -52,7 +52,7 @@ public static class OutboxSchemaGenerator
 
     public static string GenerateAddColumn(string tableName, OutboxColumn col)
     {
-        var sb = new StringBuilder($"ALTER TABLE {tableName} ADD COLUMN {col.Name} {col.Type}");
+        var sb = new StringBuilder($"ALTER TABLE {tableName} ADD COLUMN IF NOT EXISTS {col.Name} {col.Type}");
         if (!col.IsNullable && !col.IsPrimaryKey)
             sb.Append(" NOT NULL");
         if (col.Default != null)

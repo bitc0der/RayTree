@@ -6,7 +6,24 @@ public static class SchemaInspector
 {
     public sealed record ExistingColumn(string Name, string NormalizedType, bool IsNullable);
 
-    public static async Task<IReadOnlyDictionary<string, ExistingColumn>> GetColumnsAsync(
+    public static async Task<bool> TableExistsAsync(
+    string connectionString,
+    string tableName,
+    CancellationToken cancellationToken = default)
+{
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync(cancellationToken);
+    await using var cmd = new NpgsqlCommand("""
+        SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = @TableName
+        )
+        """, conn);
+    cmd.Parameters.Add(new NpgsqlParameter("TableName", tableName));
+    return (bool)(await cmd.ExecuteScalarAsync(cancellationToken))!;
+}
+
+public static async Task<IReadOnlyDictionary<string, ExistingColumn>> GetColumnsAsync(
         string connectionString,
         string tableName,
         CancellationToken cancellationToken = default)

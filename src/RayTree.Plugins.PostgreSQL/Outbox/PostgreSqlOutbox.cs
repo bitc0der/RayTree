@@ -64,11 +64,15 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         foreach (var col in _propertyColumns)
             outboxSchema.AddEntityPropertyColumn(col.Property.Name, col.ColumnName, col.ColumnType, col.IsNullable);
 
-        var outboxDdl = OutboxSchemaGenerator.GenerateCreateTable(outboxSchema, includeIndexes: true);
-        await ExecuteDdlDirectly(_options.ConnectionString, outboxDdl, cancellationToken);
-
-        if (_options.AutoMigrate)
+        if (!await SchemaInspector.TableExistsAsync(_options.ConnectionString, _options.OutboxTableName, cancellationToken))
+        {
+            var outboxDdl = OutboxSchemaGenerator.GenerateCreateTable(outboxSchema, includeIndexes: true);
+            await ExecuteDdlDirectly(_options.ConnectionString, outboxDdl, cancellationToken);
+        }
+        else
+        {
             await MigrateSchemaAsync(cancellationToken);
+        }
 
         if (_options.UseNotificationChannel && !string.IsNullOrEmpty(_options.NotificationChannel))
         {

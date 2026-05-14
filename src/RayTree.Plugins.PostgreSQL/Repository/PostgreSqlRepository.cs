@@ -47,6 +47,9 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     private string BuildWhereClause()
         => string.Join(" AND ", _keyColumns.Select((c, i) => $"{c.ColumnName} = @K{i}"));
 
+    private static readonly HashSet<string> s_InfraColumns =
+        new(["id", "created_at", "updated_at", "version"], StringComparer.OrdinalIgnoreCase);
+
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         var keySourceColumns = _keyColumns
@@ -54,51 +57,68 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             .ToList();
         var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, keySourceColumns, _options.TableName);
 
-        // On a fresh table all columns are created in the same DDL, so every index is valid:
-        // emit table + indexes together. On an existing table any index management is the
-        // responsibility of the AutoMigrate path (otherwise a key index could reference a
-        // column that has not been added yet).
-        var existingColumns = await SchemaInspector.GetColumnsAsync(
-            _options.ConnectionString, _options.TableName, cancellationToken);
-        var isFreshTable = existingColumns.Count == 0;
-
-        var tableDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true,
-            includeIndexes: isFreshTable);
-        await ExecuteDdlDirectly(_options.ConnectionString, tableDdl, cancellationToken);
-
-        if (!_options.AutoMigrate)
-            return;
-
-        await MigrateSchemaAsync(cancellationToken);
-
-        // Migration has added any missing key columns, so every index in the schema is now
-        // safe to (re-)apply. CREATE INDEX IF NOT EXISTS makes this idempotent for indexes
-        // already created on the fresh-table path.
-        foreach (var index in sourceSchema.Indexes)
+        if (!await SchemaInspector.TableExistsAsync(_options.ConnectionString, _options.TableName, cancellationToken))
         {
-            var indexDdl = SourceTableDdlGenerator.GenerateCreateIndex(sourceSchema.TableName, index);
-            await ExecuteDdlDirectly(_options.ConnectionString, indexDdl, cancellationToken);
+            var tableDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true,
+                includeIndexes: true);
+            await ExecuteDdlDirectly(_options.ConnectionString, tableDdl, cancellationToken);
+            return;
         }
+
+        // Existing table: diff against desired columns, add any that are missing.
+        var existing = await SchemaInspector.GetColumnsAsync(
+            _options.ConnectionString, _options.TableName, cancellationToken);
+
+        bool? tableHasRows = null;
+        foreach (var col in _keyColumns)
+        {
+            if (existing.ContainsKey(col.ColumnName))
+                continue;
+
+            tableHasRows ??= await TableHasRowsAsync(_options.ConnectionString, _options.TableName, cancellationToken);
+            if (tableHasRows.Value)
+                throw new InvalidOperationException(
+                    $"Cannot add column '{col.ColumnName}': it is NOT NULL with no default and table " +
+                    $"'{_options.TableName}' already has rows. Add a DEFAULT or migrate manually.");
+
+            var addColDdl = SourceTableDdlGenerator.GenerateAddColumn(
+                _options.TableName,
+                new SourceTableColumn { Name = col.ColumnName, Type = col.ColumnType, IsNullable = false });
+            await ExecuteDdlDirectly(_options.ConnectionString, addColDdl, cancellationToken);
+            _logger.LogInformation("Added column {Column} ({Type}) to {Table}",
+                col.ColumnName, col.ColumnType, _options.TableName);
+        }
+
+        var desiredByName = _keyColumns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, _) in existing)
+        {
+            if (s_InfraColumns.Contains(name) || desiredByName.ContainsKey(name)) continue;
+            _logger.LogWarning(
+                "Column '{Column}' exists in '{Table}' but has no matching entity property — consider dropping it manually",
+                name, _options.TableName);
+        }
+        foreach (var col in _keyColumns)
+        {
+            if (existing.TryGetValue(col.ColumnName, out var ec) &&
+                !string.Equals(ec.NormalizedType, col.ColumnType, StringComparison.OrdinalIgnoreCase))
+                _logger.LogWarning(
+                    "Column '{Column}' in '{Table}' has type '{Actual}' but entity expects '{Expected}' — type changes must be migrated manually",
+                    col.ColumnName, _options.TableName, ec.NormalizedType, col.ColumnType);
+        }
+
+        // All desired columns are now present — create indexes idempotently.
+        foreach (var index in sourceSchema.Indexes)
+            await ExecuteDdlDirectly(_options.ConnectionString,
+                SourceTableDdlGenerator.GenerateCreateIndex(sourceSchema.TableName, index), cancellationToken);
     }
 
-    private static readonly HashSet<string> s_InfraColumns =
-        new(["id", "created_at", "updated_at", "version"], StringComparer.OrdinalIgnoreCase);
-
-    private Task MigrateSchemaAsync(CancellationToken cancellationToken)
+    private static async Task<bool> TableHasRowsAsync(string connectionString, string tableName,
+        CancellationToken cancellationToken)
     {
-        var desired = _keyColumns
-            .Select(c => new ColumnMigrationSpec(c.ColumnName, c.ColumnType, false))
-            .ToList();
-        return SchemaMigrator.ApplyDiffAsync(
-            _options.ConnectionString,
-            _options.TableName,
-            desired,
-            col => SourceTableDdlGenerator.GenerateAddColumn(
-                _options.TableName,
-                new SourceTableColumn { Name = col.Name, Type = col.Type, IsNullable = false }),
-            name => !s_InfraColumns.Contains(name),
-            _logger,
-            cancellationToken);
+        await using var conn = new NpgsqlConnection(connectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand($"SELECT EXISTS(SELECT 1 FROM {tableName} LIMIT 1)", conn);
+        return (bool)(await cmd.ExecuteScalarAsync(cancellationToken))!;
     }
 
     private static async Task ExecuteDdlDirectly(string connectionString, string ddl, CancellationToken cancellationToken)
