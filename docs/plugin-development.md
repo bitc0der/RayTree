@@ -160,7 +160,7 @@ MessageEnvelope
 ```csharp
 builder.ForEntity<MyEntity>()
     .UseOutbox(new MyCustomOutbox(connectionString))
-    .UseQueue(new MyCustomQueuePublisher(brokerOptions))
+    .UsePublisher(new MyCustomQueuePublisher(brokerOptions))
     .UseSerializer(new MyCustomSerializer())
     .UseCompressor(new MyCustomCompressor());
 ```

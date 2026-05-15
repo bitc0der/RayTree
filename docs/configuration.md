@@ -18,7 +18,7 @@ builder
             ConnectionString = connectionString
             // OutboxTableName defaults to "product_outbox"
         }))
-        .UseQueue(new InMemoryQueue())
+        .UsePublisher(new InMemoryQueue())
         .UseSerializer(new JsonSerializerPlugin())
         .UseCompressor(new GzipCompressorPlugin()))
     .ForEntity<Order>(e => e
@@ -27,7 +27,7 @@ builder
             ConnectionString = connectionString
             // OutboxTableName defaults to "order_outbox"
         }))
-        .UseQueue(new InMemoryQueue())
+        .UsePublisher(new InMemoryQueue())
         .UseSerializer(new ProtobufSerializerPlugin())
         .UseCompressor(new Lz4CompressorPlugin()));
 
@@ -53,7 +53,7 @@ builder.ForEntity<Product>(e => e
     {
         ConnectionString = connectionString
     }))
-    .UseQueue(new InMemoryQueue()));
+    .UsePublisher(new InMemoryQueue()));
 // Inherits JsonSerializer + GzipCompressor from global defaults
 
 var tracker = builder.Build();
@@ -88,7 +88,7 @@ builder.ForEntity<Product>(e => e
     {
         ConnectionString = connectionString
     }))
-    .UseQueue(new InMemoryQueue())
+    .UsePublisher(new InMemoryQueue())
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin()));
 ```
@@ -107,7 +107,7 @@ outboxOptions.UseNotificationChannel("product_notify")
 
 builder.ForEntity<Product>(e => e
     .UseOutbox(new PostgreSqlOutbox<Product>(outboxOptions))
-    .UseQueue(new InMemoryQueue())
+    .UsePublisher(new InMemoryQueue())
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin()));
 
@@ -141,7 +141,7 @@ var config = new ChangeTrackingConfiguration()
 config.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
 config.UseCompressor<IChangeCompressor>(_ => new GzipCompressorPlugin());
 config.UseOutbox<IOutbox>(_ => new InMemoryOutbox());
-config.UseQueue<IQueuePublisher>(_ => new InMemoryQueue());
+config.UsePublisher<IQueuePublisher>(_ => new InMemoryQueue());
 
 var tracker = config.Build();
 ```
@@ -175,7 +175,7 @@ var subscriber = new ChangeSubscriberBuilder()
         opt.SkipOnFailure = false;
     })
     .ForEntity<Order>(e => e
-        .UseQueue(myConsumer)                    // IQueueConsumer for Order messages
+        .UseConsumer(myConsumer)                 // IQueueConsumer for Order messages
         .OnInsert(async (change, ct) =>
         {
             var order = change.State;            // fully-typed Order
@@ -197,11 +197,11 @@ var subscriber = new ChangeSubscriberBuilder()
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin())
     .ForEntity<Order>(e => e
-        .UseQueue(orderConsumer)
+        .UseConsumer(orderConsumer)
         // inherits global serializer + compressor
         .OnInsert(async (change, ct) => { /* ... */ }))
     .ForEntity<Product>(e => e
-        .UseQueue(productConsumer)
+        .UseConsumer(productConsumer)
         .UseSerializer(new ProtobufSerializerPlugin())  // per-entity override
         .OnInsert(async (change, ct) => { /* ... */ }))
     .Build();
@@ -215,11 +215,11 @@ Fine-tune retry behaviour for individual entity types while keeping global defau
 var subscriber = new ChangeSubscriberBuilder()
     .UseOptions(opt => opt.MaxRetries = 2)   // global default
     .ForEntity<Order>(e => e
-        .UseQueue(orderConsumer)
+        .UseConsumer(orderConsumer)
         .UseOptions(opt => opt.MaxRetries = 5)  // Order-only override
         .OnInsert(async (change, ct) => { /* ... */ }))
     .ForEntity<Product>(e => e
-        .UseQueue(productConsumer)
+        .UseConsumer(productConsumer)
         // inherits MaxRetries = 2 from global
         .OnInsert(async (change, ct) => { /* ... */ }))
     .Build();

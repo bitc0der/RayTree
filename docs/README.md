@@ -25,7 +25,7 @@ builder.ForEntity<Product>(e => e
         ConnectionString = connectionString
         // OutboxTableName defaults to "product_outbox"
     })
-    .UseQueue(new InMemoryQueue())
+    .UsePublisher(new InMemoryQueue())
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin()));
 
@@ -52,7 +52,7 @@ builder.ForEntity<Product>(e => e
     {
         ConnectionString = connectionString
     })
-    .UseQueue(new InMemoryQueue()));
+    .UsePublisher(new InMemoryQueue()));
 // Inherits JsonSerializer + GzipCompressor from global defaults
 
 var tracker = builder.Build();
@@ -255,7 +255,7 @@ var builder = new ChangeTrackingBuilder();
 
 builder.ForEntity<Product>(e => e
     .UseOutbox(new InMemoryOutbox())
-    .UseQueue(new InMemoryQueue())
+    .UsePublisher(new InMemoryQueue())
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin()));
 
@@ -273,7 +273,7 @@ var subscriber = new ChangeSubscriberBuilder()
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin())
     .ForEntity<Product>(e => e
-        .UseQueue(queue)
+        .UseConsumer(queue)
         .OnInsert(async (change, ct) =>
         {
             var product = change.State;   // fully-typed Product
@@ -360,7 +360,7 @@ builder.ForEntity<Order>(e => e
     {
         ConnectionString = connectionString
     })
-    .UseQueue(rabbitPublisher)
+    .UsePublisher(rabbitPublisher)
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin()));
 
