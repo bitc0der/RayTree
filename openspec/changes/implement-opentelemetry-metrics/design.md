@@ -98,6 +98,120 @@ The outbox pattern's defining health signals are **queue depth** (pending record
 
 No data migrations, no broker-format changes, no rollback steps — metrics are purely additive and silently inactive when no listener attaches.
 
+## Usage Examples
+
+These illustrate the intended developer experience across the three common entry points. They are non-normative — the spec carries the contract; this section shows what calling the API should feel like.
+
+### Example 1: DI (ASP.NET Core / Generic Host)
+
+```csharp
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using RayTree.Hosting;
+using RayTree.OpenTelemetry;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Subscribe OTel to RayTree's meter — one line.
+builder.Services
+    .AddOpenTelemetry()
+    .WithMetrics(m => m
+        .AddRayTreeMetrics()                       // only OTel-specific call
+        .AddPrometheusExporter());
+
+// RayTree change tracking — no metrics-specific configuration.
+// AddChangeTracking registers RayTreeMeter as a singleton; EntityChangeTracker
+// resolves it via constructor injection.
+builder.Services.AddChangeTracking(builder.Configuration, ct =>
+{
+    ct.ForEntity<Order>(e => e
+        .UsePostgreSqlOutbox(o => o.ConnectionString = "…")
+        .UseKafkaPublisher(o => o.BootstrapServers = "…")
+        .UseJsonSerializer());
+});
+
+var app = builder.Build();
+app.MapPrometheusScrapingEndpoint();
+app.Run();
+```
+
+`RayTree.OpenTelemetry` and `RayTree.Hosting` do not reference each other; they meet through the shared meter name `"RayTree"`.
+
+### Example 2: Non-DI (console app, worker, library embed)
+
+```csharp
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using RayTree.Core.Tracking;
+using RayTree.OpenTelemetry;
+
+// Build the OTel pipeline directly — no IServiceCollection involved.
+using var meterProvider = Sdk.CreateMeterProviderBuilder()
+    .AddRayTreeMetrics()
+    .AddOtlpExporter(o => o.Endpoint = new Uri("http://localhost:4317"))
+    .Build();
+
+// Build the tracker. Build() creates a default RayTreeMeter internally.
+var tracker = await new ChangeTrackingBuilder()
+    .ForEntity<Order>(e => e
+        .UsePostgreSqlOutbox(o => o.ConnectionString = "…")
+        .UseKafkaPublisher(o => o.BootstrapServers = "…")
+        .UseJsonSerializer())
+    .BuildAsync();
+
+await tracker.TrackInsertAsync(order);
+```
+
+The OTel SDK subscribes to any `Meter` named `"RayTree"`, regardless of which assembly creates it. RayTree creates exactly one such meter inside `Build()`.
+
+### Example 3: Explicit meter injection (parallel trackers, test isolation)
+
+```csharp
+using RayTree.Core.Telemetry;
+using RayTree.Core.Tracking;
+
+// Useful when you need a meter scoped to this tracker — e.g. tests that
+// filter MeterListener by instance, or two trackers in one process that
+// you want to observe separately.
+var customMeter = new RayTreeMeter();
+
+var tracker = new ChangeTrackingBuilder()
+    .UseMeter(customMeter)
+    .ForEntity<Order>(e => e.UseInMemoryOutbox().UseInMemoryQueue())
+    .Build();
+```
+
+### Example 4: Unit test with `MeterListener`
+
+```csharp
+[Test]
+public async Task TrackInsertAsync_IncrementsWritesCounter()
+{
+    // Per-test meter so the listener can filter to this instance only.
+    var meter = new RayTreeMeter();
+    using var collector = new TestMetricsCollector(meter);
+
+    var tracker = new ChangeTrackingBuilder()
+        .UseMeter(meter)
+        .ForEntity<Order>(e => e.UseInMemoryOutbox().UseInMemoryQueue())
+        .Build();
+
+    await tracker.TrackInsertAsync(new Order { Id = 1 });
+
+    var ms = collector.GetMeasurements<long>("raytree.outbox.writes");
+    Assert.That(ms, Has.One.Matches<Measurement<long>>(m =>
+        m.Value == 1 &&
+        m.Tags.GetValueOrDefault("entity_type")?.Equals("Order") == true &&
+        m.Tags.GetValueOrDefault("change_type")?.Equals("Insert") == true));
+}
+```
+
+`TestMetricsCollector` (introduced in tasks group 10) is a thin `MeterListener` wrapper that filters on `instrument.Meter == meter` so parallel tests don't see each other's measurements.
+
+### Zero-config path
+
+If no listener is attached and `AddRayTreeMetrics` is never called, the runtime services still call their instruments. The BCL `Meter` short-circuits to a no-op — measurements are not recorded and no per-call allocation occurs.
+
 ## Open Questions
 
 *(none — all decisions made)*
