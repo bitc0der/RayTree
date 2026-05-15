@@ -11,9 +11,9 @@ The outbox pattern's defining health signals are **queue depth** (pending record
 - Emit subscriber-side instruments: processed, deduplicated, skipped (with `reason` tag), handler failures, handler attempts-to-success, local processing duration, end-to-end handler lag — tagged with `entity_type` and `change_type` where meaningful.
 - Emit outbox write counter tagged with `entity_type` and `change_type` at the point of `EntityChangeTracker.TrackXxxAsync`.
 - Emit an observable gauge `raytree.outbox.pending` per entity type, sampled on each OTel collection tick.
-- Zero new runtime dependency in `RayTree.Core` — only BCL `System.Diagnostics.Metrics`.
+- Zero new runtime dependency in `RayTree.Core` and `RayTree.Hosting` — only BCL `System.Diagnostics.Metrics`.
 - All durations in seconds (OTel semantic convention).
-- Opt-in OTel wiring via `AddRayTreeMetrics(this MeterProviderBuilder)` in `RayTree.Hosting`.
+- Opt-in OTel wiring via a new peer assembly `RayTree.OpenTelemetry` exposing `AddRayTreeMetrics(this MeterProviderBuilder)` and a public `RayTreeInstrumentation.MeterName = "RayTree"` constant.
 
 **Non-Goals:**
 - Distributed tracing (`ActivitySource` / spans) — separate change.
@@ -64,7 +64,17 @@ The outbox pattern's defining health signals are **queue depth** (pending record
 
 **Rationale:** Histogram bucket choice is deployment-specific (high-throughput latency vs. long-tail batch processing). Hardcoding views in a library forces wrong defaults. OTel's default exponential histogram bucketing works adequately out of the box.
 
-### D7: Builder integration — additive nullable parameter, default constructed in `Build()`
+### D7: OTel integration lives in a peer assembly, not in `RayTree.Hosting`
+
+**Choice:** Create a new `src/RayTree.OpenTelemetry` project that depends on `OpenTelemetry.Api` and contains `AddRayTreeMetrics(this MeterProviderBuilder)` plus the `"RayTree"` meter-name constant (`RayTreeInstrumentation.MeterName`). `RayTree.Core` and `RayTree.Hosting` reference only the BCL `System.Diagnostics.Metrics`. Applications that want OTel pull in `RayTree.OpenTelemetry`; applications that don't, never see an OTel transitive reference.
+
+**Rationale:** Matches the existing architectural pattern — `RayTree.Hosting`, `RayTree.EntityFrameworkCore`, and the `RayTree.Plugins.*` family each isolate their third-party dependency in a peer assembly. Bolting OTel onto `RayTree.Hosting` would force every host-integrated consumer to pull in OTel, violating that separation. The peer assembly also gives a natural home for future OTel additions (semantic-convention attribute constants, recommended `View` boundaries, `ActivitySource`-based tracing wiring) without bloating `RayTree.Hosting`.
+
+**Alternative considered:** Single extension in `RayTree.Hosting`. Rejected — couples host integration to OTel, breaks the established peer-assembly pattern, and forces consumers to take an OTel dependency even when they only want `AddChangeTracking`.
+
+**Alternative considered:** Name it `RayTree.Plugins.OpenTelemetry`. Rejected — the `Plugins.*` namespace is reserved for swap-in `IXxx` implementations (one outbox, one serializer, one broker per app). OTel integration is additive instrumentation, not a substitutable plugin.
+
+### D8: Builder integration — additive nullable parameter, default constructed in `Build()`
 
 **Choice:** `ChangeTrackingBuilder`, `ChangePublisherBuilder`, `ChangeSubscriberBuilder` get a `UseMeter(RayTreeMeter)` configuration method (optional). If not called, `Build()` constructs a fresh `RayTreeMeter` and passes it to the runtime services. The meter is owned by the tracker and disposed in `EntityChangeTracker.Dispose`.
 
@@ -83,8 +93,8 @@ The outbox pattern's defining health signals are **queue depth** (pending record
 2. Add `RayTreeMeter` in `RayTree.Core/Telemetry/`.
 3. Wire `UseMeter` through builders; construct default meter in `Build()`.
 4. Instrument `EntityChangeTracker.TrackXxxAsync`, `OutboxPublisherService`, `ChangeSubscriber`.
-5. Add `AddRayTreeMetrics` extension in `RayTree.Hosting`.
-6. Add `MeterListener`-based unit tests.
+5. Create `src/RayTree.OpenTelemetry` project; add `AddRayTreeMetrics` extension and `RayTreeInstrumentation` constants class.
+6. Create `tests/RayTree.OpenTelemetry.Tests`; add `MeterListener`-based unit tests.
 
 No data migrations, no broker-format changes, no rollback steps — metrics are purely additive and silently inactive when no listener attaches.
 

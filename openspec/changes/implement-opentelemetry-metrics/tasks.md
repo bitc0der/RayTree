@@ -49,30 +49,49 @@
 - [ ] 6.5 In `InvokeWithRetryAsync`: time each handler call; record `raytree.subscriber.processing.duration` per attempt; on success record `raytree.subscriber.handler.attempts`; on retry-exhausted failure increment `raytree.subscriber.handler.failures`
 - [ ] 6.6 After successful dispatch in `ProcessMessageAsync`: increment `raytree.subscriber.messages.processed`; record `raytree.subscriber.lag.duration` as `(DateTime.UtcNow - envelope.Timestamp).TotalSeconds`
 
-## 7. Hosting Integration
+## 7. Hosting DI Registration (no OTel reference)
 
-- [ ] 7.1 Add `OpenTelemetry.Api` package pin to `Directory.Packages.props`
-- [ ] 7.2 Add `OpenTelemetry.Api` reference to `src/RayTree.Hosting/RayTree.Hosting.csproj`
-- [ ] 7.3 Add `AddRayTreeMetrics(this MeterProviderBuilder builder)` extension that calls `builder.AddMeter("RayTree")`
-- [ ] 7.4 In `AddChangeTracking`, register `RayTreeMeter` as a singleton via DI (resolved by `EntityChangeTracker`) so callers can also inject it for custom instrumentation
+- [ ] 7.1 In `RayTree.Hosting.AddChangeTracking`, register `RayTreeMeter` as a singleton via DI (resolved by `EntityChangeTracker`) so callers can also inject it for custom instrumentation
+- [ ] 7.2 Confirm `RayTree.Hosting.csproj` still has **no** `OpenTelemetry.*` package reference
 
-## 8. Tests
+## 8. New `RayTree.OpenTelemetry` Assembly
 
-- [ ] 8.1 Test helper: `MeterListener`-backed `TestMetricsCollector` that filters by meter instance (using `UseMeter` with a per-test meter) and exposes recorded measurements per instrument name
-- [ ] 8.2 Test: `TrackInsertAsync` increments `raytree.outbox.writes` with `change_type="Insert"`
-- [ ] 8.3 Test: `OutboxPublisherService` increments `raytree.outbox.messages.published` on successful publish
-- [ ] 8.4 Test: `OutboxPublisherService` increments `raytree.outbox.messages.failed` after all retries exhausted
-- [ ] 8.5 Test: `OutboxPublisherService` records `raytree.outbox.batch.size` histogram with batch count
-- [ ] 8.6 Test: `OutboxPublisherService` records `raytree.outbox.publish.attempts = N` when publish succeeds after N-1 retries
-- [ ] 8.7 Test: `OutboxPublisherService` records `raytree.outbox.lag.duration` ≈ `(now - change.Timestamp)` within tolerance
-- [ ] 8.8 Test: `OutboxPublisherService` records `raytree.outbox.payload.size` equal to `envelope.Payload.Length`
-- [ ] 8.9 Test: `ObservableGauge` `raytree.outbox.pending` reports the current pending count from `IOutbox.GetPendingCountAsync` per entity type
-- [ ] 8.10 Test: `ChangeSubscriber` increments `raytree.subscriber.messages.processed` on successful dispatch
-- [ ] 8.11 Test: `ChangeSubscriber` increments `raytree.subscriber.messages.deduplicated` on duplicate message
-- [ ] 8.12 Test: `ChangeSubscriber` records `raytree.subscriber.handler.attempts = N` after N-1 transient failures
-- [ ] 8.13 Test: `ChangeSubscriber` records `raytree.subscriber.lag.duration` ≈ `(now - envelope.Timestamp)` within tolerance
-- [ ] 8.14 Test: `ChangeSubscriber` increments `raytree.subscriber.messages.skipped` with correct `reason` tags for `unknown_type` and `no_handler`
-- [ ] 8.15 Test: With no `MeterListener` attached, runtime services execute the full publish/subscribe path with no exceptions and no allocations attributable to metrics (smoke test only — verify no throw)
-- [ ] 8.16 Verify all `*.duration` instruments have `Unit == "s"`
-- [ ] 8.17 Verify `raytree.outbox.payload.size` has `Unit == "By"`
-- [ ] 8.18 Verify `dotnet build RayTree.sln -c Release` passes with no new warnings
+- [ ] 8.1 Add `OpenTelemetry.Api` package pin to `Directory.Packages.props`
+- [ ] 8.2 Create new project `src/RayTree.OpenTelemetry/RayTree.OpenTelemetry.csproj` targeting `net8.0`; reference `OpenTelemetry.Api`; follow the same `TreatWarningsAsErrors=true`, nullable, and editorconfig conventions as the rest of the solution
+- [ ] 8.3 Add `RayTree.OpenTelemetry` project to `RayTree.sln`
+- [ ] 8.4 Create `RayTreeInstrumentation` public static class with `public const string MeterName = "RayTree";`
+- [ ] 8.5 Create `MeterProviderBuilderExtensions` with `public static MeterProviderBuilder AddRayTreeMetrics(this MeterProviderBuilder builder) => builder.AddMeter(RayTreeInstrumentation.MeterName);`
+- [ ] 8.6 Add XML doc on `AddRayTreeMetrics` listing the emitted instrument names and recommended bucket boundaries for `*.duration` histograms (e.g., `[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10]` seconds)
+
+## 9. New `RayTree.OpenTelemetry.Tests` Project
+
+- [ ] 9.1 Create `tests/RayTree.OpenTelemetry.Tests/RayTree.OpenTelemetry.Tests.csproj` following the same test-project conventions as `RayTree.Core.Tests`
+- [ ] 9.2 Add the test project to `RayTree.sln`
+- [ ] 9.3 Test: `RayTreeInstrumentation.MeterName == "RayTree"`
+- [ ] 9.4 Test: `AddRayTreeMetrics` on a `MeterProviderBuilder` registers a meter named `"RayTree"` (use a `MeterProvider` built with `InMemoryExporter` or use reflection on the builder state)
+
+## 10. Core Instrumentation Tests (`RayTree.Core.Tests`)
+
+- [ ] 10.1 Test helper: `MeterListener`-backed `TestMetricsCollector` that filters by meter instance (using `UseMeter` with a per-test meter) and exposes recorded measurements per instrument name
+- [ ] 10.2 Test: `TrackInsertAsync` increments `raytree.outbox.writes` with `change_type="Insert"`
+- [ ] 10.3 Test: `OutboxPublisherService` increments `raytree.outbox.messages.published` on successful publish
+- [ ] 10.4 Test: `OutboxPublisherService` increments `raytree.outbox.messages.failed` after all retries exhausted
+- [ ] 10.5 Test: `OutboxPublisherService` records `raytree.outbox.batch.size` histogram with batch count
+- [ ] 10.6 Test: `OutboxPublisherService` records `raytree.outbox.publish.attempts = N` when publish succeeds after N-1 retries
+- [ ] 10.7 Test: `OutboxPublisherService` records `raytree.outbox.lag.duration` ≈ `(now - change.Timestamp)` within tolerance
+- [ ] 10.8 Test: `OutboxPublisherService` records `raytree.outbox.payload.size` equal to `envelope.Payload.Length`
+- [ ] 10.9 Test: `ObservableGauge` `raytree.outbox.pending` reports the current pending count from `IOutbox.GetPendingCountAsync` per entity type
+- [ ] 10.10 Test: `ChangeSubscriber` increments `raytree.subscriber.messages.processed` on successful dispatch
+- [ ] 10.11 Test: `ChangeSubscriber` increments `raytree.subscriber.messages.deduplicated` on duplicate message
+- [ ] 10.12 Test: `ChangeSubscriber` records `raytree.subscriber.handler.attempts = N` after N-1 transient failures
+- [ ] 10.13 Test: `ChangeSubscriber` records `raytree.subscriber.lag.duration` ≈ `(now - envelope.Timestamp)` within tolerance
+- [ ] 10.14 Test: `ChangeSubscriber` increments `raytree.subscriber.messages.skipped` with correct `reason` tags for `unknown_type` and `no_handler`
+- [ ] 10.15 Test: With no `MeterListener` attached, runtime services execute the full publish/subscribe path with no exceptions (smoke test — verify no throw)
+- [ ] 10.16 Verify all `*.duration` instruments have `Unit == "s"`
+- [ ] 10.17 Verify `raytree.outbox.payload.size` has `Unit == "By"`
+
+## 11. Solution-wide Verification
+
+- [ ] 11.1 Verify `RayTree.Core.csproj` has no `OpenTelemetry.*` package reference (direct or transitive)
+- [ ] 11.2 Verify `RayTree.Hosting.csproj` has no `OpenTelemetry.*` package reference (direct or transitive)
+- [ ] 11.3 Verify `dotnet build RayTree.sln -c Release` passes with no new warnings

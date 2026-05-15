@@ -13,7 +13,7 @@ RayTree has no observable metrics surface, making it impossible for operators to
 - **`OutboxPublisherService` instrumentation** — published count, failure count, batch size histogram, per-attempt publish duration histogram, attempts-to-success histogram, lag histogram, payload size histogram, cleanup record counts.
 - **`ChangeSubscriber` instrumentation** — processed, deduplicated, and skipped counters; handler failure counter; handler attempts-to-success histogram; local processing duration histogram; end-to-end lag histogram.
 - **All `*.duration` histograms use `s` (seconds)** per OTel semantic conventions.
-- **`RayTree.Hosting` extension** — `AddRayTreeMetrics(this MeterProviderBuilder)` registers the `"RayTree"` meter name on any OTel `MeterProvider`. Thin pass-through, no OTel SDK dependency in `RayTree.Hosting` itself.
+- **New `RayTree.OpenTelemetry` assembly** — peer of `RayTree.Hosting` / `RayTree.EntityFrameworkCore`. Contains `AddRayTreeMetrics(this MeterProviderBuilder)` and any future OTel-specific helpers (semantic-convention attribute constants, recommended view configurations, future `ActivitySource` wiring). Keeps the OTel SDK dependency isolated — `RayTree.Core` and `RayTree.Hosting` remain free of `OpenTelemetry.*` references.
 
 ## Capabilities
 
@@ -27,7 +27,10 @@ RayTree has no observable metrics surface, making it impossible for operators to
 
 ## Impact
 
-- **`src/RayTree.Core`** — new `Telemetry/RayTreeMeter.cs`; additive constructor parameter (`RayTreeMeter`) on `OutboxPublisherService`, `ChangeSubscriber`, `ChangePublisher`, `EntityChangeTracker`; builders construct a default `RayTreeMeter` if none supplied.
-- **`src/RayTree.Hosting`** — new `AddRayTreeMetrics` extension.
-- **`Directory.Packages.props`** — no new package required for core; `RayTree.Hosting` extension takes `OpenTelemetry.Api` (Meter-provider builder lives there) as a lightweight dep.
+- **`src/RayTree.Core`** — new `Telemetry/RayTreeMeter.cs`; additive constructor parameter (`RayTreeMeter`) on `OutboxPublisherService`, `ChangeSubscriber`, `ChangePublisher`, `EntityChangeTracker`; builders construct a default `RayTreeMeter` if none supplied. **No OTel SDK reference** — only BCL `System.Diagnostics.Metrics`.
+- **`src/RayTree.Hosting`** — unchanged; no OTel reference. Continues to provide host integration only.
+- **`src/RayTree.OpenTelemetry` (new project)** — single-purpose assembly hosting `AddRayTreeMetrics(this MeterProviderBuilder)` and the `"RayTree"` meter-name constant. Targets `net8.0`; references `OpenTelemetry.Api`.
+- **`tests/RayTree.OpenTelemetry.Tests` (new project)** — unit tests for the extension and meter-name constant.
+- **`Directory.Packages.props`** — add `OpenTelemetry.Api` version pin (referenced only by `RayTree.OpenTelemetry`).
+- **`RayTree.sln`** — add the new src + test projects.
 - **Tests** — unit tests use `MeterListener` in-process; no integration test changes required.

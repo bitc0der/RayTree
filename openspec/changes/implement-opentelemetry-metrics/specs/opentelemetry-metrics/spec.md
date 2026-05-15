@@ -113,12 +113,29 @@ The system SHALL produce zero observable side effects from instrument calls when
 
 ---
 
-### Requirement: Hosting package exposes meter name via `AddRayTreeMetrics`
-The system SHALL provide an extension method `AddRayTreeMetrics(this MeterProviderBuilder builder)` in `RayTree.Hosting` that registers the `"RayTree"` meter name on the OTel `MeterProvider`. The method SHALL be a thin pass-through that does not configure exporters, views, or bucket boundaries.
+### Requirement: OTel integration lives in a dedicated `RayTree.OpenTelemetry` assembly
+The system SHALL ship a peer assembly `RayTree.OpenTelemetry` that contains the OTel-specific wiring code. `RayTree.Core` and `RayTree.Hosting` SHALL NOT reference any `OpenTelemetry.*` package — applications that do not opt into `RayTree.OpenTelemetry` SHALL receive no transitive OTel dependency.
 
-#### Scenario: OTel metrics wiring via hosting extension
-- **WHEN** `services.AddOpenTelemetry().WithMetrics(b => b.AddRayTreeMetrics())` is called at startup
+#### Scenario: Core and Hosting assemblies have no OTel references
+- **WHEN** an application references `RayTree.Core` and/or `RayTree.Hosting` but not `RayTree.OpenTelemetry`
+- **THEN** the resolved dependency closure contains no `OpenTelemetry.*` assembly
+
+---
+
+### Requirement: `RayTree.OpenTelemetry` exposes meter name and `AddRayTreeMetrics`
+The `RayTree.OpenTelemetry` assembly SHALL expose:
+- A public constants class `RayTreeInstrumentation` with a `MeterName` field equal to `"RayTree"`.
+- An extension method `AddRayTreeMetrics(this MeterProviderBuilder builder)` that calls `builder.AddMeter(RayTreeInstrumentation.MeterName)`.
+
+The extension SHALL be a thin pass-through that does not configure exporters, views, or bucket boundaries.
+
+#### Scenario: OTel metrics wiring via the dedicated package
+- **WHEN** an application references `RayTree.OpenTelemetry` and calls `services.AddOpenTelemetry().WithMetrics(b => b.AddRayTreeMetrics())` at startup
 - **THEN** the OTel `MeterProvider` subscribes to all instruments emitted on the `"RayTree"` meter and exports them through the configured exporter
+
+#### Scenario: Meter name constant is publicly addressable
+- **WHEN** a consumer reads `RayTreeInstrumentation.MeterName`
+- **THEN** it returns the string `"RayTree"` so custom OTel configuration (filters, views) can reference it without hardcoding
 
 #### Scenario: All durations use seconds
 - **WHEN** any `*.duration` histogram is created on the `"RayTree"` meter
