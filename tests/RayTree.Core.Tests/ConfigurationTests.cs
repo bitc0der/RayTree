@@ -22,13 +22,13 @@ public class ChangeTrackingBuilderTests
 
         var builder = new ChangeTrackingBuilder();
         builder.UseOutbox<IOutbox>(_ => outbox);
-        builder.UseQueue<IQueuePublisher>(_ => queue);
+        builder.UsePublisher<IQueuePublisher>(_ => queue);
         builder.UseSerializer<IChangeSerializer>(_ => serializer);
         builder.UseCompressor<IChangeCompressor>(_ => compressor);
 
         builder.ForEntity<object>(e => e
             .UseOutbox(outbox)
-            .UseQueue(queue)
+            .UsePublisher(queue)
             .UseSerializer(serializer)
             .UseCompressor(compressor));
 
@@ -44,12 +44,12 @@ public class ChangeTrackingBuilderTests
     public void Build_Throws_WhenNoOutboxConfigured()
     {
         var builder = new ChangeTrackingBuilder();
-        builder.UseQueue<IQueuePublisher>(_ => new InMemoryQueue());
+        builder.UsePublisher<IQueuePublisher>(_ => new InMemoryQueue());
         builder.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
         builder.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin());
 
         builder.ForEntity<object>(e => e
-            .UseQueue(new InMemoryQueue())
+            .UsePublisher(new InMemoryQueue())
             .UseSerializer(new JsonSerializerPlugin())
             .UseCompressor(new NoOpCompressorPlugin()));
 
@@ -88,19 +88,19 @@ public class ChangeTrackingBuilderTests
     {
         var builder = new ChangeTrackingBuilder();
         builder.UseOutbox<IOutbox>(_ => new InMemoryOutbox());
-        builder.UseQueue<IQueuePublisher>(_ => new InMemoryQueue());
+        builder.UsePublisher<IQueuePublisher>(_ => new InMemoryQueue());
         builder.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
         builder.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin());
 
         builder
             .ForEntity<string>(e => e
                 .UseOutbox(new InMemoryOutbox())
-                .UseQueue(new InMemoryQueue())
+                .UsePublisher(new InMemoryQueue())
                 .UseSerializer(new JsonSerializerPlugin())
                 .UseCompressor(new NoOpCompressorPlugin()))
             .ForEntity<Exception>(e => e
                 .UseOutbox(new InMemoryOutbox())
-                .UseQueue(new InMemoryQueue())
+                .UsePublisher(new InMemoryQueue())
                 .UseSerializer(new JsonSerializerPlugin())
                 .UseCompressor(new NoOpCompressorPlugin()));
 
@@ -118,7 +118,7 @@ public class ChangeTrackingConfigurationTests
         var config = new ChangeTrackingConfiguration();
 
         Assert.That(config.UseOutbox<IOutbox>(_ => new InMemoryOutbox()), Is.SameAs(config));
-        Assert.That(config.UseQueue<IQueuePublisher>(_ => new InMemoryQueue()), Is.SameAs(config));
+        Assert.That(config.UsePublisher<IQueuePublisher>(_ => new InMemoryQueue()), Is.SameAs(config));
         Assert.That(config.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin()), Is.SameAs(config));
         Assert.That(config.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin()), Is.SameAs(config));
     }
@@ -128,7 +128,7 @@ public class ChangeTrackingConfigurationTests
     {
         var config = new ChangeTrackingConfiguration();
         config.UseOutbox<IOutbox>(_ => new InMemoryOutbox());
-        config.UseQueue<IQueuePublisher>(_ => new InMemoryQueue());
+        config.UsePublisher<IQueuePublisher>(_ => new InMemoryQueue());
         config.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
         config.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin());
 
@@ -143,7 +143,7 @@ public class ChangeTrackingConfigurationTests
     {
         var config = new ChangeTrackingConfiguration();
         config.UseOutbox<IOutbox>(_ => new InMemoryOutbox());
-        config.UseQueue<IQueuePublisher>(_ => new InMemoryQueue());
+        config.UsePublisher<IQueuePublisher>(_ => new InMemoryQueue());
         config.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
         config.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin());
 
@@ -157,7 +157,7 @@ public class ChangeTrackingConfigurationTests
     {
         var config = new ChangeTrackingConfiguration();
         config.UseOutbox<IOutbox>(_ => new InMemoryOutbox());
-        config.UseQueue<IQueuePublisher>(_ => new InMemoryQueue());
+        config.UsePublisher<IQueuePublisher>(_ => new InMemoryQueue());
         config.UseSerializer<IChangeSerializer>(_ => new JsonSerializerPlugin());
         config.UseCompressor<IChangeCompressor>(_ => new NoOpCompressorPlugin());
         config.WithPollingInterval(TimeSpan.FromSeconds(30));

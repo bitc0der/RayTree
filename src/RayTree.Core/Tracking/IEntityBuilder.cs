@@ -13,7 +13,7 @@ public interface IEntityBuilder<TEntity> where TEntity : class
     // Publisher side
     IEntityBuilder<TEntity> UseRepository(IRepository repository);
     IEntityBuilder<TEntity> UseOutbox(IOutbox outbox);
-    IEntityBuilder<TEntity> UseQueue(IQueuePublisher queue);
+    IEntityBuilder<TEntity> UsePublisher(IQueuePublisher queue);
     IEntityBuilder<TEntity> UseSerializer(IChangeSerializer serializer);
     IEntityBuilder<TEntity> UseCompressor(IChangeCompressor compressor);
 

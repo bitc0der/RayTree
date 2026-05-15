@@ -45,7 +45,7 @@ var tracker = new ChangeTrackingBuilder()
     .UseCompressor<NoOpCompressorPlugin>(_ => new NoOpCompressorPlugin())
     .ForEntity<Order>(e => e
         .UseOutbox(new InMemoryOutbox())
-        .UseQueue(new RabbitMqPublisher(publisherOptions))
+        .UsePublisher(new RabbitMqPublisher(publisherOptions))
         .UseConsumer(consumer)
         .OnInsert(async (change, ct) =>
         {
@@ -70,7 +70,7 @@ builder.Services.AddChangeTracking(builder.Configuration, b => b
     .UseCompressor<NoOpCompressorPlugin>(_ => new NoOpCompressorPlugin())
     .ForEntity<Order>(e => e
         .UsePostgreSqlOutbox(new PostgreSqlOutboxOptions { ConnectionString = connectionString })
-        .UseQueue(new RabbitMqPublisher(publisherOptions))
+        .UsePublisher(new RabbitMqPublisher(publisherOptions))
         .UseConsumer(new RabbitMqConsumer(consumerOptions))
         .OnInsert(async (change, ct) => { /* handle insert */ })
         .OnUpdate(async (change, ct) => { /* handle update */ })
@@ -107,7 +107,7 @@ Use `ChangePublisherBuilder` directly when you only need to publish (no subscrib
 ```csharp
 var publisher = new ChangePublisherBuilder()
     .UseOutbox<InMemoryOutbox>(_ => new InMemoryOutbox())
-    .UseQueue<KafkaPublisher>(_ => new KafkaPublisher(options))
+    .UsePublisher<KafkaPublisher>(_ => new KafkaPublisher(options))
     .UseSerializer<JsonSerializerPlugin>(_ => new JsonSerializerPlugin())
     .UseCompressor<NoOpCompressorPlugin>(_ => new NoOpCompressorPlugin())
     .ForEntity<Order>(e => e.UseOutbox(new InMemoryOutbox()))
@@ -123,7 +123,7 @@ var subscriber = new ChangeSubscriberBuilder()
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new NoOpCompressorPlugin())
     .ForEntity<Order>(e => e
-        .UseQueue(new KafkaConsumer(consumerOptions))
+        .UseConsumer(new KafkaConsumer(consumerOptions))
         .OnChange(changeType: null, async (change, ct) => { /* handle any */ }))
     .Build();
 ```

@@ -92,7 +92,7 @@ public class LoggingTests
             .ForEntity<SampleEntity>(e =>
             {
                 e.UseOutbox(new InMemoryOutbox());
-                e.UseQueue(new InMemoryQueue());
+                e.UsePublisher(new InMemoryQueue());
                 e.UseSerializer(new JsonSerializerPlugin());
                 e.UseCompressor(new NoOpCompressorPlugin());
             })

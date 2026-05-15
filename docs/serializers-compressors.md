@@ -156,7 +156,7 @@ tracking.ForEntity<Product>(e => e
 builder.Services
     .AddChangeSubscriber(configuration)
     .ForEntity<Product>(e => e
-        .UseQueue(myConsumer)
+        .UseConsumer(myConsumer)
         .UseSerializer(new ProtobufSerializerPlugin())   // same as publisher
         .UseCompressor(new BrotliCompressorPlugin())     // same as publisher
         .OnInsert(async (change, ct) =>
@@ -177,9 +177,9 @@ builder.Services
     .UseSerializer(new JsonSerializerPlugin())    // applies to all entities
     .UseCompressor(new GzipCompressorPlugin())    // applies to all entities
     .ForEntity<Order>(e => e
-        .UseQueue(orderConsumer)
+        .UseConsumer(orderConsumer)
         .OnInsert(async (change, ct) => { /* ... */ }))
     .ForEntity<Product>(e => e
-        .UseQueue(productConsumer)
+        .UseConsumer(productConsumer)
         .OnInsert(async (change, ct) => { /* ... */ }));
 ```

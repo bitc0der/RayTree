@@ -28,9 +28,9 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
         return this;
     }
 
-    public IChangeTrackingBuilder UseQueue<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher
+    public IChangeTrackingBuilder UsePublisher<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher
     {
-        _publisherBuilder.UseQueue<T>(factory);
+        _publisherBuilder.UsePublisher<T>(factory);
         return this;
     }
 

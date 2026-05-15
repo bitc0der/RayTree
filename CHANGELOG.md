@@ -6,6 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.8-pre-release]
+
+### Breaking Changes
+
+#### `UseQueue` renamed to `UsePublisher` and `UseConsumer`
+
+The `UseQueue` method was overloaded for both publisher and subscriber contexts, making intent ambiguous. It has been split into two purpose-named methods:
+
+| Before | After | Side |
+|---|---|---|
+| `IChangeTrackingBuilder.UseQueue<T>(factory)` | `UsePublisher<T>(factory)` | Publisher — global |
+| `IChangePublisherBuilder.UseQueue<T>(factory)` | `UsePublisher<T>(factory)` | Publisher — global |
+| `IEntityBuilder<TEntity>.UseQueue(IQueuePublisher)` | `UsePublisher(IQueuePublisher)` | Publisher — per-entity |
+| `IEntityPublisherBuilder<TEntity>.UseQueue(IQueuePublisher)` | `UsePublisher(IQueuePublisher)` | Publisher — per-entity |
+| `IEntitySubscriberBuilder<TEntity>.UseQueue(IQueueConsumer)` | `UseConsumer(IQueueConsumer)` | Subscriber — per-entity |
+| `IEntityBuilder<TEntity>.UseConsumer(IQueueConsumer)` → internal call | now calls `UseConsumer` on subscriber builder | Subscriber — per-entity |
+
+**Migration:** rename call-sites as shown in the table. No behaviour changes — only the method names changed.
+
+**Plugin extensions updated to match:**
+- `InMemoryBuilderExtensions` — internal `e.UseQueue(new InMemoryQueue())` calls updated to `e.UsePublisher(new InMemoryQueue())`
+- `InMemorySubscriberExtensions` — delegates to `UseConsumer` instead of `UseQueue`
+- `KafkaBuilderExtensions` — calls `UsePublisher<IQueuePublisher>(...)` instead of `UseQueue`
+- `KafkaSubscriberExtensions` — calls `UseConsumer(...)` instead of `UseQueue`
+- `RabbitMqBuilderExtensions` — calls `UsePublisher<IQueuePublisher>(...)` instead of `UseQueue`
+- `RabbitMqSubscriberExtensions` — calls `UseConsumer(...)` instead of `UseQueue`
+
+---
+
 ## [0.0.7-pre-release]
 
 ### Added

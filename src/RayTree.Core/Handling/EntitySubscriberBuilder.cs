@@ -22,7 +22,7 @@ internal sealed class EntitySubscriberBuilder<TEntity>(ChangeSubscriberBuilder p
     private readonly List<(ChangeType? ChangeType, ChangeHandlerAsync<TEntity> Handler)> _handlers = new();
 
     /// <inheritdoc/>
-    public IEntitySubscriberBuilder<TEntity> UseQueue(IQueueConsumer consumer)
+    public IEntitySubscriberBuilder<TEntity> UseConsumer(IQueueConsumer consumer)
     {
         ArgumentNullException.ThrowIfNull(consumer);
         _queue = consumer;

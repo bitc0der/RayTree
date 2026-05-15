@@ -49,7 +49,7 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
         var builder = new ChangeTrackingBuilder();
         builder.ForEntity<TestEntity>(e => e
             .UseOutbox(_outbox)
-            .UseQueue(_queue)
+            .UsePublisher(_queue)
             .UseSerializer(new JsonSerializerPlugin())
             .UseCompressor(new GzipCompressorPlugin()));
 

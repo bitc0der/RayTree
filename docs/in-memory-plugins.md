@@ -79,7 +79,7 @@ public async Task ChangeTracking_Works_InMemory()
     var tracker = new ChangeTrackingBuilder()
         .ForEntity<Product>(e => e
             .UseOutbox(new InMemoryOutbox())
-            .UseQueue(queue)
+            .UsePublisher(queue)
             .UseSerializer(serializer)
             .UseCompressor(compressor))
         .UsePublisherOptions(opt => opt.PollingInterval = TimeSpan.FromMilliseconds(50))
@@ -125,7 +125,7 @@ builder.Services
     {
         tracking.ForEntity<Order>(e => e
             .UseOutbox(new InMemoryOutbox())
-            .UseQueue(orderQueue)
+            .UsePublisher(orderQueue)
             .UseSerializer(new JsonSerializerPlugin())
             .UseCompressor(new NoOpCompressorPlugin()));
     });
@@ -155,7 +155,7 @@ Use an in-memory outbox for testing while targeting a real broker:
 ```csharp
 tracking.ForEntity<Product>(e => e
     .UseOutbox(new InMemoryOutbox())
-    .UseQueue(new RabbitMqPublisher(rabbitOptions))
+    .UsePublisher(new RabbitMqPublisher(rabbitOptions))
     .UseSerializer(new JsonSerializerPlugin())
     .UseCompressor(new GzipCompressorPlugin()));
 ```

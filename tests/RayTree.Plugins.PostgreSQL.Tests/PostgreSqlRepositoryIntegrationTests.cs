@@ -34,7 +34,7 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
             {
                 ConnectionString = _postgres.GetConnectionString(), OutboxTableName = "test_users_outbox"
             }, NullLoggerFactory.Instance))
-            .UseQueue(new InMemoryQueue())
+            .UsePublisher(new InMemoryQueue())
             .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())
             .UseCompressor(new RayTree.Plugins.Compressors.Gzip.GzipCompressorPlugin()));
 

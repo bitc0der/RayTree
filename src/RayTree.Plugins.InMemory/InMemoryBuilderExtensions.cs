@@ -29,7 +29,7 @@ public static class InMemoryBuilderExtensions
         public IChangeTrackingBuilder UseInMemoryQueue<TEntity>()
             where TEntity : class
         {
-            builder.ForEntity<TEntity>(e => e.UseQueue(new InMemoryQueue()));
+            builder.ForEntity<TEntity>(e => e.UsePublisher(new InMemoryQueue()));
 
             return builder;
         }
@@ -44,7 +44,7 @@ public static class InMemoryBuilderExtensions
 
             builder.ForEntity<TEntity>(e => e
                 .UseOutbox(new InMemoryOutbox())
-                .UseQueue(new InMemoryQueue())
+                .UsePublisher(new InMemoryQueue())
                 .UseSerializer(serializer)
                 .UseCompressor(compressor));
 

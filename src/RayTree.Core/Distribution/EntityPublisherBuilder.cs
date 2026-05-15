@@ -19,7 +19,7 @@ internal sealed class EntityPublisherBuilder<TEntity>(ChangePublisherBuilder par
         return this;
     }
 
-    public IEntityPublisherBuilder<TEntity> UseQueue(IQueuePublisher queue)
+    public IEntityPublisherBuilder<TEntity> UsePublisher(IQueuePublisher queue)
     {
         ArgumentNullException.ThrowIfNull(queue);
         parent.AddQueueOverride(_entityType, queue);

@@ -30,10 +30,10 @@ internal sealed class EntityBuilder<TEntity>(ChangePublisherBuilder publisherBui
         return this;
     }
 
-    public IEntityBuilder<TEntity> UseQueue(IQueuePublisher queue)
+    public IEntityBuilder<TEntity> UsePublisher(IQueuePublisher queue)
     {
         ArgumentNullException.ThrowIfNull(queue);
-        _pubBuilder.UseQueue(queue);
+        _pubBuilder.UsePublisher(queue);
         return this;
     }
 
@@ -56,7 +56,7 @@ internal sealed class EntityBuilder<TEntity>(ChangePublisherBuilder publisherBui
     public IEntityBuilder<TEntity> UseConsumer(IQueueConsumer consumer)
     {
         ArgumentNullException.ThrowIfNull(consumer);
-        _subBuilder.UseQueue(consumer);
+        _subBuilder.UseConsumer(consumer);
         return this;
     }
 
