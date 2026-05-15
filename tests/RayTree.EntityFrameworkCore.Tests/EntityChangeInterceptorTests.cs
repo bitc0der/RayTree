@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using RayTree.Core.Distribution;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
@@ -38,7 +39,7 @@ public class EntityChangeInterceptorTests
 
     private static EntityChangeTracker BuildTracker(IOutbox outbox)
     {
-        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
         publisher.RegisterOutbox(typeof(TestEntity), outbox);
         return new EntityChangeTracker(publisher);
     }

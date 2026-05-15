@@ -8,6 +8,7 @@ using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Repository;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Tracking;
 
@@ -16,6 +17,7 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
     private readonly ChangePublisherBuilder _publisherBuilder = new();
     private readonly ChangeSubscriberBuilder _subscriberBuilder = new();
     private readonly ILoggerFactory _loggerFactory;
+    private RayTreeMeter? _meter;
 
     public ChangeTrackingBuilder(ILoggerFactory? loggerFactory = null)
     {
@@ -74,6 +76,13 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
         return this;
     }
 
+    public IChangeTrackingBuilder UseMeter(RayTreeMeter meter)
+    {
+        ArgumentNullException.ThrowIfNull(meter);
+        _meter = meter;
+        return this;
+    }
+
     public IChangeTrackingBuilder ForEntity<TEntity>(Action<IEntityBuilder<TEntity>> configure)
         where TEntity : class
     {
@@ -100,10 +109,22 @@ public class ChangeTrackingBuilder : IChangeTrackingBuilder
 
     private EntityChangeTracker BuildInternal()
     {
+        var meter = _meter ?? new RayTreeMeter();
+        var ownsMeter = _meter == null;  // builder-created meter is disposed by the tracker
+
         _publisherBuilder.UseLoggerFactory(_loggerFactory);  // always non-null — resolved once here
         _subscriberBuilder.UseLoggerFactory(_loggerFactory);
+        _publisherBuilder.UseMeter(meter);
+        _subscriberBuilder.UseMeter(meter);
+
         var publisher  = _publisherBuilder.Build();
         var subscriber = _subscriberBuilder.Build();
-        return new EntityChangeTracker(publisher, subscriber);
+
+        // Wire the pending-count gauge to the publisher's registered outboxes. The lambda is
+        // invoked lazily by the OTel collection callback, by which point InitializeAsync has run.
+        meter.RegisterPendingGauge(() =>
+            publisher.GetOutboxes().Select(kvp => (kvp.Key, kvp.Value)));
+
+        return new EntityChangeTracker(publisher, subscriber, meter, ownsMeter);
     }
 }

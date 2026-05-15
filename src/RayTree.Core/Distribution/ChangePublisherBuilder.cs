@@ -5,6 +5,7 @@ using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Repository;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Distribution;
 
@@ -29,6 +30,7 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
 
     private Action<OutboxPublisherOptions>? _optionsConfigure;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
+    private RayTreeMeter? _meter;
     private bool _built;
 
     /// <inheritdoc/>
@@ -80,6 +82,14 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
     }
 
     /// <inheritdoc/>
+    public IChangePublisherBuilder UseMeter(RayTreeMeter meter)
+    {
+        ThrowIfBuilt();
+        _meter = meter ?? throw new ArgumentNullException(nameof(meter));
+        return this;
+    }
+
+    /// <inheritdoc/>
     public IChangePublisherBuilder ForEntity<TEntity>(Action<IEntityPublisherBuilder<TEntity>> configure)
         where TEntity : class
     {
@@ -95,7 +105,8 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
     {
         _built = true;
 
-        var publisher = new ChangePublisher(_loggerFactory);
+        var meter = _meter ?? new RayTreeMeter();
+        var publisher = new ChangePublisher(_loggerFactory, meter);
         _optionsConfigure?.Invoke(publisher.Options);
 
         var entityTypes = _outboxOverrides.Keys

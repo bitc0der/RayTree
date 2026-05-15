@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
@@ -37,7 +38,7 @@ public class KafkaEndToEndTests : IAsyncDisposable
             Acks             = "all"
         });
 
-        var changePublisher = new ChangePublisher(NullLoggerFactory.Instance);
+        var changePublisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
         changePublisher.RegisterOutbox(typeof(Order), new InMemoryOutbox());
         changePublisher.RegisterPublisher(typeof(Order), publisher);
         changePublisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
@@ -83,7 +84,7 @@ public class KafkaEndToEndTests : IAsyncDisposable
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
-        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, new RayTreeMeter());
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
@@ -120,7 +121,7 @@ public class KafkaEndToEndTests : IAsyncDisposable
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
-        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, new RayTreeMeter());
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
@@ -158,7 +159,7 @@ public class KafkaEndToEndTests : IAsyncDisposable
         var received    = new List<EntityChange>();
         var allReceived = new TaskCompletionSource<bool>();
 
-        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, new RayTreeMeter());
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
@@ -115,7 +116,7 @@ public class LoggingTests
         var outbox           = new InMemoryOutbox();
         var failingPublisher = new FailingPublisher(failCount: 1); // fail once, succeed on second call
 
-        var publisher = new ChangePublisher(loggerFactory);
+        var publisher = new ChangePublisher(loggerFactory, new RayTreeMeter());
         publisher.RegisterOutbox(typeof(SampleEntity), outbox);
         publisher.RegisterPublisher(typeof(SampleEntity), failingPublisher);
         publisher.RegisterSerializer(typeof(SampleEntity), new JsonSerializerPlugin());
@@ -164,7 +165,7 @@ public class LoggingTests
     {
         // Arrange
         var recordingLogger = new RecordingLogger<ChangeSubscriber>();
-        var subscriber      = new ChangeSubscriber(recordingLogger);
+        var subscriber      = new ChangeSubscriber(recordingLogger, new RayTreeMeter());
 
         var correlationId = Guid.NewGuid();
         var envelope = new MessageEnvelope
@@ -198,7 +199,7 @@ public class LoggingTests
     {
         // Arrange — subscriber has no entity registrations at all
         var recordingLogger = new RecordingLogger<ChangeSubscriber>();
-        var subscriber      = new ChangeSubscriber(recordingLogger);
+        var subscriber      = new ChangeSubscriber(recordingLogger, new RayTreeMeter());
 
         var envelope = new MessageEnvelope
         {
@@ -228,7 +229,7 @@ public class LoggingTests
         // Arrange
         var recordingLogger = new RecordingLogger<ChangeSubscriber>();
         var options         = new SubscriberOptions { MaxRetries = 0, SkipOnFailure = true };
-        var subscriber      = new ChangeSubscriber(recordingLogger, options: options);
+        var subscriber      = new ChangeSubscriber(recordingLogger, new RayTreeMeter(), options: options);
 
         subscriber.RegisterQueue<SampleEntity>(new InMemoryQueue());
         subscriber.OnChange<SampleEntity>(changeType: null, (_, _) =>

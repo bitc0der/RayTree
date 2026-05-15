@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Models;
@@ -6,6 +7,7 @@ using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Distribution;
 
@@ -15,6 +17,8 @@ public class OutboxPublisherService : IDisposable
     private readonly Type _entityType;
     private readonly OutboxPublisherOptions _options;
     private readonly ILogger<OutboxPublisherService> _logger;
+    private readonly RayTreeMeter _meter;
+    private readonly KeyValuePair<string, object?> _entityTag;
     private readonly CancellationTokenSource _cts = new();
     private Task? _pollingTask;
     private volatile bool _stopping;
@@ -30,13 +34,16 @@ public class OutboxPublisherService : IDisposable
         ChangePublisher publisher,
         Type entityType,
         OutboxPublisherOptions options,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        RayTreeMeter meter)
     {
         _publisher  = publisher    ?? throw new ArgumentNullException(nameof(publisher));
         _entityType = entityType   ?? throw new ArgumentNullException(nameof(entityType));
         _options    = options      ?? throw new ArgumentNullException(nameof(options));
+        _meter      = meter        ?? throw new ArgumentNullException(nameof(meter));
         _logger     = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
                           .CreateLogger<OutboxPublisherService>();
+        _entityTag  = RayTreeMeter.EntityTag(entityType);
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -100,6 +107,7 @@ public class OutboxPublisherService : IDisposable
         var compressor = _publisher.GetCompressor(_entityType);
 
         var changes = await GetUnpublishedAsync(outbox, _options.BatchSize, cancellationToken);
+        _meter.OutboxBatchSize.Record(changes.Count, _entityTag);
 
         await Parallel.ForEachAsync(changes,
             new ParallelOptions
@@ -121,30 +129,45 @@ public class OutboxPublisherService : IDisposable
         IChangeCompressor compressor,
         CancellationToken ct)
     {
-        var retries = 0;
-        while (retries < _options.MaxRetryCount)
+        var changeTag = RayTreeMeter.ChangeTag(change.ChangeType);
+        var attempts = 0;
+        while (attempts < _options.MaxRetryCount)
         {
+            attempts++;
+            var sw = Stopwatch.StartNew();
             try
             {
                 await PublishChangeAsync(change, publisher, serializer, compressor, ct);
+                sw.Stop();
+                _meter.OutboxPublishDuration.Record(sw.Elapsed.TotalSeconds, _entityTag, changeTag);
+
                 await outbox.MarkPublishedAsync(change.Id, ct);
+
+                _meter.OutboxPublished.Add(1, _entityTag, changeTag);
+                _meter.OutboxPublishAttempts.Record(attempts, _entityTag);
+                _meter.OutboxLagDuration.Record(
+                    Math.Max(0, (DateTime.UtcNow - change.Timestamp).TotalSeconds),
+                    _entityTag);
                 return;
             }
             catch (Exception ex)
             {
-                retries++;
-                if (retries >= _options.MaxRetryCount)
+                sw.Stop();
+                _meter.OutboxPublishDuration.Record(sw.Elapsed.TotalSeconds, _entityTag, changeTag);
+
+                if (attempts >= _options.MaxRetryCount)
                 {
+                    _meter.OutboxFailed.Add(1, _entityTag, changeTag);
                     _logger.LogError(ex,
                         "Failed to publish change {ChangeId} for {EntityType} after {Retries} attempt(s)",
-                        change.Id, _entityType.Name, retries);
+                        change.Id, _entityType.Name, attempts);
                     throw;
                 }
 
                 _logger.LogWarning(ex,
                     "Retry {Attempt} of {MaxRetries} failed for {EntityType}, retrying",
-                    retries, _options.MaxRetryCount, _entityType.Name);
-                await Task.Delay(_options.RetryDelay * retries, ct);
+                    attempts, _options.MaxRetryCount, _entityType.Name);
+                await Task.Delay(_options.RetryDelay * attempts, ct);
             }
         }
     }
@@ -186,6 +209,9 @@ public class OutboxPublisherService : IDisposable
             Payload       = compressed.ToArray()
         };
 
+        _meter.OutboxPayloadSize.Record(
+            envelope.Payload.Length, _entityTag, RayTreeMeter.ChangeTag(change.ChangeType));
+
         await publisher.PublishAsync(envelope, ct);
     }
 
@@ -214,8 +240,11 @@ public class OutboxPublisherService : IDisposable
         {
             var deleted = await outbox.CleanupPublishedAsync(_options.CleanupRetentionPeriod, cancellationToken);
             if (deleted > 0)
+            {
+                _meter.OutboxRecordsCleaned.Add(deleted, _entityTag);
                 _logger.LogInformation("Outbox rotation removed {Deleted} published record(s) for {EntityType}",
                     deleted, _entityType.Name);
+            }
             else
                 _logger.LogDebug("Outbox rotation found no published records to remove for {EntityType}",
                     _entityType.Name);
@@ -232,9 +261,12 @@ public class OutboxPublisherService : IDisposable
             {
                 var stale = await outbox.CleanupStaleUnpublishedAsync(threshold, cancellationToken);
                 if (stale > 0)
+                {
+                    _meter.OutboxStaleUnpublishedRemoved.Add(stale, _entityTag);
                     _logger.LogWarning(
                         "Outbox rotation removed {Count} stale unpublished record(s) for {EntityType} older than {Threshold} — check queue health",
                         stale, _entityType.Name, threshold);
+                }
                 else
                     _logger.LogDebug("Outbox rotation found no stale unpublished records for {EntityType}",
                         _entityType.Name);

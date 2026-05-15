@@ -278,6 +278,23 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         return total;
     }
 
+    public async Task<long> GetPendingCountAsync(Type entityType, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+        if (entityType != typeof(TEntity))
+            throw new InvalidOperationException($"This outbox handles {typeof(TEntity).Name}, not {entityType.Name}");
+
+        await using var conn = new NpgsqlConnection(_options.ConnectionString);
+        await conn.OpenAsync(cancellationToken);
+        await using var cmd = new NpgsqlCommand($"""
+                                                 SELECT count(*)
+                                                 FROM {_options.OutboxTableName}
+                                                 WHERE published = FALSE
+                                                 """, conn);
+        var result = await cmd.ExecuteScalarAsync(cancellationToken);
+        return result is null or DBNull ? 0 : Convert.ToInt64(result);
+    }
+
     public async Task<EntityChange<T>?> GetByIdAsync<T>(long id, CancellationToken cancellationToken = default)
         where T : class
     {

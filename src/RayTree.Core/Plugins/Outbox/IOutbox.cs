@@ -41,6 +41,13 @@ public interface IOutbox
 
     Task<int> CleanupStaleUnpublishedAsync(TimeSpan staleThreshold, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Returns the number of unpublished records currently held by this outbox for
+    /// <paramref name="entityType"/>. Used to feed the <c>raytree.outbox.pending</c>
+    /// observable gauge; implementations should make this a cheap, indexed lookup.
+    /// </summary>
+    Task<long> GetPendingCountAsync(Type entityType, CancellationToken cancellationToken = default);
+
     Task<EntityChange<TEntity>?> GetByIdAsync<TEntity>(long id, CancellationToken cancellationToken = default)
         where TEntity : class;
 }
