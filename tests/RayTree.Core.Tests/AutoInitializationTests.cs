@@ -23,7 +23,7 @@ public class AutoInitializationTests
         builder.ForEntity<AutoInitTestEntity>(e => e
             .UseRepository(new InMemoryRepository<AutoInitTestEntity>())
             .UseOutbox(new InMemoryOutbox())
-            .UseQueue(new InMemoryQueue())
+            .UsePublisher(new InMemoryQueue())
             .UseSerializer(new JsonSerializerPlugin())
             .UseCompressor(new GzipCompressorPlugin()));
 
@@ -61,7 +61,7 @@ public class AutoInitializationTests
         builder.ForEntity<AutoInitTestEntity>(e => e
             .UseRepository(new InMemoryRepository<AutoInitTestEntity>())
             .UseOutbox(new InMemoryOutbox())
-            .UseQueue(new InMemoryQueue())
+            .UsePublisher(new InMemoryQueue())
             .UseSerializer(new JsonSerializerPlugin())
             .UseCompressor(new GzipCompressorPlugin()));
 
@@ -86,7 +86,7 @@ public class AutoInitializationTests
         builder.ForEntity<AutoInitTestEntity>(e => e
             .UseRepository(new InMemoryRepository<AutoInitTestEntity>())
             .UseOutbox(mockOutbox.Object)
-            .UseQueue(new InMemoryQueue())
+            .UsePublisher(new InMemoryQueue())
             .UseSerializer(new JsonSerializerPlugin())
             .UseCompressor(new GzipCompressorPlugin()));
 
@@ -111,7 +111,7 @@ public class AutoInitializationTests
         builder.ForEntity<AutoInitTestEntity>(e => e
             .UseRepository(new InMemoryRepository<AutoInitTestEntity>())
             .UseOutbox(new InMemoryOutbox())
-            .UseQueue(mockQueue.Object)
+            .UsePublisher(mockQueue.Object)
             .UseSerializer(new JsonSerializerPlugin())
             .UseCompressor(new GzipCompressorPlugin()));
 

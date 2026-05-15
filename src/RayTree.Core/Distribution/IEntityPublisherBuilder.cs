@@ -12,7 +12,7 @@ namespace RayTree.Core.Distribution;
 public interface IEntityPublisherBuilder<TEntity> where TEntity : class
 {
     IEntityPublisherBuilder<TEntity> UseOutbox(IOutbox outbox);
-    IEntityPublisherBuilder<TEntity> UseQueue(IQueuePublisher queue);
+    IEntityPublisherBuilder<TEntity> UsePublisher(IQueuePublisher queue);
     IEntityPublisherBuilder<TEntity> UseSerializer(IChangeSerializer serializer);
     IEntityPublisherBuilder<TEntity> UseCompressor(IChangeCompressor compressor);
     IEntityPublisherBuilder<TEntity> UseRepository(IRepository repository);

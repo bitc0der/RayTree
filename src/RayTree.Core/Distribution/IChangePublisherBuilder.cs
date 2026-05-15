@@ -14,7 +14,7 @@ namespace RayTree.Core.Distribution;
 public interface IChangePublisherBuilder
 {
     IChangePublisherBuilder UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox;
-    IChangePublisherBuilder UseQueue<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher;
+    IChangePublisherBuilder UsePublisher<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher;
     IChangePublisherBuilder UseSerializer<T>(Func<Type, IChangeSerializer> factory) where T : IChangeSerializer;
     IChangePublisherBuilder UseCompressor<T>(Func<Type, IChangeCompressor> factory) where T : IChangeCompressor;
     IChangePublisherBuilder UseRepository<T>(Func<Type, IRepository> factory) where T : IRepository;

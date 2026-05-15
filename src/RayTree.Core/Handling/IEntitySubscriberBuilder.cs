@@ -14,7 +14,7 @@ namespace RayTree.Core.Handling;
 public interface IEntitySubscriberBuilder<TEntity> where TEntity : class
 {
     /// <summary>Sets the queue consumer for this entity type.</summary>
-    IEntitySubscriberBuilder<TEntity> UseQueue(IQueueConsumer consumer);
+    IEntitySubscriberBuilder<TEntity> UseConsumer(IQueueConsumer consumer);
 
     /// <summary>Overrides the global serializer for this entity.</summary>
     IEntitySubscriberBuilder<TEntity> UseSerializer(IChangeSerializer serializer);

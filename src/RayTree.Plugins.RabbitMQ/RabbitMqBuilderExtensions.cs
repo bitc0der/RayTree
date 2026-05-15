@@ -14,7 +14,7 @@ public static class RabbitMqBuilderExtensions
 
         var options = new RabbitMqPublisherOptions();
         configure(options);
-        return builder.UseQueue<IQueuePublisher>(_ => new RabbitMqPublisher(options));
+        return builder.UsePublisher<IQueuePublisher>(_ => new RabbitMqPublisher(options));
     }
 
     public static RabbitMqPublisherOptions WithExchange(

@@ -22,11 +22,11 @@ public class ChangeTrackingConfiguration
         return this;
     }
 
-    public ChangeTrackingConfiguration UseQueue<T>(Func<Type, IQueuePublisher> factory)
+    public ChangeTrackingConfiguration UsePublisher<T>(Func<Type, IQueuePublisher> factory)
         where T : IQueuePublisher
     {
         ThrowIfBuilt();
-        _builder.UseQueue<T>(factory);
+        _builder.UsePublisher<T>(factory);
         return this;
     }
 

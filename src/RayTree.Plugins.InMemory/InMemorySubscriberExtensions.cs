@@ -23,6 +23,6 @@ public static class InMemorySubscriberExtensions
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(queue);
-        return builder.UseQueue(queue);
+        return builder.UseConsumer(queue);
     }
 }

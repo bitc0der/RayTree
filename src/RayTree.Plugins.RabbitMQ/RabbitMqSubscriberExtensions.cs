@@ -18,7 +18,7 @@ public static class RabbitMqSubscriberExtensions
 
         var options = new RabbitMqConsumerOptions();
         configure(options);
-        return builder.UseQueue(new RabbitMqConsumer(options, NullLoggerFactory.Instance));
+        return builder.UseConsumer(new RabbitMqConsumer(options, NullLoggerFactory.Instance));
     }
 
     public static RabbitMqConsumerOptions WithQueue(

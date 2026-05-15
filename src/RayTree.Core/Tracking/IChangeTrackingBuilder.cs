@@ -12,7 +12,7 @@ public interface IChangeTrackingBuilder
 {
     // Publisher global configuration
     IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox;
-    IChangeTrackingBuilder UseQueue<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher;
+    IChangeTrackingBuilder UsePublisher<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher;
     IChangeTrackingBuilder UseSerializer<T>(Func<Type, IChangeSerializer> factory) where T : IChangeSerializer;
     IChangeTrackingBuilder UseCompressor<T>(Func<Type, IChangeCompressor> factory) where T : IChangeCompressor;
     IChangeTrackingBuilder UsePublisherOptions(Action<OutboxPublisherOptions> configure);

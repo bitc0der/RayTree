@@ -40,7 +40,7 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
     }
 
     /// <inheritdoc/>
-    public IChangePublisherBuilder UseQueue<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher
+    public IChangePublisherBuilder UsePublisher<T>(Func<Type, IQueuePublisher> factory) where T : IQueuePublisher
     {
         ThrowIfBuilt();
         _queueFactory = factory ?? throw new ArgumentNullException(nameof(factory));

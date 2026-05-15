@@ -18,7 +18,7 @@ public static class KafkaSubscriberExtensions
 
         var options = new KafkaConsumerOptions();
         configure(options);
-        return builder.UseQueue(new KafkaConsumer(options, NullLoggerFactory.Instance));
+        return builder.UseConsumer(new KafkaConsumer(options, NullLoggerFactory.Instance));
     }
 
     public static KafkaConsumerOptions WithTopic(this KafkaConsumerOptions options, string topic)

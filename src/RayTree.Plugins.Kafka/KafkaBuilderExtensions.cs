@@ -11,7 +11,7 @@ public static class KafkaBuilderExtensions
     {
         var options = new KafkaPublisherOptions();
         configure(options);
-        return builder.UseQueue<IQueuePublisher>(_ => new KafkaPublisher(options));
+        return builder.UsePublisher<IQueuePublisher>(_ => new KafkaPublisher(options));
     }
 
     public static KafkaPublisherOptions WithTopic(this KafkaPublisherOptions options, string topic)
