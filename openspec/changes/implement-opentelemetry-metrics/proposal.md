@@ -1,20 +1,25 @@
 ## Why
 
-RayTree has no observable metrics surface, making it impossible for operators to monitor outbox queue depth, publish throughput, subscriber processing latency, or handler failure rates without parsing log output. Adding OpenTelemetry metrics via the standard `System.Diagnostics.Metrics` API gives operators first-class visibility through any OTel-compatible backend (Prometheus, Datadog, OTLP) with zero additional dependencies in the core library.
+RayTree has no observable metrics surface, making it impossible for operators to monitor outbox queue depth, publish lag, throughput, or handler failure rates without parsing log output. Adding OpenTelemetry-compatible metrics via the BCL `System.Diagnostics.Metrics` API gives operators first-class visibility through any OTel backend (Prometheus, Datadog, OTLP) with zero new runtime dependencies in the core library.
 
 ## What Changes
 
-- **New `RayTreeMeter` class in `RayTree.Core`** — owns the named `Meter("RayTree")` and declares all instruments (counters, histograms). Injected via constructor into runtime services.
-- **`OutboxPublisherService` records** — published message count, publish failure count, batch size histogram, publish duration histogram, and outbox cleanup counts per entity type.
-- **`ChangeSubscriber` records** — processed message count, deduplicated message count, handler failure and retry counts, and message processing duration histogram per entity type and change type.
-- **`ChangePublisher` and `ChangeTrackingBuilder`** accept `IMeterFactory?` (nullable, defaults to `NullMeterFactory`) alongside the existing `ILoggerFactory?` pattern — no breaking change to existing call sites.
-- **`RayTree.Hosting` extension** — `AddRayTreeMetrics(builder)` registers the `"RayTree"` meter with the OTel `MeterProvider`, making it available to any `UseOpenTelemetry()` setup without requiring callers to know the meter name.
+- **New `RayTreeMeter` class in `RayTree.Core`** — owns a single `Meter("RayTree", <assembly-version>)` and declares all instruments. Constructed directly (`new Meter(...)`) rather than via `IMeterFactory` — no DI factory dependency in the core library.
+- **Outbox write tracking** — `EntityChangeTracker.TrackInsert/Update/DeleteAsync` increments a write counter so input rate is observable.
+- **Outbox queue depth** — observable gauge sampled per-entity-type, polling `IOutbox` for pending count. The single most important health signal for the outbox pattern.
+- **End-to-end outbox lag histogram** — measured at publish time as `now - change.Timestamp`, the SLO-relevant publisher delay metric.
+- **End-to-end handler lag histogram** — measured at handler-completion time as `now - envelope.Timestamp`, the SLO-relevant subscriber delay metric.
+- **Payload size histogram** — compressed-bytes-per-message, observed at publish time, for broker pressure and serializer regression detection.
+- **`OutboxPublisherService` instrumentation** — published count, failure count, batch size histogram, per-attempt publish duration histogram, attempts-to-success histogram, lag histogram, payload size histogram, cleanup record counts.
+- **`ChangeSubscriber` instrumentation** — processed, deduplicated, and skipped counters; handler failure counter; handler attempts-to-success histogram; local processing duration histogram; end-to-end lag histogram.
+- **All `*.duration` histograms use `s` (seconds)** per OTel semantic conventions.
+- **`RayTree.Hosting` extension** — `AddRayTreeMetrics(this MeterProviderBuilder)` registers the `"RayTree"` meter name on any OTel `MeterProvider`. Thin pass-through, no OTel SDK dependency in `RayTree.Hosting` itself.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `opentelemetry-metrics`: Publisher-side and subscriber-side metrics instruments (counters + histograms) exported via the standard `System.Diagnostics.Metrics` `Meter` API, with an opt-in OTel wiring extension in `RayTree.Hosting`.
+- `opentelemetry-metrics`: Publisher-side and subscriber-side metrics — counters, histograms, and an observable gauge — emitted via the BCL `System.Diagnostics.Metrics` `Meter` API, plus an opt-in OTel wiring extension in `RayTree.Hosting`.
 
 ### Modified Capabilities
 
@@ -22,7 +27,7 @@ RayTree has no observable metrics surface, making it impossible for operators to
 
 ## Impact
 
-- **`src/RayTree.Core`** — new `Telemetry/RayTreeMeter.cs`; constructor changes to `OutboxPublisherService`, `ChangeSubscriber`, `ChangePublisher`, `ChangeTrackingBuilder` (all additive, nullable parameter).
-- **`src/RayTree.Hosting`** — new `AddRayTreeMetrics` extension method.
-- **`Directory.Packages.props`** — add `OpenTelemetry.Extensions.Hosting` version for the hosting extension; `System.Diagnostics.DiagnosticSource` is already transitively present, no new core dependency.
-- **Tests** — unit tests for metric instrument creation; no integration test changes required since metrics are observable via `MeterListener` in-process.
+- **`src/RayTree.Core`** — new `Telemetry/RayTreeMeter.cs`; additive constructor parameter (`RayTreeMeter`) on `OutboxPublisherService`, `ChangeSubscriber`, `ChangePublisher`, `EntityChangeTracker`; builders construct a default `RayTreeMeter` if none supplied.
+- **`src/RayTree.Hosting`** — new `AddRayTreeMetrics` extension.
+- **`Directory.Packages.props`** — no new package required for core; `RayTree.Hosting` extension takes `OpenTelemetry.Api` (Meter-provider builder lives there) as a lightweight dep.
+- **Tests** — unit tests use `MeterListener` in-process; no integration test changes required.

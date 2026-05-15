@@ -1,72 +1,93 @@
 ## Context
 
-RayTree uses `ILoggerFactory` as its observability injection point, defaulting to `NullLoggerFactory.Instance` in builders so existing call sites need no changes. Metrics should follow the same ergonomic pattern. .NET 8 ships `System.Diagnostics.Metrics` in the BCL, so no new runtime dependency is required in `RayTree.Core`. The `IMeterFactory` interface (also BCL in .NET 8 via `Microsoft.Extensions.Diagnostics`) lets the DI container manage meter lifetime and labelling — mirroring how `ILoggerFactory` works for loggers. The existing runtime service classes (`OutboxPublisherService`, `ChangeSubscriber`) receive their dependencies through constructors; metrics instruments belong there.
+RayTree uses `ILoggerFactory` as its observability injection point, with builders defaulting to `NullLoggerFactory.Instance` so existing call sites need no changes. Metrics should follow the same ergonomic shape but without coupling the core library to `Microsoft.Extensions.Diagnostics`. The .NET 8 BCL ships `System.Diagnostics.Metrics.Meter`, and the recommended pattern for libraries is to construct a named `Meter` directly — the OTel SDK picks it up via `AddMeter("<name>")`. No factory abstraction is needed.
+
+The outbox pattern's defining health signals are **queue depth** (pending records) and **end-to-end lag** (time from outbox write to publish, and from publish to handler completion). These were missing from the first revision of this design and are added here.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Emit publisher-side instruments: published count, failure count, batch size, publish duration, and cleanup record counts — all tagged with `entity_type`.
-- Emit subscriber-side instruments: processed count, deduplicated count, handler failures, handler retries, processing duration — tagged with `entity_type` and `change_type` where meaningful.
-- Zero new runtime dependency in `RayTree.Core` — use BCL `System.Diagnostics.Metrics` only.
-- No breaking API change — meter factory is an optional nullable parameter defaulting to null (normalized to `NullMeterFactory`).
-- Opt-in OTel wiring via a new `AddRayTreeMetrics` extension in `RayTree.Hosting`.
+- Emit publisher-side instruments: published, failed, batch size, per-attempt publish duration, attempts-to-success, end-to-end outbox lag, payload bytes, cleanup record counts — all tagged with `entity_type`.
+- Emit subscriber-side instruments: processed, deduplicated, skipped (with `reason` tag), handler failures, handler attempts-to-success, local processing duration, end-to-end handler lag — tagged with `entity_type` and `change_type` where meaningful.
+- Emit outbox write counter tagged with `entity_type` and `change_type` at the point of `EntityChangeTracker.TrackXxxAsync`.
+- Emit an observable gauge `raytree.outbox.pending` per entity type, sampled on each OTel collection tick.
+- Zero new runtime dependency in `RayTree.Core` — only BCL `System.Diagnostics.Metrics`.
+- All durations in seconds (OTel semantic convention).
+- Opt-in OTel wiring via `AddRayTreeMetrics(this MeterProviderBuilder)` in `RayTree.Hosting`.
 
 **Non-Goals:**
-- Distributed tracing (`ActivitySource` / spans) — separate concern, separate change.
-- Per-message-ID cardinality attributes — would produce unbounded label sets.
-- Metrics in plugin packages (PostgreSQL, Kafka, RabbitMQ) — deferred; broker-level metrics belong in those packages independently.
-- Automatic dashboard or alerting definitions.
+- Distributed tracing (`ActivitySource` / spans) — separate change.
+- Per-correlation-id cardinality — unbounded label set.
+- Plugin-internal metrics (PostgreSQL connection pool, Kafka broker, RabbitMQ channel) — those belong inside each plugin package; this change covers only core/publisher/subscriber concerns.
 
 ## Decisions
 
-### D1: Use `System.Diagnostics.Metrics` directly, not an abstraction
+### D1: Construct `Meter` directly — no `IMeterFactory`
 
-**Choice:** Declare instruments on a single `RayTreeMeter` class that wraps a `Meter` instance. No `IRayTreeMetrics` interface.
+**Choice:** `RayTreeMeter` creates its meter with `new Meter("RayTree", typeof(RayTreeMeter).Assembly.GetName().Version?.ToString())`. Builders construct a default `RayTreeMeter` if none is provided.
 
-**Rationale:** An interface adds an indirection layer with no current caller that needs to substitute it. Tests can observe instruments via `MeterListener` in-process. The BCL `Meter` is already the abstraction — its no-op path (when no listener is attached) has near-zero cost. YAGNI.
+**Rationale:** `IMeterFactory` lives in `Microsoft.Extensions.Diagnostics.Abstractions` and its `Null` implementation is internal — there is no public `NullMeterFactory.Instance` to mirror `NullLoggerFactory.Instance`. Direct `Meter` construction is the standard library pattern: it has no allocations or measurement cost when no `MeterListener` is attached, and the OTel SDK subscribes by meter name. Avoids pulling `Microsoft.Extensions.Diagnostics` into `RayTree.Core` purely for metrics.
 
-**Alternative considered:** `IRayTreeMetrics` with `NullRayTreeMetrics` and `DefaultRayTreeMetrics`. Rejected: doubles the type count, forces interface maintenance whenever a new instrument is added, and provides no benefit that `MeterListener` doesn't already cover in tests.
+**Alternative considered:** Inject `IMeterFactory`. Rejected — adds a runtime dependency for no observable benefit; the factory's main use case (DI-scoped meter lifetime) doesn't apply to a singleton outbox library.
 
-### D2: Mirror the `ILoggerFactory` injection pattern for `IMeterFactory`
+### D2: Observable gauge for queue depth, sampled by OTel collection
 
-**Choice:** `ChangeTrackingBuilder` and `ChangePublisherBuilder` accept `IMeterFactory? meterFactory = null`, normalize null to `NullMeterFactory.Instance` (from `Microsoft.Extensions.Diagnostics`), and pass the factory down to `ChangePublisher` and then to `OutboxPublisherService`. `ChangeSubscriberBuilder` accepts the same. `AddChangeTracking` in `RayTree.Hosting` resolves `IMeterFactory` from DI just as it resolves `ILoggerFactory`.
+**Choice:** `raytree.outbox.pending` is registered as an `ObservableGauge<long>` with a callback that calls `IOutbox.GetPendingCountAsync(...).GetAwaiter().GetResult()` for each registered entity type. A new method `IOutbox.GetPendingCountAsync(CancellationToken)` is added to the outbox abstraction. PostgreSQL implementation is a cheap `SELECT count(*) WHERE published = FALSE` using the existing partial index. InMemory implementation iterates its in-memory dictionary.
 
-**Rationale:** Consistent with the existing logging pattern; existing call sites that omit `meterFactory` continue to compile and produce no-op metrics. The DI path gets real meters automatically when `AddOpenTelemetry().WithMetrics(b => b.AddMeter("RayTree"))` is wired up.
+**Rationale:** Queue depth is the most important health signal for the outbox pattern but is expensive to track on every write/publish. Sampling on OTel's collection cadence (typically 10–60 s) is the right granularity. Adding `GetPendingCountAsync` to the interface is preferable to reading the existing `GetUnpublishedAsync` (which materialises rows). The `.GetAwaiter().GetResult()` is acceptable inside `ObservableInstrument` callbacks — OTel calls these synchronously and infrequently; we accept the brief block over building an async observable shim.
 
-**Alternative considered:** Accept `Meter` directly instead of `IMeterFactory`. Rejected: callers would have to manage meter lifetime and naming themselves; `IMeterFactory` handles scoping and allows the OTel SDK to intercept creation.
+**Alternative considered:** Track depth via deltas (increment on write, decrement on publish). Rejected — fragile under crashes, claim-revert races, and external writes (e.g., manual SQL inserts).
 
-### D3: Meter name `"RayTree"`, instrument names follow `raytree.*` convention
+### D3: Two duration measurements per publish — single-attempt and attempts-to-success
 
-**Choice:** Single meter named `"RayTree"` (version taken from assembly). Instrument names: `raytree.outbox.messages.published`, `raytree.outbox.messages.failed`, `raytree.outbox.batch.size`, `raytree.outbox.publish.duration`, `raytree.outbox.records.cleaned`, `raytree.outbox.stale_unpublished.removed`, `raytree.subscriber.messages.processed`, `raytree.subscriber.messages.deduplicated`, `raytree.subscriber.messages.skipped`, `raytree.subscriber.handler.failures`, `raytree.subscriber.handler.retries`, `raytree.subscriber.processing.duration`.
+**Choice:** `raytree.outbox.publish.duration` records the time of each single publish attempt (excluding inter-retry sleeps). `raytree.outbox.publish.attempts` is a histogram recording the number of attempts taken to succeed (1 on first-try success, 2 if retried once, etc.). Failed publishes do not record an attempts value (they increment `raytree.outbox.messages.failed` instead).
 
-**Rationale:** Dot-separated hierarchical names match OTel semantic conventions. A single meter name makes it easy for users to opt in: `AddMeter("RayTree")`.
+**Rationale:** A combined "wall time including retries" histogram conflates a slow broker with rapid retries — operators can't tell which is happening. Two instruments give an unambiguous picture. The same pattern applies to subscriber handlers: `raytree.subscriber.processing.duration` measures a single attempt, `raytree.subscriber.handler.attempts` is the retry-shape histogram.
 
-### D4: `RayTree.Hosting` gets `AddRayTreeMetrics` extension, no new package
+### D4: Lag metrics use `change.Timestamp` and `envelope.Timestamp` as t₀
 
-**Choice:** Add a static `AddRayTreeMetrics(this IMetricsBuilder builder)` extension in `src/RayTree.Hosting` that calls `builder.AddMeter("RayTree")`. This is a thin pass-through — no OTel SDK dependency in `RayTree.Hosting` itself. The user's application project already references OTel.
+**Choice:** `raytree.outbox.lag.duration` = `DateTime.UtcNow - change.Timestamp` at publish time. `raytree.subscriber.lag.duration` = `DateTime.UtcNow - envelope.Timestamp` at handler-completion time. Both in seconds.
 
-**Rationale:** Keeps `RayTree.Hosting` dependency-light. The extension just exposes the meter name as a constant so callers don't hard-code it. If the user doesn't use OTel they can skip the call entirely — metrics are emitted regardless and silently no-op.
+**Rationale:** These are the timestamps already on the wire — no extra clocks to wire up. They expose the full pipeline delay an external consumer sees. `change.Timestamp` is set on outbox write, `envelope.Timestamp` is copied from it at publish time, so subscriber lag includes both outbox dwell and broker transit.
 
-**Alternative considered:** New `RayTree.OpenTelemetry` package. Rejected: one trivial method doesn't warrant a new package; the hosting package already exists and is the natural home for wiring.
+**Caveat:** Cross-clock drift between writer host and publisher host will distort the lag value. Acceptable for monitoring SLO trends, not for sub-second precision.
+
+### D5: Payload size measured on compressed bytes at publish boundary
+
+**Choice:** `raytree.outbox.payload.size` records `envelope.Payload.Length` bytes after compression, tagged with `entity_type` and `change_type`.
+
+**Rationale:** Compressed size is what reaches the broker and matters for network/queue pressure. Pre-compression size is recoverable from compression ratio measurements only if needed (out of scope here).
+
+### D6: Histograms have explicit boundaries via `View` documentation, not registration
+
+**Choice:** Do not register custom `View`s in core. Document recommended bucket boundaries in the hosting extension's XML doc (e.g., "for `*.duration` metrics, configure `MetricStreamConfiguration` with buckets `[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10]`").
+
+**Rationale:** Histogram bucket choice is deployment-specific (high-throughput latency vs. long-tail batch processing). Hardcoding views in a library forces wrong defaults. OTel's default exponential histogram bucketing works adequately out of the box.
+
+### D7: Builder integration — additive nullable parameter, default constructed in `Build()`
+
+**Choice:** `ChangeTrackingBuilder`, `ChangePublisherBuilder`, `ChangeSubscriberBuilder` get a `UseMeter(RayTreeMeter)` configuration method (optional). If not called, `Build()` constructs a fresh `RayTreeMeter` and passes it to the runtime services. The meter is owned by the tracker and disposed in `EntityChangeTracker.Dispose`.
+
+**Rationale:** No constructor signature break. The `UseMeter` opt-in lets tests inject a meter scoped to the test (so `MeterListener` doesn't catch cross-test measurements). Default construction keeps the zero-config path simple.
 
 ## Risks / Trade-offs
 
-- **Constructor signature growth** — `OutboxPublisherService` and `ChangeSubscriber` gain a `RayTreeMeter` parameter. Any third-party code constructing these directly will break. Mitigation: these classes are public but their constructors are builder-mediated in all documented usage; the change is additive (not removing existing parameters).
-- **`NullMeterFactory` availability** — `NullMeterFactory.Instance` requires `Microsoft.Extensions.Diagnostics` which is not explicitly listed in `Directory.Packages.props`. Mitigation: it is already pulled in transitively via `Microsoft.Extensions.Hosting`; add an explicit version pin to make the dependency visible and stable.
-- **Instrument cardinality** — `entity_type` and `change_type` tags are low-cardinality by design (bounded by the number of registered entity types and the three `ChangeType` values). No per-message attributes are added.
-- **Duration measurement accuracy** — `OutboxPublisherService.PublishWithRetryAsync` measures total wall time including retries. This is intentional: it reflects the operator-visible cost of publishing one change. A separate retry count instrument provides the breakdown.
+- **Observable-gauge synchronous DB call.** Sampling pending-count from PostgreSQL on every OTel collection tick adds a `SELECT count(*) WHERE published = FALSE` to the workload. The partial index makes this O(unpublished rows), which is bounded by `BatchSize`-ish under healthy operation. Mitigation: document that operators should configure their OTel collection interval ≥ 10 s; if the gauge becomes hot, switch to a cached value refreshed by the publisher loop.
+- **Clock-drift in lag metrics.** Cross-host UTC skew biases lag. Mitigation: documented as a caveat; lag is for trend monitoring, not absolute SLOs.
+- **`MeterListener` test isolation.** Tests using `MeterListener` will see measurements from any meter sharing the same name. Mitigation: `UseMeter` in tests allows passing a meter with a unique per-test name; tests filter their listener on that meter instance.
+- **Cardinality from `change_type` tag.** `ChangeType` has three values (Insert/Update/Delete); combined with entity types, total series count is bounded by `3 × #entity_types`. Safe.
 
 ## Migration Plan
 
-1. Add `Microsoft.Extensions.Diagnostics` pin to `Directory.Packages.props` (explicit, already transitively present).
-2. Add `RayTreeMeter` to `RayTree.Core`.
-3. Update `ChangePublisher`, `ChangeTrackingBuilder`, `ChangePublisherBuilder`, `ChangeSubscriberBuilder` constructors — nullable parameter, backward-compatible.
-4. Instrument `OutboxPublisherService` and `ChangeSubscriber`.
-5. Add `AddRayTreeMetrics` to `RayTree.Hosting`.
-6. Add unit tests using `MeterListener`.
+1. Add `IOutbox.GetPendingCountAsync` to the abstraction and to `InMemoryOutbox` + `PostgreSqlOutbox`.
+2. Add `RayTreeMeter` in `RayTree.Core/Telemetry/`.
+3. Wire `UseMeter` through builders; construct default meter in `Build()`.
+4. Instrument `EntityChangeTracker.TrackXxxAsync`, `OutboxPublisherService`, `ChangeSubscriber`.
+5. Add `AddRayTreeMetrics` extension in `RayTree.Hosting`.
+6. Add `MeterListener`-based unit tests.
 
-No schema migrations, no config changes, no rollback needed — metrics emission is purely additive and silently inactive when no listener is registered.
+No data migrations, no broker-format changes, no rollback steps — metrics are purely additive and silently inactive when no listener attaches.
 
 ## Open Questions
 
-*(none — all decisions made above)*
+*(none — all decisions made)*
