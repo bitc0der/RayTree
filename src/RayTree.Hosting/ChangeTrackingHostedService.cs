@@ -51,18 +51,17 @@ public class ChangeTrackingHostedService : IHostedService
         // Task 4.1 — Isolated-mode: one loop per (entity, handlerName)
         // Task 4.3 — Information-level logging per started loop
         var isolatedQueues = subscriber.IsolatedQueues;
-        foreach (var ((entityType, handlerName), consumer) in isolatedQueues)
+        foreach (var (key, consumer) in isolatedQueues)
         {
             _logger.LogInformation(
                 "Starting Isolated-mode consumer loop for {EntityType}/{HandlerName}",
-                entityType.Name, handlerName);
+                key.EntityType.Name, key.HandlerName);
             // Capture loop variables
-            var capturedEntityType  = entityType;
-            var capturedHandlerName = handlerName;
-            var capturedConsumer    = consumer;
+            var capturedKey      = key;
+            var capturedConsumer = consumer;
             _consumeTasks.Add(Task.Run(
                 () => subscriber.ConsumeIsolatedFromConsumerAsync(
-                    capturedConsumer, capturedEntityType, capturedHandlerName, ct),
+                    capturedConsumer, capturedKey.EntityType, capturedKey.HandlerName, ct),
                 ct));
         }
 

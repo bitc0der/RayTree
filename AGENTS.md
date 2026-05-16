@@ -142,7 +142,7 @@ Integration tests are only required when changing PostgreSQL, Kafka, or RabbitMQ
 - Prefer interfaces over abstract classes for plugin contracts.
 - Constructor injection for all dependencies. No service locator, no `static` state, no hidden dependencies.
 - Avoid `object` parameters in public APIs where possible — use generics or specific types.
-- Document public APIs with XML doc comments (`/// <summary>`) — especially parameters, return values, and exceptions thrown.
+- Document public APIs with XML doc comments (`/// <summary>`) — especially parameters, return values, and exceptions thrown. But keep doc short.
 - Return `IAsyncEnumerable<T>` for streaming results. Use `IEnumerable<T>` only when lazy streaming is intentional.
 
 ## AI Coding Agent Rules

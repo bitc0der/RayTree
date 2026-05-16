@@ -80,8 +80,8 @@ public class IsolatedHandlerDispatchTests
 
         var keys = subscriber.IsolatedQueues.Keys.ToList();
         Assert.That(keys, Has.Count.EqualTo(2));
-        Assert.That(keys, Contains.Item((typeof(Order), "read-model")));
-        Assert.That(keys, Contains.Item((typeof(Order), "notifier")));
+        Assert.That(keys, Contains.Item(new EntityHandlerKey(typeof(Order), "read-model")));
+        Assert.That(keys, Contains.Item(new EntityHandlerKey(typeof(Order), "notifier")));
     }
 
     // -------------------------------------------------------------------------

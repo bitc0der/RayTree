@@ -29,11 +29,11 @@ public class ChangeSubscriber : IDisposable
     private readonly Dictionary<Type, IQueueConsumer> _queues = new();
     private readonly Dictionary<Type, SubscriberOptions> _entityOptions = new();
 
-    // Isolated-mode storage (keyed by (entity type, handler name))
+    // Isolated-mode storage (keyed by EntityHandlerKey)
     // Task 3.1 — consumer per (entity, handlerName)
-    private readonly Dictionary<(Type EntityType, string HandlerName), IQueueConsumer> _isolatedQueues = new();
+    private readonly Dictionary<EntityHandlerKey, IQueueConsumer> _isolatedQueues = new();
     // Task 3.2 — handlers per (entity, handlerName)
-    private readonly Dictionary<(Type EntityType, string HandlerName), List<HandlerRegistration>> _isolatedHandlers = new();
+    private readonly Dictionary<EntityHandlerKey, List<HandlerRegistration>> _isolatedHandlers = new();
 
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
@@ -65,11 +65,11 @@ public class ChangeSubscriber : IDisposable
     public IReadOnlyDictionary<Type, IQueueConsumer> Queues => _queues;
 
     /// <summary>
-    /// Isolated-mode consumers, keyed by <c>(entity type, handler name)</c>.
+    /// Isolated-mode consumers, keyed by <see cref="EntityHandlerKey"/>.
     /// Exposed for <see cref="RayTree.Hosting.ChangeTrackingHostedService"/> to start one
     /// consume loop per entry. Task 3.6.
     /// </summary>
-    public IReadOnlyDictionary<(Type EntityType, string HandlerName), IQueueConsumer> IsolatedQueues
+    public IReadOnlyDictionary<EntityHandlerKey, IQueueConsumer> IsolatedQueues
         => _isolatedQueues;
 
     public ChangeSubscriber ForEntity<TEntity>()
@@ -112,7 +112,7 @@ public class ChangeSubscriber : IDisposable
     internal void RegisterIsolatedConsumer<TEntity>(string handlerName, IQueueConsumer consumer)
         where TEntity : class
     {
-        _isolatedQueues[(typeof(TEntity), handlerName)] = consumer;
+        _isolatedQueues[new EntityHandlerKey(typeof(TEntity), handlerName)] = consumer;
     }
 
     /// <summary>
@@ -127,7 +127,7 @@ public class ChangeSubscriber : IDisposable
         ChangeHandlerAsync<TEntity> handler)
         where TEntity : class
     {
-        var key = (typeof(TEntity), handlerName);
+        var key = new EntityHandlerKey(typeof(TEntity), handlerName);
         if (!_isolatedHandlers.TryGetValue(key, out var list))
         {
             list = new List<HandlerRegistration>();
@@ -342,7 +342,7 @@ public class ChangeSubscriber : IDisposable
             return;
         }
 
-        var key = (entityType, handlerName);
+        var key = new EntityHandlerKey(entityType, handlerName);
         if (!_isolatedHandlers.TryGetValue(key, out var allHandlers) || allHandlers.Count == 0)
         {
             _meter.SubscriberSkipped.Add(1, entityTag, changeTag, RayTreeMeter.ReasonTag("no_handler"));
