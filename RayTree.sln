@@ -70,6 +70,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution items", "Solution 
 		.github\workflows\ci.yml = .github\workflows\ci.yml
 		CLAUDE.md = CLAUDE.md
 		CHANGELOG.md = CHANGELOG.md
+		SECURITY.md = SECURITY.md
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RayTree.OpenTelemetry", "src\RayTree.OpenTelemetry\RayTree.OpenTelemetry.csproj", "{6C4F4A20-FF40-4274-AF3B-000EC86ED5D6}"
