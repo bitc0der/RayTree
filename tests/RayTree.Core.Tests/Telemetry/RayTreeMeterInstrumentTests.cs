@@ -33,7 +33,7 @@ public class RayTreeMeterInstrumentTests
     public void AllDurationInstruments_HaveUnitSeconds()
     {
         using var meter = new RayTreeMeter();
-        using var collector = new InstrumentCollector(meter.GetInternalMeter());
+        using var collector = new InstrumentCollector(meter.InternalMeter);
 
         var durations = collector.Instruments.Where(i => i.Name.EndsWith(".duration")).ToList();
 
@@ -46,7 +46,7 @@ public class RayTreeMeterInstrumentTests
     public void PayloadSizeInstrument_HasUnitBytes()
     {
         using var meter = new RayTreeMeter();
-        using var collector = new InstrumentCollector(meter.GetInternalMeter());
+        using var collector = new InstrumentCollector(meter.InternalMeter);
 
         var payload = collector.Instruments.SingleOrDefault(i => i.Name == "raytree.outbox.payload.size");
 
@@ -58,7 +58,7 @@ public class RayTreeMeterInstrumentTests
     public void Meter_IsNamedRayTree()
     {
         using var meter = new RayTreeMeter();
-        Assert.That(meter.GetInternalMeter().Name, Is.EqualTo("RayTree"));
+        Assert.That(meter.InternalMeter.Name, Is.EqualTo("RayTree"));
         Assert.That(RayTreeMeter.MeterName, Is.EqualTo("RayTree"));
     }
 }

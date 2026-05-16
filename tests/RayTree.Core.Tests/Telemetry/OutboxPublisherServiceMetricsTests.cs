@@ -105,6 +105,57 @@ public class OutboxPublisherServiceMetricsTests
     }
 
     [Test]
+    public async Task PublishWithRetry_OnExhaustion_RecordsAttemptsAndFailureDurations()
+    {
+        // Spec: the attempts histogram is recorded for every completed publish — success OR
+        // failure. The publish.duration histogram is recorded per attempt regardless of
+        // outcome. This test exercises the failure path and asserts BOTH instruments fire,
+        // not just the failed counter.
+        var queue = new Mock<IQueuePublisher>();
+        queue.Setup(q => q.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        queue.Setup(q => q.PublishAsync(It.IsAny<MessageEnvelope>(), It.IsAny<CancellationToken>()))
+             .ThrowsAsync(new InvalidOperationException("publish-broken"));
+
+        var (publisher, meter, collector, outbox) = Build(queue.Object);
+        using var _meter = meter; using var _collector = collector; using var _publisher = publisher;
+
+        var options = new OutboxPublisherOptions
+        {
+            BatchSize        = 1,
+            PollingInterval  = TimeSpan.FromMilliseconds(50),
+            MaxRetryCount    = 2,
+            RetryDelay       = TimeSpan.FromMilliseconds(1),
+            MaxPublishConcurrency = 1
+        };
+
+        await outbox.WriteAsync(new EntityChange<Sample>
+        {
+            EntityType    = typeof(Sample).FullName!,
+            EntityId      = "1",
+            ChangeType    = ChangeType.Insert,
+            CorrelationId = Guid.NewGuid(),
+            State         = new Sample { Id = 1 }
+        });
+
+        using var svc = new OutboxPublisherService(publisher, typeof(Sample), options, NullLoggerFactory.Instance, meter);
+        await svc.StartAsync();
+        await Task.Delay(300);
+        await svc.StopAsync();
+
+        // Attempts must reflect the exhaustion value, not just success cases.
+        var attempts = collector.Get("raytree.outbox.publish.attempts");
+        Assert.That(attempts, Is.Not.Empty, "attempts histogram must record on the failure path");
+        Assert.That(attempts.Select(m => (int)m.Value), Has.Some.EqualTo(options.MaxRetryCount));
+
+        // Per-attempt duration must be recorded even when each attempt threw.
+        var durations = collector.Get("raytree.outbox.publish.duration");
+        Assert.That(durations.Count, Is.GreaterThanOrEqualTo(options.MaxRetryCount),
+            "publish.duration must record one observation per attempt (success or failure)");
+        foreach (var d in durations)
+            Assert.That(d.Value, Is.GreaterThanOrEqualTo(0));
+    }
+
+    [Test]
     public async Task ProcessBatch_RecordsBatchSizeHistogram()
     {
         var (publisher, meter, collector, outbox) = Build(new InMemoryQueue());

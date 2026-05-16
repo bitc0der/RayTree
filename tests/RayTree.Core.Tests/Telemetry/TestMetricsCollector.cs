@@ -18,7 +18,7 @@ internal sealed class TestMetricsCollector : IDisposable
     public TestMetricsCollector(RayTreeMeter meter)
     {
         _meter = meter;
-        var ownerMeter = _meter.GetInternalMeter();
+        var ownerMeter = _meter.InternalMeter;
         _listener = new MeterListener
         {
             // Filter at subscription time to this specific meter instance — parallel tests
@@ -76,13 +76,4 @@ internal sealed class TestMetricsCollector : IDisposable
     public void Dispose() => _listener.Dispose();
 
     internal sealed record RecordedMeasurement(string Name, double Value, IReadOnlyDictionary<string, object?> Tags, string? Unit);
-}
-
-internal static class RayTreeMeterTestExtensions
-{
-    private static readonly System.Reflection.FieldInfo MeterField =
-        typeof(RayTreeMeter).GetField("_meter",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-
-    internal static Meter GetInternalMeter(this RayTreeMeter wrapper) => (Meter)MeterField.GetValue(wrapper)!;
 }

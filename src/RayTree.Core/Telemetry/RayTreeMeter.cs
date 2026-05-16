@@ -18,6 +18,14 @@ public sealed class RayTreeMeter : IDisposable
     public const string MeterName = "RayTree";
 
     private readonly Meter _meter;
+
+    /// <summary>
+    /// The underlying <see cref="Meter"/>. Exposed to test assemblies via
+    /// <c>InternalsVisibleTo</c> so they can scope a <see cref="MeterListener"/> to one
+    /// tracker without reaching for reflection.
+    /// </summary>
+    internal Meter InternalMeter => _meter;
+
     private readonly object _gaugeGate = new();
     private Func<IEnumerable<(Type entityType, IOutbox outbox)>>? _pendingGaugeSource;
 

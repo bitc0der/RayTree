@@ -80,6 +80,44 @@ public class ChangeSubscriberMetricsTests
     }
 
     [Test]
+    public async Task ProcessMessageAsync_HandlerAlwaysFails_RecordsAttemptsFailuresAndProcessingDurations()
+    {
+        // Spec: when a handler exhausts all retries, the attempts histogram, the failures
+        // counter, AND the per-attempt processing.duration histogram all fire. This is the
+        // counterpart to the success-after-retry test and locks down the recently added
+        // review fix that records attempts on the failure path too.
+        using var meter = new RayTreeMeter();
+        using var collector = new TestMetricsCollector(meter);
+
+        var options = new SubscriberOptions
+        {
+            MaxRetries    = 2,
+            RetryDelay    = TimeSpan.FromMilliseconds(1),
+            SkipOnFailure = true   // swallow the throw so the test focuses on metrics
+        };
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, meter, options: options);
+        subscriber.OnChange<Sample>(null, (_, _) => throw new InvalidOperationException("permanent"));
+
+        await subscriber.ProcessMessageAsync(EnvelopeFor<Sample>(ChangeType.Insert));
+
+        // attempts histogram fires once with the final attempt count (1 initial + MaxRetries).
+        var attempts = collector.Get("raytree.subscriber.handler.attempts");
+        Assert.That(attempts, Is.Not.Empty);
+        Assert.That(attempts.Select(m => (int)m.Value), Has.Some.EqualTo(options.MaxRetries + 1));
+
+        // failures counter incremented exactly once with both tags.
+        var failures = collector.Get("raytree.subscriber.handler.failures");
+        Assert.That(failures, Has.Count.EqualTo(1));
+        Assert.That(failures[0].Tags["entity_type"], Is.EqualTo("Sample"));
+        Assert.That(failures[0].Tags["change_type"], Is.EqualTo("Insert"));
+
+        // processing.duration recorded for every attempt regardless of outcome.
+        var durations = collector.Get("raytree.subscriber.processing.duration");
+        Assert.That(durations.Count, Is.GreaterThanOrEqualTo(options.MaxRetries + 1),
+            "processing.duration must record one observation per handler attempt");
+    }
+
+    [Test]
     public async Task ProcessMessageAsync_RecordsLagDurationApproximatelyEqualToAge()
     {
         using var meter = new RayTreeMeter();
