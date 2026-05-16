@@ -12,6 +12,7 @@ A modular .NET 8.0 entity change tracking system with outbox pattern support, qu
 - **In-Memory Testing** - Full in-memory implementation for development and testing
 - **Auto-Initialization** - Automatic database schema initialization on `Build()` / `BuildAsync()`
 - **Structured Logging** - `Microsoft.Extensions.Logging` throughout; pass `ILoggerFactory` to `ChangeTrackingBuilder` or let `AddChangeTracking` wire it from DI automatically
+- **OpenTelemetry Metrics** - `System.Diagnostics.Metrics` instruments on a `"RayTree"` meter for outbox writes, publish/subscribe latency, payload size, queue depth, and retry shape. Zero OTel SDK dependency unless the optional `RayTree.OpenTelemetry` package is referenced. See [OpenTelemetry Metrics Guide](opentelemetry-metrics.md).
 
 ## Quick Start
 

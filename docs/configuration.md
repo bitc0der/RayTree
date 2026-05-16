@@ -370,6 +370,36 @@ When using the `.UseKafka(...)` / `.UseRabbitMq(...)` extension methods inside a
 | `RabbitMqConsumer` | `Warning` | Message processing error (before requeue) |
 | `OutboxCleanupService` | `Information` | Cleanup run total deleted count |
 
+## Observability — OpenTelemetry Metrics
+
+RayTree emits `System.Diagnostics.Metrics` instruments on a `Meter` named `"RayTree"` (counters, histograms, and an observable gauge for outbox depth). Instrument calls are silent no-ops when no listener is attached, so there is no overhead for consumers that opt out.
+
+### Default (built-in meter)
+
+`ChangeTrackingBuilder` creates a `RayTreeMeter` automatically and `EntityChangeTracker` disposes it. To collect the metrics, attach a `MeterListener` to the meter named `"RayTree"`, or use the OTel SDK via the `RayTree.OpenTelemetry` package:
+
+```csharp
+services.AddOpenTelemetry()
+    .WithMetrics(b => b
+        .AddRayTreeMetrics()
+        .AddPrometheusExporter());
+```
+
+### Custom meter
+
+Pass a `RayTreeMeter` instance to share it across trackers or to control its lifetime:
+
+```csharp
+var meter = new RayTreeMeter();
+var tracker = new ChangeTrackingBuilder(loggerFactory)
+    .UseMeter(meter)
+    .ForEntity<Order>(/* ... */)
+    .Build();
+// Caller-supplied meter is NOT disposed by the tracker.
+```
+
+Full instrument inventory, unit conventions, suggested bucket boundaries, and sample dashboard queries are in [opentelemetry-metrics.md](opentelemetry-metrics.md).
+
 ## Cleanup
 
 ```csharp
