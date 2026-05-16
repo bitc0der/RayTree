@@ -91,6 +91,13 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     /// When provided (e.g., bound from <c>appsettings.json</c> via <c>IOptions</c>), takes
     /// precedence over options configured via <see cref="UseOptions"/>.
     /// </param>
+    /// <remarks>
+    /// When <see cref="UseMeter"/> has not been called, this method creates a default
+    /// <see cref="RayTreeMeter"/> that is passed to <see cref="ChangeSubscriber"/>. The subscriber
+    /// does not dispose the meter; callers using this builder standalone (not via
+    /// <see cref="ChangeTrackingBuilder"/>) must call <see cref="UseMeter"/> and manage the
+    /// meter's lifetime themselves to avoid a resource leak.
+    /// </remarks>
     public ChangeSubscriber Build(
         IDeduplicationStore? dedupStoreOverride = null,
         SubscriberOptions? optionsOverride = null)

@@ -101,6 +101,13 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// When <see cref="UseMeter"/> has not been called, this method creates a default
+    /// <see cref="RayTreeMeter"/> that is passed to <see cref="ChangePublisher"/>. The publisher
+    /// does not dispose the meter; callers using this builder standalone (not via
+    /// <see cref="ChangeTrackingBuilder"/>) must call <see cref="UseMeter"/> and manage the
+    /// meter's lifetime themselves to avoid a resource leak.
+    /// </remarks>
     public ChangePublisher Build()
     {
         _built = true;

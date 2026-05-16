@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -8,6 +9,7 @@ using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Plugins.PostgreSQL.Outbox.Notification;
 
@@ -16,6 +18,7 @@ public class NotificationBasedPublisher : IDisposable
     private readonly ChangePublisher _publisher;
     private readonly NotificationBasedPublisherOptions _options;
     private readonly ILogger<NotificationBasedPublisher> _logger;
+    private readonly RayTreeMeter _meter;
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _notificationSemaphore;
     private NpgsqlConnection? _connection;
@@ -38,10 +41,11 @@ public class NotificationBasedPublisher : IDisposable
         NotificationBasedPublisherOptions options,
         ILoggerFactory loggerFactory)
     {
-        _publisher            = publisher    ?? throw new ArgumentNullException(nameof(publisher));
-        _options              = options      ?? throw new ArgumentNullException(nameof(options));
-        _logger               = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
-                                    .CreateLogger<NotificationBasedPublisher>();
+        _publisher             = publisher    ?? throw new ArgumentNullException(nameof(publisher));
+        _options               = options      ?? throw new ArgumentNullException(nameof(options));
+        _logger                = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
+                                     .CreateLogger<NotificationBasedPublisher>();
+        _meter                 = publisher.Meter;   // shared with the ChangePublisher that owns outboxes
         _notificationSemaphore = new SemaphoreSlim(options.MaxConcurrentNotifications,
                                                    options.MaxConcurrentNotifications);
     }
@@ -162,18 +166,23 @@ public class NotificationBasedPublisher : IDisposable
             IOutbox? outbox = null;
             var claimed = false;
             var claimedId = 0L;
+            // Hoisted so the catch block can emit publish-duration even on failure.
+            // sw is non-null only if PublishChangeAsync was actually reached.
+            Stopwatch? sw = null;
+            Type? publishEntityType = null;
+            EntityChange? publishChange = null;
             try
             {
                 var payload = JsonSerializer.Deserialize<NotificationPayload>(e.Payload);
                 if (payload == null) return;
 
-                var entityType = Type.GetType(payload.EntityType);
-                if (entityType == null) return;
+                publishEntityType = Type.GetType(payload.EntityType);
+                if (publishEntityType == null) return;
 
-                outbox         = _publisher.GetOutbox(entityType);
-                var publisher  = _publisher.GetPublisher(entityType);
-                var serializer = _publisher.GetSerializer(entityType);
-                var compressor = _publisher.GetCompressor(entityType);
+                outbox         = _publisher.GetOutbox(publishEntityType);
+                var publisher  = _publisher.GetPublisher(publishEntityType);
+                var serializer = _publisher.GetSerializer(publishEntityType);
+                var compressor = _publisher.GetCompressor(publishEntityType);
 
                 // Atomically claim before publishing to prevent races with the fallback
                 // polling loop and OutboxPublisherService.
@@ -186,19 +195,32 @@ public class NotificationBasedPublisher : IDisposable
                 claimed   = true;
                 claimedId = payload.Id;
 
-                var change = await GetByIdAsync(outbox, entityType, payload.Id, _cts.Token);
-                if (change == null)
+                publishChange = await GetByIdAsync(outbox, publishEntityType, payload.Id, _cts.Token);
+                if (publishChange == null)
                 {
                     await outbox.RevertClaimAsync(claimedId, CancellationToken.None);
                     claimed = false;
                     return;
                 }
 
-                await PublishChangeAsync(change, entityType, publisher, serializer, compressor, _cts.Token);
+                sw = Stopwatch.StartNew();
+                await PublishChangeAsync(publishChange, publishEntityType, publisher, serializer, compressor, _cts.Token);
+                sw.Stop();
+
+                // NOTIFY fast path: single attempt per notification.
+                _meter.RecordPublishSuccess(publishEntityType, publishChange.ChangeType,
+                    durationSeconds: sw.Elapsed.TotalSeconds,
+                    lagSeconds:      (DateTime.UtcNow - publishChange.Timestamp).TotalSeconds);
                 claimed = false;
             }
             catch (Exception ex)
             {
+                if (sw != null && publishEntityType != null && publishChange != null)
+                {
+                    sw.Stop();
+                    _meter.RecordPublishFailure(publishEntityType, publishChange.ChangeType, sw.Elapsed.TotalSeconds);
+                }
+
                 if (claimed && outbox != null)
                     await outbox.RevertClaimAsync(claimedId, CancellationToken.None);
 
@@ -211,7 +233,7 @@ public class NotificationBasedPublisher : IDisposable
         });
     }
 
-    private static async Task PublishChangeAsync(
+    private async Task PublishChangeAsync(
         EntityChange change,
         Type entityType,
         IQueuePublisher publisher,
@@ -237,6 +259,8 @@ public class NotificationBasedPublisher : IDisposable
             Payload       = compressed.ToArray()
         };
 
+        _meter.RecordPayloadSize(entityType, change.ChangeType, envelope.Payload.Length);
+
         await publisher.PublishAsync(envelope, ct);
     }
 
@@ -249,7 +273,8 @@ public class NotificationBasedPublisher : IDisposable
             var publisher  = _publisher.GetPublisher(entityType);
             var serializer = _publisher.GetSerializer(entityType);
             var compressor = _publisher.GetCompressor(entityType);
-            var changes    = await GetUnpublishedAsync(outbox, entityType, 100, cancellationToken);
+            var changes = await GetUnpublishedAsync(outbox, entityType, 100, cancellationToken);
+            _meter.RecordBatchSize(entityType, changes.Count);
 
             await Parallel.ForEachAsync(changes,
                 new ParallelOptions
@@ -260,12 +285,21 @@ public class NotificationBasedPublisher : IDisposable
                 async (change, token) =>
                 {
                     if (!await outbox.TryClaimForPublishingAsync(change.Id, token)) return;
+
+                    var sw = Stopwatch.StartNew();
                     try
                     {
                         await PublishChangeAsync(change, entityType, publisher, serializer, compressor, token);
+                        sw.Stop();
+                        // Fallback polling path: single attempt per record.
+                        _meter.RecordPublishSuccess(entityType, change.ChangeType,
+                            durationSeconds: sw.Elapsed.TotalSeconds,
+                            lagSeconds:      (DateTime.UtcNow - change.Timestamp).TotalSeconds);
                     }
                     catch (Exception ex)
                     {
+                        sw.Stop();
+                        _meter.RecordPublishFailure(entityType, change.ChangeType, sw.Elapsed.TotalSeconds);
                         await outbox.RevertClaimAsync(change.Id, CancellationToken.None);
                         _logger.LogWarning(ex,
                             "Failed to publish change {ChangeId} for {EntityType}, reverted claim; will retry",

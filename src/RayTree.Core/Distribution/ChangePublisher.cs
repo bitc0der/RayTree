@@ -28,10 +28,11 @@ public sealed class ChangePublisher : IDisposable
 
     public OutboxPublisherOptions Options { get; } = new();
 
-    /// <summary>The meter used by this publisher and its background services. Internal because
-    /// the meter is an instrumentation handle, not an extension surface — consumers that want
-    /// to share a meter should inject one via <c>ChangeTrackingBuilder.UseMeter(...)</c>.</summary>
-    internal RayTreeMeter Meter => _meter;
+    /// <summary>The meter used by this publisher and its background services.
+    /// First-party plugin assemblies (e.g. <c>RayTree.Plugins.PostgreSQL</c>) may read this
+    /// property to obtain the shared meter; use the public emission methods on
+    /// <see cref="RayTreeMeter"/> rather than its internal instrument properties.</summary>
+    public RayTreeMeter Meter => _meter;
 
     public ChangePublisher(ILoggerFactory loggerFactory, RayTreeMeter meter)
     {

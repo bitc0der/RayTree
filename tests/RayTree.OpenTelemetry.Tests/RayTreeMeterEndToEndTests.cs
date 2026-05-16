@@ -65,13 +65,14 @@ public class RayTreeMeterEndToEndTests
         using var meter = new RayTreeMeter();
         var names = EnumerateInstrumentNames(meter);
 
-        // Sanity: the published RayTreeMeter surface is 14 instruments (11 counters/histograms
-        // on the publisher/subscriber sides + 1 observable gauge + 2 attempts histograms).
+        // Sanity: the published RayTreeMeter surface is 18 instruments:
+        //   5 publisher counters + 5 publisher histograms + 1 observable gauge
+        //   + 4 subscriber counters + 3 subscriber histograms = 18 total.
         // Lock the count down so a future rename or accidental deletion of an instrument
         // (in particular the observable gauge, which doesn't surface to call sites) is caught
         // here rather than silently changing Prometheus exposition.
-        Assert.That(names, Has.Count.GreaterThanOrEqualTo(14),
-            $"Expected at least 14 RayTree instruments, found {names.Count}: {string.Join(", ", names)}");
+        Assert.That(names, Has.Count.GreaterThanOrEqualTo(18),
+            $"Expected at least 18 RayTree instruments, found {names.Count}: {string.Join(", ", names)}");
         Assert.That(names, Has.Member("raytree.outbox.pending"),
             "the observable gauge must be present in the published instrument set");
 

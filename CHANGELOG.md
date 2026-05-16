@@ -24,7 +24,7 @@ and the full set of 14 instruments:
 
 | Instrument | Kind | Unit | Source |
 |---|---|---|---|
-| `raytree.outbox.writes` | Counter | `{writes}` | `OutboxPublisherService` |
+| `raytree.outbox.writes` | Counter | `{writes}` | `EntityChangeTracker.TrackXxxAsync` |
 | `raytree.outbox.messages.published` | Counter | `{messages}` | `OutboxPublisherService` |
 | `raytree.outbox.messages.failed` | Counter | `{messages}` | `OutboxPublisherService` |
 | `raytree.outbox.records.cleaned` | Counter | `{records}` | `OutboxPublisherService` |

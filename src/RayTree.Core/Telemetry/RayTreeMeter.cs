@@ -150,6 +150,13 @@ public sealed class RayTreeMeter : IDisposable
 
             if (count is null)
             {
+                // _gaugeGate is intentionally released before the DB call. Holding a lock
+                // across a synchronous GetAwaiter().GetResult() call risks priority inversion
+                // with threads that also acquire _gaugeGate (RegisterPendingGauge). The
+                // trade-off: two concurrent OTel collection callbacks could both miss the cache
+                // and both query the DB for the same entity type. The result is two redundant
+                // (but correct) DB reads, with last-write-wins on the cache entry. This is
+                // acceptable; the cache is a performance hint, not a correctness constraint.
                 try
                 {
                     // The OTel callback is synchronous; bounded by a partial index in the PG
@@ -169,6 +176,61 @@ public sealed class RayTreeMeter : IDisposable
 
             yield return new Measurement<long>(count.Value, EntityTag(entityType));
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Public emission facade — for first-party plugin assemblies that publish
+    // to the outbox but live outside RayTree.Core (e.g. NotificationBasedPublisher
+    // in RayTree.Plugins.PostgreSQL). Raw instrument properties stay internal;
+    // callers interact with named, semantically meaningful methods.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Records metrics for a successfully completed outbox publish attempt.
+    /// </summary>
+    /// <param name="entityType">The entity type being published.</param>
+    /// <param name="changeType">The type of change (Insert / Update / Delete).</param>
+    /// <param name="durationSeconds">Elapsed wall-clock time of the publish attempt.</param>
+    /// <param name="lagSeconds">Time since the outbox record was written, in seconds.
+    /// Clamped to zero if negative (clock skew).</param>
+    /// <param name="attempts">Total attempts made — 1 for a first-try success.</param>
+    public void RecordPublishSuccess(
+        Type entityType, ChangeType changeType,
+        double durationSeconds, double lagSeconds,
+        int attempts = 1)
+    {
+        var entityTag = EntityTag(entityType);
+        var changeTag = ChangeTag(changeType);
+        OutboxPublishDuration.Record(durationSeconds, entityTag, changeTag);
+        OutboxPublished.Add(1, entityTag, changeTag);
+        OutboxPublishAttempts.Record(attempts, entityTag);
+        OutboxLagDuration.Record(Math.Max(0, lagSeconds), entityTag);
+    }
+
+    /// <summary>
+    /// Records the duration of a failed publish attempt. The caller is responsible for
+    /// reverting the outbox claim so the record can be retried.
+    /// </summary>
+    public void RecordPublishFailure(Type entityType, ChangeType changeType, double durationSeconds)
+    {
+        OutboxPublishDuration.Record(durationSeconds, EntityTag(entityType), ChangeTag(changeType));
+    }
+
+    /// <summary>
+    /// Records the compressed payload byte size for one <c>MessageEnvelope</c>.
+    /// Call after compression, before handing the envelope to the queue publisher.
+    /// </summary>
+    public void RecordPayloadSize(Type entityType, ChangeType changeType, int bytes)
+    {
+        OutboxPayloadSize.Record(bytes, EntityTag(entityType), ChangeTag(changeType));
+    }
+
+    /// <summary>
+    /// Records the number of unpublished records retrieved in one outbox poll batch.
+    /// </summary>
+    public void RecordBatchSize(Type entityType, int count)
+    {
+        OutboxBatchSize.Record(count, EntityTag(entityType));
     }
 
     // -------------------------------------------------------------------------

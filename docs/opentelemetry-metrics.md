@@ -47,7 +47,7 @@ All instruments are tagged with `entity_type`. Counters and histograms tied to a
 | Instrument | Kind | Unit | Tags | Source |
 |---|---|---|---|---|
 | `raytree.outbox.writes` | counter | `{writes}` | `entity_type`, `change_type` | `EntityChangeTracker.TrackXxxAsync` after successful `IOutbox.WriteAsync` |
-| `raytree.outbox.pending` | observable gauge | `{records}` | `entity_type` | `IOutbox.GetPendingCountAsync`, sampled per collection tick, cached for 10 s |
+| `raytree.outbox.pending` | observable gauge | `{messages}` | `entity_type` | `IOutbox.GetPendingCountAsync`, sampled per collection tick, cached for 10 s |
 | `raytree.outbox.messages.published` | counter | `{messages}` | `entity_type`, `change_type` | `OutboxPublisherService` on success |
 | `raytree.outbox.messages.failed` | counter | `{messages}` | `entity_type`, `change_type` | `OutboxPublisherService` after retries exhausted |
 | `raytree.outbox.batch.size` | histogram | `{messages}` | `entity_type` | Size of every batch returned by `GetUnpublishedAsync` |
@@ -65,7 +65,7 @@ All instruments are tagged with `entity_type`. Counters and histograms tied to a
 | `raytree.subscriber.messages.processed` | counter | `{messages}` | `entity_type`, `change_type` | All handlers ran without error |
 | `raytree.subscriber.messages.deduplicated` | counter | `{messages}` | `entity_type`, `change_type` | `CorrelationId` already processed |
 | `raytree.subscriber.messages.skipped` | counter | `{messages}` | `entity_type`, `change_type` (when known), `reason` | `reason="unknown_type"` or `reason="no_handler"` |
-| `raytree.subscriber.handler.failures` | counter | `{handlers}` | `entity_type`, `change_type` | Handler exhausted retries with `SkipOnFailure=false` |
+| `raytree.subscriber.handler.failures` | counter | `{handlers}` | `entity_type`, `change_type` | Handler exhausted all retries (regardless of `SkipOnFailure`) |
 | `raytree.subscriber.handler.attempts` | histogram | `{attempts}` | `entity_type` | Total attempts on every completed dispatch (success **or** failure) |
 | `raytree.subscriber.processing.duration` | histogram | `s` | `entity_type`, `change_type` | Each handler attempt (success or fail) |
 | `raytree.subscriber.lag.duration` | histogram | `s` | `entity_type`, `change_type` | `(now - envelope.Timestamp)` for each successfully dispatched message |
@@ -79,7 +79,7 @@ All instruments are tagged with `entity_type`. Counters and histograms tied to a
 
 ## Pending-gauge sampling
 
-`raytree.outbox.pending` is an observable gauge. Each collection tick the registered callback iterates all registered entity types and calls `IOutbox.GetPendingCountAsync` per type. Results are cached for **10 seconds** to bound the DB round-trips when OTel is configured with a sub-second collection interval. The cache TTL is currently fixed.
+`raytree.outbox.pending` is an observable gauge. Each collection tick the registered callback iterates all registered entity types and calls `IOutbox.GetPendingCountAsync` per type. Results are cached for **10 seconds** (the default) to bound the DB round-trips when OTel is configured with a sub-second collection interval. The cache TTL is configurable via the `RayTreeMeter(TimeSpan pendingCacheTtl)` constructor overload; pass `TimeSpan.Zero` to disable caching entirely.
 
 ## Suggested OTel views (bucket boundaries)
 
