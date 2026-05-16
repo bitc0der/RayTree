@@ -1,5 +1,6 @@
 using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
 using RayTree.Plugins.PostgreSQL.Outbox;
@@ -9,6 +10,7 @@ namespace RayTree.Plugins.PostgreSQL.Tests;
 [NonParallelizable]
 public class PostgreSqlOutboxPendingCountTests : IAsyncDisposable
 {
+    private const string TableName = "pending_count_outbox";
     private readonly IContainer _postgres = PostgresContainerFactory.Create();
     private PostgreSqlOutbox<TestEntity> _outbox = null!;
 
@@ -21,9 +23,19 @@ public class PostgreSqlOutboxPendingCountTests : IAsyncDisposable
         _outbox = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName  = "pending_count_outbox"
+            OutboxTableName  = TableName
         }, NullLoggerFactory.Instance);
         await _outbox.InitializeAsync();
+    }
+
+    [TearDown]
+    public async Task TearDown()
+    {
+        await using var conn = new NpgsqlConnection(_postgres.GetConnectionString());
+        await conn.OpenAsync();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"TRUNCATE TABLE {TableName}";
+        await cmd.ExecuteNonQueryAsync();
     }
 
     public ValueTask DisposeAsync() => _postgres.DisposeAsync();
