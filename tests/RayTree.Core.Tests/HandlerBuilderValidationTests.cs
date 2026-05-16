@@ -130,20 +130,20 @@ public class HandlerBuilderValidationTests
     [Test]
     public void CompileTimeGuard_NamedOverloads_OnlyOnIsolatedBuilder()
     {
-        // IIsolatedHandlerBuilder<T> — named overload (string handlerName + handler) must exist
+        // IIsolatedHandlerBuilder<T> — named overload (string handlerName + handler [+ optional options]) must exist
         var isolatedMethods = typeof(IIsolatedHandlerBuilder<Order>).GetMethods();
         Assert.That(isolatedMethods.Any(m =>
                 m.Name == "OnInsert" &&
-                m.GetParameters().Length == 2 &&
+                m.GetParameters().Length >= 2 &&
                 m.GetParameters()[0].ParameterType == typeof(string)),
-            Is.True, "IIsolatedHandlerBuilder must have named OnInsert(string, handler)");
+            Is.True, "IIsolatedHandlerBuilder must have named OnInsert(string, handler, ...)");
 
         // ISharedHandlerBuilder<T> — named overload must NOT exist
         var sharedMethods = typeof(ISharedHandlerBuilder<Order>).GetMethods();
         Assert.That(sharedMethods.Any(m =>
                 m.Name == "OnInsert" &&
-                m.GetParameters().Length == 2 &&
+                m.GetParameters().Length >= 2 &&
                 m.GetParameters()[0].ParameterType == typeof(string)),
-            Is.False, "ISharedHandlerBuilder must NOT have named OnInsert(string, handler)");
+            Is.False, "ISharedHandlerBuilder must NOT have named OnInsert(string, handler, ...)");
     }
 }

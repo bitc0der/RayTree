@@ -34,6 +34,8 @@ public class ChangeSubscriber : IDisposable
     private readonly Dictionary<EntityHandlerKey, IQueueConsumer> _isolatedQueues = new();
     // Task 3.2 — handlers per (entity, handlerName)
     private readonly Dictionary<EntityHandlerKey, List<HandlerRegistration>> _isolatedHandlers = new();
+    // Per-handler subscriber options (takes precedence over entity-level and global options)
+    private readonly Dictionary<EntityHandlerKey, SubscriberOptions> _isolatedOptions = new();
 
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
@@ -142,6 +144,31 @@ public class ChangeSubscriber : IDisposable
         });
     }
 
+    /// <summary>
+    /// Registers per-handler <see cref="SubscriberOptions"/> for Isolated mode. These options
+    /// take precedence over entity-level and global options when resolving the DOP and retry
+    /// configuration for the named handler's consume loop.
+    /// </summary>
+    internal void RegisterIsolatedOptions<TEntity>(string handlerName, SubscriberOptions options)
+        where TEntity : class
+    {
+        _isolatedOptions[new EntityHandlerKey(typeof(TEntity), handlerName)] = options;
+    }
+
+    /// <summary>
+    /// Resolves the effective <see cref="SubscriberOptions"/> for a given entity type and
+    /// optional handler name. Resolution order (highest to lowest priority):
+    /// per-handler isolated options → per-entity options → global options.
+    /// </summary>
+    private SubscriberOptions GetEffectiveOptions(Type entityType, string? handlerName = null)
+    {
+        if (handlerName is not null
+            && _isolatedOptions.TryGetValue(new EntityHandlerKey(entityType, handlerName), out var isolated))
+            return isolated;
+
+        return _entityOptions.GetValueOrDefault(entityType) ?? _options;
+    }
+
     public ChangeSubscriber UseSerializer<TEntity>(IChangeSerializer serializer)
     {
         _serializers[typeof(TEntity)] = serializer;
@@ -219,16 +246,17 @@ public class ChangeSubscriber : IDisposable
         string handlerName,
         CancellationToken cancellationToken = default)
     {
+        var effectiveOptions = GetEffectiveOptions(entityType, handlerName);
         var parallelOptions = new ParallelOptions
         {
-            MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism,
+            MaxDegreeOfParallelism = effectiveOptions.MaxDegreeOfParallelism,
             CancellationToken      = cancellationToken
         };
         await Parallel.ForEachAsync(
             consumer.ConsumeAsync(cancellationToken),
             parallelOptions,
             async (envelope, token) =>
-                await ProcessIsolatedMessageAsync(envelope, entityType, handlerName, token));
+                await ProcessIsolatedMessageAsync(envelope, entityType, handlerName, effectiveOptions, token));
     }
 
     // -------------------------------------------------------------------------
@@ -284,11 +312,12 @@ public class ChangeSubscriber : IDisposable
         // receive the full entity state. Falls back to meta-only when no serializer is
         // registered for this entity type.
         var change = await DeserializeEnvelopeAsync(envelope, entityType, cancellationToken);
+        var options = GetEffectiveOptions(entityType);
 
         try
         {
             foreach (var registration in matchingHandlers)
-                await InvokeWithRetryAsync(registration, change, entityTag, changeTag, cancellationToken);
+                await InvokeWithRetryAsync(registration, change, options, entityTag, changeTag, cancellationToken);
         }
         catch
         {
@@ -325,6 +354,7 @@ public class ChangeSubscriber : IDisposable
         MessageEnvelope envelope,
         Type entityType,
         string handlerName,
+        SubscriberOptions effectiveOptions,
         CancellationToken cancellationToken)
     {
         var changeTag = RayTreeMeter.ChangeTag(envelope.ChangeType);
@@ -370,7 +400,7 @@ public class ChangeSubscriber : IDisposable
         try
         {
             foreach (var registration in matchingHandlers)
-                await InvokeWithRetryAsync(registration, change, entityTag, changeTag, cancellationToken);
+                await InvokeWithRetryAsync(registration, change, effectiveOptions, entityTag, changeTag, cancellationToken);
         }
         catch
         {
@@ -477,16 +507,16 @@ public class ChangeSubscriber : IDisposable
 
     /// <summary>
     /// Invokes the handler with up to <see cref="SubscriberOptions.MaxRetries"/> retry
-    /// attempts after the initial call.  With <c>MaxRetries = N</c> the handler may be
+    /// attempts after the initial call. With <c>MaxRetries = N</c> the handler may be
     /// called at most <c>N + 1</c> times total (1 initial + N retries).
-    /// Per-entity options registered via <see cref="RegisterEntity{TEntity}"/> take
-    /// precedence over the global options supplied to the constructor.
+    /// The caller is responsible for supplying the effective <paramref name="options"/>
+    /// (resolved via <see cref="GetEffectiveOptions"/>).
     /// </summary>
     private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change,
+        SubscriberOptions options,
         KeyValuePair<string, object?> entityTag, KeyValuePair<string, object?> changeTag,
         CancellationToken ct)
     {
-        var options = _entityOptions.GetValueOrDefault(registration.EntityType) ?? _options;
         var attempts = 0;
         while (true)
         {

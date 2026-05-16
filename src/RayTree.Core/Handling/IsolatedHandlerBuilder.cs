@@ -6,8 +6,8 @@ namespace RayTree.Core.Handling;
 /// <summary>
 /// Post-fork builder for <em>Isolated</em> handler-dispatch mode. Returned by
 /// <see cref="IEntityBuilder{TEntity}.UseConsumerFactory"/>. Accumulates
-/// <c>(handlerName, changeType, handler)</c> tuples and validates the registration set
-/// at <see cref="Apply"/> time.
+/// <c>(handlerName, changeType, handler, options)</c> tuples and validates the registration
+/// set at <see cref="Apply"/> time.
 /// </summary>
 internal sealed class IsolatedHandlerBuilder<TEntity>(
     EntitySubscriberBuilder<TEntity> subBuilder,
@@ -15,22 +15,26 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
     : IIsolatedHandlerBuilder<TEntity>
     where TEntity : class
 {
-    private readonly List<(string HandlerName, ChangeType? ChangeType, ChangeHandlerAsync<TEntity> Handler)> _entries = new();
+    private readonly List<(string HandlerName, ChangeType? ChangeType, ChangeHandlerAsync<TEntity> Handler, SubscriberOptions? Options)> _entries = new();
 
     /// <inheritdoc/>
-    public IIsolatedHandlerBuilder<TEntity> OnInsert(string handlerName, ChangeHandlerAsync<TEntity> handler)
-        => OnChange(handlerName, ChangeType.Insert, handler);
+    public IIsolatedHandlerBuilder<TEntity> OnInsert(string handlerName, ChangeHandlerAsync<TEntity> handler,
+        SubscriberOptions? options = null)
+        => OnChange(handlerName, ChangeType.Insert, handler, options);
 
     /// <inheritdoc/>
-    public IIsolatedHandlerBuilder<TEntity> OnUpdate(string handlerName, ChangeHandlerAsync<TEntity> handler)
-        => OnChange(handlerName, ChangeType.Update, handler);
+    public IIsolatedHandlerBuilder<TEntity> OnUpdate(string handlerName, ChangeHandlerAsync<TEntity> handler,
+        SubscriberOptions? options = null)
+        => OnChange(handlerName, ChangeType.Update, handler, options);
 
     /// <inheritdoc/>
-    public IIsolatedHandlerBuilder<TEntity> OnDelete(string handlerName, ChangeHandlerAsync<TEntity> handler)
-        => OnChange(handlerName, ChangeType.Delete, handler);
+    public IIsolatedHandlerBuilder<TEntity> OnDelete(string handlerName, ChangeHandlerAsync<TEntity> handler,
+        SubscriberOptions? options = null)
+        => OnChange(handlerName, ChangeType.Delete, handler, options);
 
     /// <inheritdoc/>
-    public IIsolatedHandlerBuilder<TEntity> OnChange(string handlerName, ChangeType? changeType, ChangeHandlerAsync<TEntity> handler)
+    public IIsolatedHandlerBuilder<TEntity> OnChange(string handlerName, ChangeType? changeType,
+        ChangeHandlerAsync<TEntity> handler, SubscriberOptions? options = null)
     {
         // Task 2.4 — reject null/empty names immediately at registration time
         if (string.IsNullOrEmpty(handlerName))
@@ -38,7 +42,7 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
                 "Handler name must be a non-null, non-empty string.", nameof(handlerName));
 
         ArgumentNullException.ThrowIfNull(handler);
-        _entries.Add((handlerName, changeType, handler));
+        _entries.Add((handlerName, changeType, handler, options));
         return this;
     }
 
@@ -50,7 +54,7 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
     {
         // --- Validate: no duplicate (action, handlerName) pairs ---
         var seen = new HashSet<(ChangeType?, string)>();
-        foreach (var (name, changeType, _) in _entries)
+        foreach (var (name, changeType, _, _) in _entries)
         {
             if (!seen.Add((changeType, name)))
             {
@@ -95,8 +99,18 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
         foreach (var (name, consumer) in consumers)
             subscriber.RegisterIsolatedConsumer<TEntity>(name, consumer);
 
+        // --- Collect first non-null options per handler name and register them ---
+        var optionsByName = new Dictionary<string, SubscriberOptions>(StringComparer.Ordinal);
+        foreach (var (name, _, _, opts) in _entries)
+        {
+            if (opts is not null)
+                optionsByName.TryAdd(name, opts);   // first non-null wins
+        }
+        foreach (var (name, opts) in optionsByName)
+            subscriber.RegisterIsolatedOptions<TEntity>(name, opts);
+
         // --- Register per-name handlers ---
-        foreach (var (name, changeType, handler) in _entries)
+        foreach (var (name, changeType, handler, _) in _entries)
             subscriber.RegisterIsolatedHandler(name, changeType, handler);
     }
 }

@@ -24,6 +24,11 @@ namespace RayTree.Core.Tracking;
 /// one consume loop; the loop selects the matching registration by <c>ChangeType</c>
 /// on inbound messages.</para>
 ///
+/// <para><strong>Per-handler options:</strong> pass <see cref="SubscriberOptions"/> inline
+/// on any registration for a given handler name. The first non-null options encountered for
+/// a name are applied to that handler's consume loop. Subsequent registrations under the same
+/// name may omit options — they inherit the options already associated with the name.</para>
+///
 /// <para><strong>Dedup key:</strong> <c>$"{correlationId}:{handlerName}"</c>. Each named
 /// handler has an independent deduplication namespace, so a failed redelivery under one
 /// handler does not force other handlers to re-execute.</para>
@@ -43,10 +48,15 @@ public interface IIsolatedHandlerBuilder<TEntity> where TEntity : class
     /// dedup-key suffix and passed to the consumer factory.
     /// </param>
     /// <param name="handler">The handler delegate to invoke.</param>
+    /// <param name="options">
+    /// Optional per-handler <see cref="SubscriberOptions"/>. The first non-null options
+    /// supplied for a given handler name apply to that handler's consume loop.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// Thrown immediately if <paramref name="handlerName"/> is null or empty.
     /// </exception>
-    IIsolatedHandlerBuilder<TEntity> OnInsert(string handlerName, ChangeHandlerAsync<TEntity> handler);
+    IIsolatedHandlerBuilder<TEntity> OnInsert(string handlerName, ChangeHandlerAsync<TEntity> handler,
+        SubscriberOptions? options = null);
 
     /// <summary>
     /// Adds a named handler invoked only on <see cref="ChangeType.Update"/> events.
@@ -55,10 +65,15 @@ public interface IIsolatedHandlerBuilder<TEntity> where TEntity : class
     /// A non-null, non-empty stable identifier for this handler.
     /// </param>
     /// <param name="handler">The handler delegate to invoke.</param>
+    /// <param name="options">
+    /// Optional per-handler <see cref="SubscriberOptions"/>. The first non-null options
+    /// supplied for a given handler name apply to that handler's consume loop.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// Thrown immediately if <paramref name="handlerName"/> is null or empty.
     /// </exception>
-    IIsolatedHandlerBuilder<TEntity> OnUpdate(string handlerName, ChangeHandlerAsync<TEntity> handler);
+    IIsolatedHandlerBuilder<TEntity> OnUpdate(string handlerName, ChangeHandlerAsync<TEntity> handler,
+        SubscriberOptions? options = null);
 
     /// <summary>
     /// Adds a named handler invoked only on <see cref="ChangeType.Delete"/> events.
@@ -67,10 +82,15 @@ public interface IIsolatedHandlerBuilder<TEntity> where TEntity : class
     /// A non-null, non-empty stable identifier for this handler.
     /// </param>
     /// <param name="handler">The handler delegate to invoke.</param>
+    /// <param name="options">
+    /// Optional per-handler <see cref="SubscriberOptions"/>. The first non-null options
+    /// supplied for a given handler name apply to that handler's consume loop.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// Thrown immediately if <paramref name="handlerName"/> is null or empty.
     /// </exception>
-    IIsolatedHandlerBuilder<TEntity> OnDelete(string handlerName, ChangeHandlerAsync<TEntity> handler);
+    IIsolatedHandlerBuilder<TEntity> OnDelete(string handlerName, ChangeHandlerAsync<TEntity> handler,
+        SubscriberOptions? options = null);
 
     /// <summary>
     /// Adds a named handler for the specified change type, or for all change types when
@@ -83,8 +103,13 @@ public interface IIsolatedHandlerBuilder<TEntity> where TEntity : class
     /// The change type to filter on, or <c>null</c> to match all change types.
     /// </param>
     /// <param name="handler">The handler delegate to invoke.</param>
+    /// <param name="options">
+    /// Optional per-handler <see cref="SubscriberOptions"/>. The first non-null options
+    /// supplied for a given handler name apply to that handler's consume loop.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// Thrown immediately if <paramref name="handlerName"/> is null or empty.
     /// </exception>
-    IIsolatedHandlerBuilder<TEntity> OnChange(string handlerName, ChangeType? changeType, ChangeHandlerAsync<TEntity> handler);
+    IIsolatedHandlerBuilder<TEntity> OnChange(string handlerName, ChangeType? changeType,
+        ChangeHandlerAsync<TEntity> handler, SubscriberOptions? options = null);
 }
