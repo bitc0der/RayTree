@@ -6,8 +6,11 @@ See `CLAUDE.md` for deep architecture documentation, plugin contracts, and key d
 ## Build & Test
 
 ```bash
-# Build
-dotnet build RayTree.sln
+# Build (Debug)
+dotnet build RayTree.slnx
+
+# Build (Release — used by CI)
+dotnet build RayTree.slnx -c Release
 
 # Unit tests (no Docker required)
 dotnet test tests/RayTree.Core.Tests
@@ -102,8 +105,11 @@ Integration tests are only required when changing PostgreSQL, Kafka, or RabbitMQ
 |---|---|
 | SRP | One reason to change per class. Publisher, subscriber, and tracker are separate. |
 | OCP | Extend via new plugin implementations (`IOutbox`, `IQueuePublisher`, etc.), never by editing core. |
+| LSP | Plugin implementations must be fully substitutable. |
+| ISP | Keep interfaces narrow. `IQueuePublisher` and `IQueueConsumer` are separate. |
 | DIP | Core depends on abstractions, never on concrete plugin types. |
 | KISS | Simplest solution that works. No speculative abstractions or unused config knobs. |
+| DRY | Shared logic lives in one place. No duplication across publisher and subscriber. |
 | YAGNI | Do not add features for hypothetical future needs. |
 | Constructor injection | All dependencies declared in the constructor. No property setters or post-construction wiring. |
 | Dead code | Remove unused fields, parameters, methods, and classes immediately. |
@@ -117,6 +123,55 @@ Integration tests are only required when changing PostgreSQL, Kafka, or RabbitMQ
 - No shared mutable state between tests in the same class.
 - Unit tests must not touch the file system, network, or `DateTime.UtcNow`. Use `TimeProvider` or a clock abstraction.
 - Integration tests that share a container: mark `[NonParallelizable]` and use unique topic/queue names per test.
+- Test edge cases: null inputs, empty collections, cancellation, exceptions, boundary values.
+- Use `Assert.ThrowsAsync<T>()` for async exception tests, not `try/catch` with `Assert.Fail()`.
+- Mock at the interface level. Use plugin interfaces (`IOutbox`, `IQueuePublisher`, etc.) as mock boundaries.
+
+## Nullability Discipline
+
+- Every reference type must be annotated. `string` means non-null; `string?` means nullable.
+- Initialize required fields in the constructor or with a default value.
+- Use `ArgumentNullException.ThrowIfNull()` for guard clauses.
+- Return `Empty` collections instead of `null`. Use `Array.Empty<T>()`, `Enumerable.Empty<T>()`, or `ReadOnlyCollection<T>.Empty`.
+- When in doubt, make it non-nullable and throw `ArgumentNullException` if the caller passes null.
+
+## .NET Conventions
+
+- Prefer interfaces over abstract classes for plugin contracts.
+- Constructor injection for all dependencies. No service locator, no `static` state, no hidden dependencies.
+- Avoid `object` parameters in public APIs where possible — use generics or specific types.
+- Document public APIs with XML doc comments (`/// <summary>`) — especially parameters, return values, and exceptions thrown.
+- Return `IAsyncEnumerable<T>` for streaming results. Use `IEnumerable<T>` only when lazy streaming is intentional.
+
+## AI Coding Agent Rules
+
+### Efficient Workflow
+
+- Don't guess, ask clarifying questions — especially when in doubt.
+- Read before editing. Always read the full file (or relevant section) before making changes.
+- Search before creating. Check if a type, method, or pattern already exists before writing new code.
+- Batch independent operations. Identify all targets first, then edit them in parallel.
+- Use existing patterns. Copy the structure, naming, and conventions from neighboring files.
+- Understand the dependency graph before changing interfaces.
+
+### Safety First
+
+- Never commit unless the user explicitly asks.
+- Never delete files unless they are provably dead code (zero references across the entire solution).
+- Never hardcode secrets, connection strings, or credentials. Use configuration, environment variables, or test fixtures.
+- Never suppress warnings with `#pragma` or `<NoWarn>` unless there is a documented, unavoidable reason.
+
+### Verify Before Declaring Done
+
+- Always build after making code changes: `dotnet build RayTree.slnx`
+- Always run relevant tests after changes.
+- Zero warnings is the standard — `TreatWarningsAsErrors=true` is global.
+- If tests fail, fix the root cause. Do not modify tests unless the test itself was wrong.
+- Run `dotnet format --verify-no-changes` if unsure about style compliance.
+
+## CI
+
+`.github/workflows/ci.yml` has three job groups: `build` (compile gate, uploads compiled output as an artifact with 1-day retention), `unit-tests` (9-way parallel matrix, no Docker, downloads build artifact — no rebuild), `integration-tests` (3-way matrix: PostgreSQL / RabbitMQ / Kafka, also downloads build artifact). No job rebuilds the solution; all test jobs depend on the shared artifact from `build`.
 
 ## Repository Layout
 
