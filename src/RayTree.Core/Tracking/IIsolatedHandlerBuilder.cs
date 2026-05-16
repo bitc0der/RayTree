@@ -110,6 +110,10 @@ public interface IIsolatedHandlerBuilder<TEntity> where TEntity : class
     /// <exception cref="ArgumentException">
     /// Thrown immediately if <paramref name="handlerName"/> is null or empty.
     /// </exception>
-    IIsolatedHandlerBuilder<TEntity> OnChange(string handlerName, ChangeType? changeType,
-        ChangeHandlerAsync<TEntity> handler, SubscriberOptions? options = null);
+    /// <returns>This builder instance for further fluent chaining.</returns>
+    IIsolatedHandlerBuilder<TEntity> OnChange(
+        string handlerName,
+        ChangeType? changeType,
+        ChangeHandlerAsync<TEntity> handler,
+        SubscriberOptions? options = null);
 }

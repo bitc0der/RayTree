@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\..\src\RayTree.Core\RayTree.Core.csproj" />
+    <ProjectReference Include="..\..\src\RayTree.Hosting\RayTree.Hosting.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.InMemory\RayTree.Plugins.InMemory.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.Json\RayTree.Plugins.Serializers.Json.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.Protobuf\RayTree.Plugins.Serializers.Protobuf.csproj" />

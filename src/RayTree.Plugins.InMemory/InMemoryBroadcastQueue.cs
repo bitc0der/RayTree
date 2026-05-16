@@ -53,8 +53,8 @@ public sealed class InMemoryBroadcastQueue : IQueuePublisher, IDisposable
 
     /// <summary>
     /// Publishes <paramref name="envelope"/> to every active subscriber channel.
-    /// Channels whose readers have been disposed are silently removed.
-    /// Task 5.3.
+    /// Channels whose readers have been disposed are silently removed from the internal
+    /// channel list so subsequent publishes do not attempt to write to closed channels.
     /// </summary>
     public async Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
     {

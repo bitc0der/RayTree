@@ -212,6 +212,28 @@ public class SharedHandlerDispatchTests
     // Task 6.8 — SkipOnFailure=true: RevertProcessedAsync NOT called
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // Issue #8 — handler registered for Insert only; Update envelope → no_handler skip
+    // -------------------------------------------------------------------------
+
+    [Test]
+    public async Task NoHandlerForChangeType_MessageSkippedWithoutInvokingHandler()
+    {
+        var invoked    = false;
+        var subscriber = MakeSubscriber();
+        // Register only for Insert
+        subscriber.OnChange<Order>(ChangeType.Insert, (_, _) =>
+        {
+            invoked = true;
+            return Task.CompletedTask;
+        });
+
+        // Deliver an Update — no registered handler matches
+        await subscriber.ProcessMessageAsync(UpdateEnvelope());
+
+        Assert.That(invoked, Is.False, "handler must not fire when no registration matches the change type");
+    }
+
     [Test]
     public async Task SkipOnFailure_True_RevertNotCalled()
     {
