@@ -6,6 +6,78 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+#### Handler dispatch modes — Shared and Isolated (`RayTree.Core`, `RayTree.Hosting`, `RayTree.Plugins.InMemory`)
+
+Two explicit handler-dispatch strategies are now available, selected at consumer-binding time.
+
+**`Shared` mode** (existing behaviour, now explicit and accumulating):
+
+Call `IEntityBuilder<TEntity>.UseConsumer(IQueueConsumer)` to fork into
+`ISharedHandlerBuilder<TEntity>`. Multiple calls to `OnInsert`, `OnUpdate`, `OnDelete`, or
+`OnChange` on the returned builder *accumulate* handlers; they execute sequentially in
+registration order on a single delivery of each message. Dedup key: `correlationId`.
+
+**`Isolated` mode** (new):
+
+Call `IEntityBuilder<TEntity>.UseConsumerFactory(Func<string, IQueueConsumer>)` to fork into
+`IIsolatedHandlerBuilder<TEntity>`. Each named handler receives its own broker subscription
+(factory invoked once per unique name at `Build()` time), retry budget, and dedup namespace
+(key: `$"{correlationId}:{handlerName}"`). `ChangeTrackingHostedService` starts one consume
+loop per `(entity type, handler name)` pair automatically.
+
+**`InMemoryBroadcastQueue`** (new, `RayTree.Plugins.InMemory`):
+
+Fan-out in-memory queue for Isolated-mode testing and local development.
+`Subscribe()` returns a fresh `IQueueConsumer` backed by its own channel; every call to
+`PublishAsync` delivers to all subscribed channels.
+
+### Breaking Changes
+
+#### `IEntityBuilder<TEntity>` — handler methods removed; `UseConsumer` return type changed
+
+The methods `OnInsert`, `OnUpdate`, `OnDelete`, and `OnChange` are **removed** from
+`IEntityBuilder<TEntity>`. Handler registration is only reachable via the post-fork builders
+returned by `UseConsumer` or `UseConsumerFactory`.
+
+The return type of `IEntityBuilder<TEntity>.UseConsumer(IQueueConsumer)` changes from
+`IEntityBuilder<TEntity>` to `ISharedHandlerBuilder<TEntity>`.
+
+**Migration:** reorder your `ForEntity` call chain so that `UseSerializer`, `UseCompressor`,
+and `UseSubscriberOptions` come *before* the `UseConsumer` call (those methods are on
+`IEntityBuilder<TEntity>`; `ISharedHandlerBuilder<TEntity>` exposes only handler-registration
+methods). Then chain handler registrations on the returned builder:
+
+```csharp
+// Before
+.ForEntity<Order>(e => e
+    .UseConsumer(consumer)
+    .UseSerializer(serializer)
+    .OnInsert(handler))
+
+// After
+.ForEntity<Order>(e => e
+    .UseSerializer(serializer)
+    .UseConsumer(consumer)
+    .OnInsert(handler))
+```
+
+#### Known limitation — Shared-mode broker ACK ordering
+
+`RabbitMqConsumer` and `KafkaConsumer` ACK / commit the broker delivery **before** the
+subscriber processes the message. In Shared mode this means broker-driven redelivery does not
+fire even when the dedup mark is reverted on handler failure. The dedup-revert retry guarantee
+is strong with `InMemoryQueue`; for Rabbit/Kafka it is best-effort only. Isolated mode is not
+affected (each named handler has its own consumer and ACK lifecycle, and the per-handler dedup
+key prevents double-processing across redeliveries). A follow-up change
+(`consumer-ack-after-handler`) will fix ACK ordering by adding an explicit ACK callback to
+`IQueueConsumer`.
+
+---
+
 ## [0.0.9-pre-release]
 
 ### Added

@@ -75,6 +75,19 @@ EntityChangeTracker
 | `RayTree.Plugins.Serializers.*` | JSON, MessagePack, Protobuf — each in its own package. |
 | `RayTree.Plugins.Compressors.*` | Gzip, Brotli, LZ4 — each in its own package. |
 
+### Handler dispatch modes
+
+`IEntityBuilder<TEntity>` exposes two consumer-binding methods that select the dispatch mode and fork the fluent chain into a mode-specific builder:
+
+- **`UseConsumer(IQueueConsumer)` → `ISharedHandlerBuilder<TEntity>`** — *Shared* mode. All handlers registered on the returned builder share a single broker delivery. They run sequentially in registration order. Dedup key: `correlationId`. If any handler exhausts retries with `SkipOnFailure = false`, the message-level dedup mark is reverted so redelivery will re-run every handler. Callers must chain `UseSerializer`/`UseCompressor` on `IEntityBuilder` *before* calling `UseConsumer` (those methods are not on the post-fork builder).
+- **`UseConsumerFactory(Func<string, IQueueConsumer>)` → `IIsolatedHandlerBuilder<TEntity>`** — *Isolated* mode. Each named handler (`OnInsert("name", handler)`) gets its own broker subscription via the factory. Dedup key: `$"{correlationId}:{handlerName}"` — per-handler isolation. The framework starts one consume loop per `(entity type, handler name)` pair in `ChangeTrackingHostedService`. Handler names are stable deployment identifiers: renaming one is equivalent to creating a new subscription.
+
+Handler registration methods (`OnInsert`, `OnUpdate`, `OnDelete`, `OnChange`) exist only on the post-fork builders, not on `IEntityBuilder<TEntity>` — the compiler prevents registering handlers before binding a consumer, and prevents mixing anonymous and named overloads.
+
+**Builder implementation classes** (`src/RayTree.Core/Handling`): `SharedHandlerBuilder<TEntity>` delegates to `EntitySubscriberBuilder<TEntity>`; `IsolatedHandlerBuilder<TEntity>` accumulates `(handlerName, changeType, handler)` tuples and validates them (unique `(action, name)` pairs; factory returns distinct non-null instances) at `Build()` time.
+
+**Known limitation (Shared mode):** `RabbitMqConsumer` and `KafkaConsumer` ACK/commit the broker delivery *before* handing the message to the subscriber. For Shared mode this means broker-driven redelivery does not fire even when the dedup mark is reverted. The dedup-revert retry guarantee is strong only with `InMemoryQueue`. A follow-up change (`consumer-ack-after-handler`) will address this by adding an explicit ACK callback to `IQueueConsumer`.
+
 ### Subscriber-side (`src/RayTree.Core/Handling`)
 
 - **`ChangeSubscriber`** — see Core section above.

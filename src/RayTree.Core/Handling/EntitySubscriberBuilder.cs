@@ -80,20 +80,31 @@ internal sealed class EntitySubscriberBuilder<TEntity>(ChangeSubscriberBuilder p
     /// </summary>
     internal void Apply(ChangeSubscriber subscriber)
     {
-        // Resolve effective serializer / compressor
+        ApplyMetadataOnly(subscriber);
+
+        foreach (var (changeType, handler) in _handlers)
+            subscriber.OnChange(changeType, handler);
+    }
+
+    /// <summary>
+    /// Registers entity metadata (serializer, compressor, options) with the subscriber
+    /// without registering the consumer queue or any handlers. Used by
+    /// <see cref="IsolatedHandlerBuilder{TEntity}"/> to set up deserialization context
+    /// before registering per-handler consumers and handlers separately.
+    /// </summary>
+    internal void ApplyMetadataOnly(ChangeSubscriber subscriber)
+    {
         var serializer = _serializer ?? parent.GlobalSerializer;
         var compressor = _compressor ?? parent.GlobalCompressor;
 
-        // Resolve effective options: start from a copy of global options, then apply
-        // any per-entity deltas so unchanged fields keep their global values.
         SubscriberOptions? entityOptions = null;
         if (_optionsConfigure is not null)
         {
             entityOptions = new SubscriberOptions
             {
-                MaxRetries = parent.GlobalOptions.MaxRetries,
-                RetryDelay = parent.GlobalOptions.RetryDelay,
-                SkipOnFailure = parent.GlobalOptions.SkipOnFailure,
+                MaxRetries             = parent.GlobalOptions.MaxRetries,
+                RetryDelay             = parent.GlobalOptions.RetryDelay,
+                SkipOnFailure          = parent.GlobalOptions.SkipOnFailure,
                 MaxDegreeOfParallelism = parent.GlobalOptions.MaxDegreeOfParallelism,
                 DeduplicationRetention = parent.GlobalOptions.DeduplicationRetention,
             };
@@ -101,8 +112,5 @@ internal sealed class EntitySubscriberBuilder<TEntity>(ChangeSubscriberBuilder p
         }
 
         subscriber.RegisterEntity<TEntity>(_queue, serializer, compressor, entityOptions);
-
-        foreach (var (changeType, handler) in _handlers)
-            subscriber.OnChange(changeType, handler);
     }
 }

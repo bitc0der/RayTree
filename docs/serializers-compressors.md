@@ -156,9 +156,9 @@ tracking.ForEntity<Product>(e => e
 builder.Services
     .AddChangeSubscriber(configuration)
     .ForEntity<Product>(e => e
-        .UseConsumer(myConsumer)
         .UseSerializer(new ProtobufSerializerPlugin())   // same as publisher
         .UseCompressor(new BrotliCompressorPlugin())     // same as publisher
+        .UseConsumer(myConsumer)
         .OnInsert(async (change, ct) =>
         {
             var product = change.State; // typed Product

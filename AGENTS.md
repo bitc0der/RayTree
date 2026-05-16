@@ -48,6 +48,8 @@ Integration tests are only required when changing PostgreSQL, Kafka, or RabbitMQ
 - Expression-bodied members for single-expression methods, properties, and accessors.
 - `using` directives outside the namespace; System namespaces first.
 - Braces always on a new line (`csharp_new_line_before_open_brace = all`).
+- Don't use tuples in public contracts. Use records, classes or strucs instead.
+- Use method named params, especially - when there are multiple params with the same name.
 
 ### async / await
 

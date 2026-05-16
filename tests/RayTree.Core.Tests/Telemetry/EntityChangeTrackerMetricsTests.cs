@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using RayTree.Core.Distribution;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
@@ -22,9 +21,9 @@ public class EntityChangeTrackerMetricsTests
             .ForEntity<Order>(e => e
                 .UseOutbox(new InMemoryOutbox())
                 .UsePublisher(inMemQueue)
-                .UseConsumer(inMemQueue)
                 .UseSerializer(new JsonSerializerPlugin())
-                .UseCompressor(new NoOpCompressorPlugin()))
+                .UseCompressor(new NoOpCompressorPlugin())
+                .UseConsumer(inMemQueue))
             .Build();
     }
 
@@ -74,9 +73,9 @@ public class EntityChangeTrackerMetricsTests
             .ForEntity<Order>(e => e
                 .UseOutbox(new InMemoryOutbox())
                 .UsePublisher(queue)
-                .UseConsumer(queue)
                 .UseSerializer(new JsonSerializerPlugin())
                 .UseCompressor(new NoOpCompressorPlugin())
+                .UseConsumer(queue)
                 .OnChange(null, (_, _) =>
                 {
                     handlerInvoked.TrySetResult(true);

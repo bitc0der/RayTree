@@ -9,12 +9,28 @@ using RayTree.Core.Plugins.Serialization;
 
 namespace RayTree.Core.Tracking;
 
+/// <summary>
+/// Internal implementation of <see cref="IEntityBuilder{TEntity}"/>. Owns the publisher
+/// configuration and the shared sub-builder that carries serializer, compressor, and
+/// subscriber-option overrides. When the caller binds a consumer — via
+/// <see cref="UseConsumer"/> or <see cref="UseConsumerFactory"/> — the appropriate
+/// post-fork builder is created and returned; <see cref="RegisterSubscriberApplicator"/>
+/// later wires the chosen path into the parent <see cref="ChangeSubscriberBuilder"/>.
+/// </summary>
 internal sealed class EntityBuilder<TEntity>(ChangePublisherBuilder publisherBuilder, ChangeSubscriberBuilder subscriberBuilder)
     : IEntityBuilder<TEntity>
     where TEntity : class
 {
     private readonly EntityPublisherBuilder<TEntity> _pubBuilder = new(publisherBuilder);
     private readonly EntitySubscriberBuilder<TEntity> _subBuilder = new(subscriberBuilder);
+
+    // Exactly one of these is non-null once a consumer-binding method has been called.
+    private SharedHandlerBuilder<TEntity>? _sharedBuilder;
+    private IsolatedHandlerBuilder<TEntity>? _isolatedBuilder;
+
+    // -------------------------------------------------------------------------
+    // Publisher side
+    // -------------------------------------------------------------------------
 
     public IEntityBuilder<TEntity> UseRepository(IRepository repository)
     {
@@ -53,12 +69,9 @@ internal sealed class EntityBuilder<TEntity>(ChangePublisherBuilder publisherBui
         return this;
     }
 
-    public IEntityBuilder<TEntity> UseConsumer(IQueueConsumer consumer)
-    {
-        ArgumentNullException.ThrowIfNull(consumer);
-        _subBuilder.UseConsumer(consumer);
-        return this;
-    }
+    // -------------------------------------------------------------------------
+    // Subscriber side — pre-fork
+    // -------------------------------------------------------------------------
 
     public IEntityBuilder<TEntity> UseSubscriberOptions(Action<SubscriberOptions> configure)
     {
@@ -67,34 +80,34 @@ internal sealed class EntityBuilder<TEntity>(ChangePublisherBuilder publisherBui
         return this;
     }
 
-    public IEntityBuilder<TEntity> OnInsert(ChangeHandlerAsync<TEntity> handler)
+    // -------------------------------------------------------------------------
+    // Subscriber side — consumer binding (forks the builder chain)
+    // -------------------------------------------------------------------------
+
+    public ISharedHandlerBuilder<TEntity> UseConsumer(IQueueConsumer consumer)
     {
-        ArgumentNullException.ThrowIfNull(handler);
-        _subBuilder.OnInsert(handler);
-        return this;
+        ArgumentNullException.ThrowIfNull(consumer);
+        _subBuilder.UseConsumer(consumer);
+        _sharedBuilder = new SharedHandlerBuilder<TEntity>(_subBuilder);
+        return _sharedBuilder;
     }
 
-    public IEntityBuilder<TEntity> OnUpdate(ChangeHandlerAsync<TEntity> handler)
+    public IIsolatedHandlerBuilder<TEntity> UseConsumerFactory(Func<string, IQueueConsumer> factory)
     {
-        ArgumentNullException.ThrowIfNull(handler);
-        _subBuilder.OnUpdate(handler);
-        return this;
+        ArgumentNullException.ThrowIfNull(factory);
+        _isolatedBuilder = new IsolatedHandlerBuilder<TEntity>(_subBuilder, factory);
+        return _isolatedBuilder;
     }
 
-    public IEntityBuilder<TEntity> OnDelete(ChangeHandlerAsync<TEntity> handler)
-    {
-        ArgumentNullException.ThrowIfNull(handler);
-        _subBuilder.OnDelete(handler);
-        return this;
-    }
-
-    public IEntityBuilder<TEntity> OnChange(ChangeType? changeType, ChangeHandlerAsync<TEntity> handler)
-    {
-        ArgumentNullException.ThrowIfNull(handler);
-        _subBuilder.OnChange(changeType, handler);
-        return this;
-    }
+    // -------------------------------------------------------------------------
+    // Internal wiring
+    // -------------------------------------------------------------------------
 
     internal void RegisterSubscriberApplicator()
-        => subscriberBuilder.AddEntityApplicator(_subBuilder.Apply);
+    {
+        if (_isolatedBuilder is not null)
+            subscriberBuilder.AddEntityApplicator(_isolatedBuilder.Apply);
+        else
+            subscriberBuilder.AddEntityApplicator(_subBuilder.Apply);
+    }
 }

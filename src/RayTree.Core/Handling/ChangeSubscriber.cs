@@ -22,11 +22,19 @@ public delegate Task ChangeHandlerAsync<TEntity>(
 
 public class ChangeSubscriber : IDisposable
 {
+    // Shared-mode storage (keyed by entity type)
     private readonly Dictionary<Type, List<HandlerRegistration>> _handlers = new();
     private readonly Dictionary<Type, IChangeSerializer> _serializers = new();
     private readonly Dictionary<Type, IChangeCompressor> _compressors = new();
     private readonly Dictionary<Type, IQueueConsumer> _queues = new();
     private readonly Dictionary<Type, SubscriberOptions> _entityOptions = new();
+
+    // Isolated-mode storage (keyed by (entity type, handler name))
+    // Task 3.1 — consumer per (entity, handlerName)
+    private readonly Dictionary<(Type EntityType, string HandlerName), IQueueConsumer> _isolatedQueues = new();
+    // Task 3.2 — handlers per (entity, handlerName)
+    private readonly Dictionary<(Type EntityType, string HandlerName), List<HandlerRegistration>> _isolatedHandlers = new();
+
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
     private readonly ILogger<ChangeSubscriber> _logger;
@@ -53,7 +61,16 @@ public class ChangeSubscriber : IDisposable
         _options    = options    ?? new SubscriberOptions();
     }
 
+    /// <summary>Shared-mode consumers, keyed by entity type.</summary>
     public IReadOnlyDictionary<Type, IQueueConsumer> Queues => _queues;
+
+    /// <summary>
+    /// Isolated-mode consumers, keyed by <c>(entity type, handler name)</c>.
+    /// Exposed for <see cref="RayTree.Hosting.ChangeTrackingHostedService"/> to start one
+    /// consume loop per entry. Task 3.6.
+    /// </summary>
+    public IReadOnlyDictionary<(Type EntityType, string HandlerName), IQueueConsumer> IsolatedQueues
+        => _isolatedQueues;
 
     public ChangeSubscriber ForEntity<TEntity>()
     {
@@ -85,6 +102,44 @@ public class ChangeSubscriber : IDisposable
         ArgumentNullException.ThrowIfNull(consumer);
         _queues[typeof(TEntity)] = consumer;
         return this;
+    }
+
+    /// <summary>
+    /// Stores the consumer dedicated to a named isolated handler. Called by
+    /// <see cref="IsolatedHandlerBuilder{TEntity}.Apply"/> once per unique handler name.
+    /// Task 3.4.
+    /// </summary>
+    internal void RegisterIsolatedConsumer<TEntity>(string handlerName, IQueueConsumer consumer)
+        where TEntity : class
+    {
+        _isolatedQueues[(typeof(TEntity), handlerName)] = consumer;
+    }
+
+    /// <summary>
+    /// Registers a typed handler under a specific handler name for Isolated mode.
+    /// Handlers sharing a name but targeting different <paramref name="changeType"/> values
+    /// live in the same list and are disambiguated by the consume loop.
+    /// Task 3.3.
+    /// </summary>
+    internal void RegisterIsolatedHandler<TEntity>(
+        string handlerName,
+        ChangeType? changeType,
+        ChangeHandlerAsync<TEntity> handler)
+        where TEntity : class
+    {
+        var key = (typeof(TEntity), handlerName);
+        if (!_isolatedHandlers.TryGetValue(key, out var list))
+        {
+            list = new List<HandlerRegistration>();
+            _isolatedHandlers[key] = list;
+        }
+
+        list.Add(new HandlerRegistration
+        {
+            EntityType = typeof(TEntity),
+            ChangeType = changeType,
+            Handler    = (change, ct) => handler((EntityChange<TEntity>)change, ct)
+        });
     }
 
     public ChangeSubscriber UseSerializer<TEntity>(IChangeSerializer serializer)
@@ -149,6 +204,31 @@ public class ChangeSubscriber : IDisposable
             reader(queue, cancellationToken),
             parallelOptions,
             async (envelope, token) => await ProcessMessageAsync(envelope, token));
+    }
+
+    /// <summary>
+    /// Isolated-mode consume loop: reads envelopes from <paramref name="consumer"/> and
+    /// processes each one exclusively through handlers registered under
+    /// <paramref name="handlerName"/> for <paramref name="entityType"/>.
+    /// Uses dedup key <c>$"{correlationId}:{handlerName}"</c>.
+    /// Task 4.2.
+    /// </summary>
+    public async Task ConsumeIsolatedFromConsumerAsync(
+        IQueueConsumer consumer,
+        Type entityType,
+        string handlerName,
+        CancellationToken cancellationToken = default)
+    {
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism,
+            CancellationToken      = cancellationToken
+        };
+        await Parallel.ForEachAsync(
+            consumer.ConsumeAsync(cancellationToken),
+            parallelOptions,
+            async (envelope, token) =>
+                await ProcessIsolatedMessageAsync(envelope, entityType, handlerName, token));
     }
 
     // -------------------------------------------------------------------------
@@ -228,6 +308,87 @@ public class ChangeSubscriber : IDisposable
 
         _logger.LogDebug("Processed {ChangeType} change for {EntityType} ({CorrelationId})",
             envelope.ChangeType, entityType.Name, envelope.CorrelationId);
+
+        await MaybeDedupCleanupAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Isolated-mode message processing. Mirrors <see cref="ProcessMessageAsync"/> but:
+    /// <list type="bullet">
+    ///   <item>Dedup key is <c>$"{correlationId}:{handlerName}"</c>.</item>
+    ///   <item>Only handlers registered under <paramref name="handlerName"/> for
+    ///   <paramref name="entityType"/> are dispatched.</item>
+    /// </list>
+    /// Task 3.5.
+    /// </summary>
+    private async Task ProcessIsolatedMessageAsync(
+        MessageEnvelope envelope,
+        Type entityType,
+        string handlerName,
+        CancellationToken cancellationToken)
+    {
+        var changeTag = RayTreeMeter.ChangeTag(envelope.ChangeType);
+        var entityTag = RayTreeMeter.EntityTag(entityType);
+
+        // Isolated dedup key encodes both message identity and handler name
+        var dedupKey = $"{envelope.CorrelationId}:{handlerName}";
+
+        if (!await _dedupStore.TryMarkProcessedAsync(dedupKey, cancellationToken))
+        {
+            _meter.SubscriberDeduplicated.Add(1, entityTag, changeTag);
+            _logger.LogDebug(
+                "Duplicate isolated message {CorrelationId} for {EntityType}/{HandlerName}, skipping",
+                envelope.CorrelationId, entityType.Name, handlerName);
+            return;
+        }
+
+        var key = (entityType, handlerName);
+        if (!_isolatedHandlers.TryGetValue(key, out var allHandlers) || allHandlers.Count == 0)
+        {
+            _meter.SubscriberSkipped.Add(1, entityTag, changeTag, RayTreeMeter.ReasonTag("no_handler"));
+            _logger.LogDebug(
+                "No isolated handlers registered for {EntityType}/{HandlerName}, skipping",
+                entityType.Name, handlerName);
+            return;
+        }
+
+        var matchingHandlers = allHandlers
+            .Where(h => h.ChangeType == null || h.ChangeType == envelope.ChangeType)
+            .ToList();
+
+        if (matchingHandlers.Count == 0)
+        {
+            _meter.SubscriberSkipped.Add(1, entityTag, changeTag, RayTreeMeter.ReasonTag("no_handler"));
+            _logger.LogDebug(
+                "No isolated handlers matched change type {ChangeType} for {EntityType}/{HandlerName}, skipping",
+                envelope.ChangeType, entityType.Name, handlerName);
+            return;
+        }
+
+        var change = await DeserializeEnvelopeAsync(envelope, entityType, cancellationToken);
+
+        try
+        {
+            foreach (var registration in matchingHandlers)
+                await InvokeWithRetryAsync(registration, change, entityTag, changeTag, cancellationToken);
+        }
+        catch
+        {
+            _logger.LogWarning(
+                "Isolated handler '{HandlerName}' for {EntityType} exhausted all retries on {CorrelationId}; reverting dedup mark",
+                handlerName, entityType.Name, envelope.CorrelationId);
+            await _dedupStore.RevertProcessedAsync(dedupKey, cancellationToken);
+            throw;
+        }
+
+        _meter.SubscriberProcessed.Add(1, entityTag, changeTag);
+        _meter.SubscriberLagDuration.Record(
+            Math.Max(0, (DateTime.UtcNow - envelope.Timestamp).TotalSeconds),
+            entityTag, changeTag);
+
+        _logger.LogDebug(
+            "Isolated handler '{HandlerName}' processed {ChangeType} change for {EntityType} ({CorrelationId})",
+            handlerName, envelope.ChangeType, entityType.Name, envelope.CorrelationId);
 
         await MaybeDedupCleanupAsync(cancellationToken);
     }
