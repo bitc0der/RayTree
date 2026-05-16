@@ -63,6 +63,46 @@ await foreach (var envelope in queue.ConsumeAsync(cancellationToken))
 }
 ```
 
+### InMemoryBroadcastQueue
+
+Fan-out queue for **Isolated-mode** testing and local development. Implements `IQueuePublisher`; each call to `Subscribe()` returns a new `IQueueConsumer` backed by its own `Channel<MessageEnvelope>`. Every `PublishAsync` call delivers to **all** currently subscribed channels.
+
+Use this as the factory target for `UseConsumerFactory` — the factory is called once per unique handler name, so each name gets an independent consumer:
+
+```csharp
+var broadcast = new InMemoryBroadcastQueue();
+
+var tracker = new ChangeTrackingBuilder()
+    .ForEntity<Order>(e => e
+        .UseOutbox(new InMemoryOutbox())
+        .UsePublisher(broadcast)                              // publishes to all subscribers
+        .UseSerializer(new JsonSerializerPlugin())
+        .UseCompressor(new NoOpCompressorPlugin())
+        .UseConsumerFactory(_ => broadcast.Subscribe())       // one consumer per handler name
+        .OnInsert("read-model", async (change, ct) => { /* ... */ })
+        .OnInsert("notifier",   async (change, ct) => { /* ... */ }))
+    .Build();
+```
+
+A subscriber channel is completed (and its `ConsumeAsync` enumerable ends) when:
+- `Complete()` is called on the broadcast queue (or it is disposed), **or**
+- The individual subscriber is disposed.
+
+Messages published before a `Subscribe()` call are **not** replayed to the new subscriber.
+
+```csharp
+// Fan-out to two independent consumers
+var broadcast = new InMemoryBroadcastQueue();
+var consumerA = broadcast.Subscribe();
+var consumerB = broadcast.Subscribe();
+
+await broadcast.PublishAsync(envelope);
+// Both consumerA and consumerB receive the envelope independently.
+
+// Dispose a subscriber — removes its channel; subsequent publishes skip it
+((IDisposable)consumerA).Dispose();
+```
+
 ## Quick Start for Testing
 
 Use `EntityChangeTracker` with a `ChangeSubscriber` for a full publish→subscribe round-trip:

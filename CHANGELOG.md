@@ -29,11 +29,40 @@ Call `IEntityBuilder<TEntity>.UseConsumerFactory(Func<string, IQueueConsumer>)` 
 (key: `$"{correlationId}:{handlerName}"`). `ChangeTrackingHostedService` starts one consume
 loop per `(entity type, handler name)` pair automatically.
 
+**Per-handler `SubscriberOptions`** (new, `IIsolatedHandlerBuilder<TEntity>`):
+
+Each named handler registration accepts an optional `SubscriberOptions? options = null`
+parameter on `OnInsert`, `OnUpdate`, `OnDelete`, and `OnChange`. The first non-null options
+supplied for a given handler name apply to that handler's consume loop (DOP, retry budget,
+skip-on-failure). Options supplied on later registrations under the same name are ignored.
+Per-handler options take precedence over entity-level and global options.
+
+```csharp
+.UseConsumerFactory(name => broadcast.Subscribe())
+.OnInsert("read-model", handler, new SubscriberOptions { MaxRetries = 5 })
+.OnInsert("notifier",   handler)   // inherits global/entity options
+```
+
+**`EntityHandlerKey`** (new, `RayTree.Core.Handling`):
+
+`public readonly record struct EntityHandlerKey(Type EntityType, string HandlerName)` — the
+typed dictionary key used by `ChangeSubscriber.IsolatedQueues`. Replaces the anonymous tuple
+`(Type, string)` that was used internally.
+
 **`InMemoryBroadcastQueue`** (new, `RayTree.Plugins.InMemory`):
 
 Fan-out in-memory queue for Isolated-mode testing and local development.
 `Subscribe()` returns a fresh `IQueueConsumer` backed by its own channel; every call to
-`PublishAsync` delivers to all subscribed channels.
+`PublishAsync` delivers to all subscribed channels. Disposing a subscriber removes its
+channel from the broadcast set.
+
+```csharp
+var broadcast = new InMemoryBroadcastQueue();
+
+// Pass as both the publisher target and the consumer factory:
+.UsePublisher(broadcast)
+.UseConsumerFactory(_ => broadcast.Subscribe())
+```
 
 ### Breaking Changes
 

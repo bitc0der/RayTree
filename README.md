@@ -105,6 +105,36 @@ Optional `appsettings.json` overrides:
 }
 ```
 
+### Isolated handler mode
+
+Give each named handler its own broker subscription, retry budget, and deduplication namespace. The consumer factory is called once per unique name at `Build()` time.
+
+```csharp
+// For testing/local dev — InMemoryBroadcastQueue fans out to every subscriber
+var broadcast = new InMemoryBroadcastQueue();
+
+var tracker = new ChangeTrackingBuilder()
+    .ForEntity<Order>(e => e
+        .UseOutbox(new InMemoryOutbox())
+        .UsePublisher(broadcast)
+        .UseSerializer(new JsonSerializerPlugin())
+        .UseCompressor(new NoOpCompressorPlugin())
+        .UseConsumerFactory(_ => broadcast.Subscribe())     // one consumer per name
+        .OnInsert("read-model", async (change, ct) =>
+        {
+            // dedup key: "{correlationId}:read-model"
+            await UpdateReadModelAsync(change.State!);
+        })
+        .OnInsert("notifier", async (change, ct) =>
+        {
+            // dedup key: "{correlationId}:notifier" — independent of read-model
+            await SendNotificationAsync(change.State!);
+        }, options: new SubscriberOptions { MaxRetries = 1, SkipOnFailure = true }))
+    .Build();
+```
+
+`ChangeTrackingHostedService` starts one consume loop per `(entity type, handler name)` pair automatically. Renaming a handler is equivalent to creating a new broker subscription (the old name's offset/messages are preserved under the original name).
+
 ### EF Core interceptor
 
 ```csharp
