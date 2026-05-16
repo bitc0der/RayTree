@@ -1,0 +1,45 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src\RayTree.Core\RayTree.Core.csproj" />
+    <Project Path="src\RayTree.EntityFrameworkCore\RayTree.EntityFrameworkCore.csproj" />
+    <Project Path="src\RayTree.Hosting\RayTree.Hosting.csproj" />
+    <Project Path="src\RayTree.Plugins.PostgreSQL\RayTree.Plugins.PostgreSQL.csproj" />
+    <Project Path="src\RayTree.Plugins.RabbitMQ\RayTree.Plugins.RabbitMQ.csproj" />
+    <Project Path="src\RayTree.Plugins.Kafka\RayTree.Plugins.Kafka.csproj" />
+    <Project Path="src\RayTree.Plugins.InMemory\RayTree.Plugins.InMemory.csproj" />
+    <Project Path="src\RayTree.Plugins.Serializers.Json\RayTree.Plugins.Serializers.Json.csproj" />
+    <Project Path="src\RayTree.Plugins.Serializers.Protobuf\RayTree.Plugins.Serializers.Protobuf.csproj" />
+    <Project Path="src\RayTree.Plugins.Serializers.MessagePack\RayTree.Plugins.Serializers.MessagePack.csproj" />
+    <Project Path="src\RayTree.Plugins.Compressors.Gzip\RayTree.Plugins.Compressors.Gzip.csproj" />
+    <Project Path="src\RayTree.Plugins.Compressors.Brotli\RayTree.Plugins.Compressors.Brotli.csproj" />
+    <Project Path="src\RayTree.Plugins.Compressors.Lz4\RayTree.Plugins.Compressors.Lz4.csproj" />
+    <Project Path="src\RayTree.OpenTelemetry\RayTree.OpenTelemetry.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests\RayTree.Core.Tests\RayTree.Core.Tests.csproj" />
+    <Project Path="tests\RayTree.EntityFrameworkCore.Tests\RayTree.EntityFrameworkCore.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.PostgreSQL.Tests\RayTree.Plugins.PostgreSQL.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.RabbitMQ.Tests\RayTree.Plugins.RabbitMQ.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.Kafka.Tests\RayTree.Plugins.Kafka.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.Serializers.Json.Tests\RayTree.Plugins.Serializers.Json.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.Serializers.Protobuf.Tests\RayTree.Plugins.Serializers.Protobuf.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.Serializers.MessagePack.Tests\RayTree.Plugins.Serializers.MessagePack.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.Compressors.Gzip.Tests\RayTree.Plugins.Compressors.Gzip.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.Compressors.Brotli.Tests\RayTree.Plugins.Compressors.Brotli.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.Compressors.Lz4.Tests\RayTree.Plugins.Compressors.Lz4.Tests.csproj" />
+    <Project Path="tests\RayTree.Plugins.InMemory.Tests\RayTree.Plugins.InMemory.Tests.csproj" />
+    <Project Path="tests\RayTree.OpenTelemetry.Tests\RayTree.OpenTelemetry.Tests.csproj" />
+    <File Path="tests\Directory.Build.props" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="NuGet.config" />
+    <File Path=".github\workflows\ci.yml" />
+    <File Path="CLAUDE.md" />
+    <File Path="CHANGELOG.md" />
+    <File Path="SECURITY.md" />
+  </Folder>
+</Solution>
