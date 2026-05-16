@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Handling;
 
 namespace RayTree.Plugins.RabbitMQ;
@@ -18,7 +17,7 @@ public static class RabbitMqSubscriberExtensions
 
         var options = new RabbitMqConsumerOptions();
         configure(options);
-        return builder.UseConsumer(new RabbitMqConsumer(options, NullLoggerFactory.Instance));
+        return builder.UseConsumer(new RabbitMqConsumer(options));
     }
 
     public static RabbitMqConsumerOptions WithQueue(
@@ -28,7 +27,7 @@ public static class RabbitMqSubscriberExtensions
     {
         ArgumentNullException.ThrowIfNull(options);
         options.QueueName = queueName;
-        options.Durable   = durable;
+        options.Durable = durable;
         return options;
     }
 
@@ -48,7 +47,7 @@ public static class RabbitMqSubscriberExtensions
     {
         ArgumentNullException.ThrowIfNull(options);
         options.ExchangeName = exchangeName;
-        options.BindingKey   = bindingKey;
+        options.BindingKey = bindingKey;
         return options;
     }
 }

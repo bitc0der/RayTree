@@ -1,6 +1,5 @@
 using System.Text;
 using System.Threading.Channels;
-using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RayTree.Core.Models;
@@ -12,17 +11,15 @@ namespace RayTree.Plugins.RabbitMQ;
 public class RabbitMqConsumer : IQueueConsumer, IDisposable
 {
     private readonly RabbitMqConsumerOptions _options;
-    private readonly ILogger<RabbitMqConsumer> _logger;
+
     private IConnection? _connection;
     private IChannel? _channel;
 
     private readonly Channel<MessageEnvelope> _buffer = Channel.CreateUnbounded<MessageEnvelope>();
 
-    public RabbitMqConsumer(RabbitMqConsumerOptions options, ILoggerFactory loggerFactory)
+    public RabbitMqConsumer(RabbitMqConsumerOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
-        _logger = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
-            .CreateLogger<RabbitMqConsumer>();
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -83,14 +80,8 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
             await _buffer.Writer.WriteAsync(envelope, cancellationToken: ea.CancellationToken);
             await _channel!.BasicAckAsync(ea.DeliveryTag, multiple: false, cancellationToken: ea.CancellationToken);
         }
-        catch (Exception ex)
+        catch
         {
-            _logger.LogWarning(
-                exception: ex,
-                message: "Error processing RabbitMQ message from queue {QueueName}, requeuing",
-                _options.QueueName
-            );
-
             await _channel!.BasicNackAsync(
                 deliveryTag: ea.DeliveryTag,
                 multiple: false,

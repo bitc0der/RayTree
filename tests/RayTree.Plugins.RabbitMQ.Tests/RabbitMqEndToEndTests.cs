@@ -60,7 +60,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
             DeclareQueue = true,
             ExchangeName = "entity_changes",
             BindingKey = "#"
-        }, NullLoggerFactory.Instance);
+        });
 
     // -------------------------------------------------------------------------
     // Tests
