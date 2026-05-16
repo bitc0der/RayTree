@@ -77,12 +77,13 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
         }
 
         // --- Validate: factory must return distinct instances per name ---
-        var instancesSeen = new HashSet<IQueueConsumer>(ReferenceEqualityComparer.Instance);
+        var instanceToFirstName = new Dictionary<IQueueConsumer, string>(ReferenceEqualityComparer.Instance);
         foreach (var (name, consumer) in consumers)
         {
-            if (!instancesSeen.Add(consumer))
+            if (!instanceToFirstName.TryAdd(consumer, name))
                 throw new InvalidOperationException(
-                    $"Consumer factory returned the same IQueueConsumer instance for multiple handler names " +
+                    $"Consumer factory returned the same IQueueConsumer instance for handler names " +
+                    $"'{instanceToFirstName[consumer]}' and '{name}' " +
                     $"(entity '{typeof(TEntity).Name}'). " +
                     "Each handler name requires an independent consumer instance with its own ACK lifecycle.");
         }

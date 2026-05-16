@@ -172,9 +172,8 @@ public class SharedHandlerDispatchTests
             })
             .OnChange<Order>(ChangeType.Insert, (_, _) => { invoked.Add("C"); return Task.CompletedTask; });
 
-        Assert.DoesNotThrowAsync(() => subscriber.ProcessMessageAsync(InsertEnvelope()));
-        // Give the async method time to complete
-        await Task.Delay(50);
+        // SkipOnFailure=true: should complete without throwing even though B fails
+        await subscriber.ProcessMessageAsync(InsertEnvelope());
 
         Assert.That(invoked, Is.EqualTo(new[] { "A", "B-fail", "C" }),
             "B is skipped (logged at Error) but C still runs");
