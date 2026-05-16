@@ -5,8 +5,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
-    <PackageReference Include="MessagePack" />
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MessagePack"/>
   </ItemGroup>
 </Project>

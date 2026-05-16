@@ -5,7 +5,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj" />
-    <PackageReference Include="OpenTelemetry.Api" />
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Api"/>
   </ItemGroup>
 </Project>

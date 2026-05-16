@@ -5,7 +5,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj"/>
   </ItemGroup>
 </Project>
