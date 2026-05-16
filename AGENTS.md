@@ -13,6 +13,7 @@ dotnet build RayTree.sln
 dotnet test tests/RayTree.Core.Tests
 dotnet test tests/RayTree.Plugins.InMemory.Tests
 dotnet test tests/RayTree.EntityFrameworkCore.Tests
+dotnet test tests/RayTree.OpenTelemetry.Tests
 dotnet test tests/RayTree.Plugins.Compressors.{Brotli,Gzip,Lz4}.Tests
 dotnet test tests/RayTree.Plugins.Serializers.{Json,MessagePack,Protobuf}.Tests
 
@@ -124,6 +125,7 @@ src/
   RayTree.Core/                        # EntityChangeTracker, builder, publisher, subscriber
   RayTree.Hosting/                     # IHostedService + AddChangeTracking DI extension
   RayTree.EntityFrameworkCore/         # SaveChangesAsync interceptor
+  RayTree.OpenTelemetry/               # OTel SDK wiring (peer assembly)
   RayTree.Plugins.PostgreSQL/          # Outbox + Repository + NOTIFY/LISTEN publisher
   RayTree.Plugins.InMemory/            # In-process queue (tests / local dev)
   RayTree.Plugins.Kafka/               # KafkaPublisher + KafkaConsumer
@@ -134,6 +136,7 @@ tests/
   RayTree.Core.Tests/                  # Unit tests (no Docker)
   RayTree.Plugins.InMemory.Tests/      # Unit tests (no Docker)
   RayTree.EntityFrameworkCore.Tests/   # Unit tests (no Docker)
+  RayTree.OpenTelemetry.Tests/         # Unit tests (no Docker)
   RayTree.Plugins.Serializers.*.Tests/ # Unit tests (no Docker)
   RayTree.Plugins.Compressors.*.Tests/ # Unit tests (no Docker)
   RayTree.Plugins.PostgreSQL.Tests/    # Integration tests (Docker)
