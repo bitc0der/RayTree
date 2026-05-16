@@ -6,6 +6,211 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.9-pre-release]
+
+### Added
+
+#### OpenTelemetry metrics (`RayTree.Core`, `RayTree.OpenTelemetry`)
+
+RayTree now ships a complete, production-ready metrics surface built on the BCL
+`System.Diagnostics.Metrics` API. All instruments are emitted through a single
+`RayTreeMeter` instance; OTel SDK wiring is provided by the new
+`RayTree.OpenTelemetry` peer assembly.
+
+**`RayTree.Core` — instrument layer**
+
+`RayTreeMeter` owns a `System.Diagnostics.Metrics.Meter("RayTree", <version>)`
+and the full set of 14 instruments:
+
+| Instrument | Kind | Unit | Source |
+|---|---|---|---|
+| `raytree.outbox.writes` | Counter | `{writes}` | `OutboxPublisherService` |
+| `raytree.outbox.messages.published` | Counter | `{messages}` | `OutboxPublisherService` |
+| `raytree.outbox.messages.failed` | Counter | `{messages}` | `OutboxPublisherService` |
+| `raytree.outbox.records.cleaned` | Counter | `{records}` | `OutboxPublisherService` |
+| `raytree.outbox.stale_unpublished.removed` | Counter | `{records}` | `OutboxPublisherService` |
+| `raytree.outbox.batch.size` | Histogram | `{messages}` | `OutboxPublisherService` |
+| `raytree.outbox.publish.duration` | Histogram | `s` | `OutboxPublisherService` |
+| `raytree.outbox.publish.attempts` | Histogram | `{attempts}` | `OutboxPublisherService` |
+| `raytree.outbox.lag.duration` | Histogram | `s` | `OutboxPublisherService` |
+| `raytree.outbox.payload.size` | Histogram | `By` | `OutboxPublisherService` |
+| `raytree.outbox.pending` | ObservableGauge | `{messages}` | `RayTreeMeter` |
+| `raytree.subscriber.messages.processed` | Counter | `{messages}` | `ChangeSubscriber` |
+| `raytree.subscriber.messages.deduplicated` | Counter | `{messages}` | `ChangeSubscriber` |
+| `raytree.subscriber.messages.skipped` | Counter | `{messages}` | `ChangeSubscriber` |
+| `raytree.subscriber.handler.failures` | Counter | `{handlers}` | `ChangeSubscriber` |
+| `raytree.subscriber.handler.attempts` | Histogram | `{attempts}` | `ChangeSubscriber` |
+| `raytree.subscriber.processing.duration` | Histogram | `s` | `ChangeSubscriber` |
+| `raytree.subscriber.lag.duration` | Histogram | `s` | `ChangeSubscriber` |
+
+All instruments are tagged with `entity_type`; change-specific instruments add
+`change_type`; the skipped-messages counter adds `reason`.
+
+- `raytree.outbox.pending` is an observable gauge: `RegisterPendingGauge(Func<IEnumerable<(Type, IOutbox)>>)`
+  registers the callback. Results are cached for `DefaultPendingCacheTtl = 10 s`
+  (configurable via the `RayTreeMeter(TimeSpan pendingCacheTtl)` constructor
+  overload; pass `TimeSpan.Zero` to disable caching). This bounds DB round-trips
+  to at most one query per outbox per cache window, even with sub-second OTel
+  collection intervals.
+
+- `RayTreeMeter.MeterName` is a public constant (`"RayTree"`) for use in custom
+  OTel views and filters.
+
+**Builder and DI integration**
+
+- `ChangeTrackingBuilder` creates a `RayTreeMeter` automatically when the caller
+  does not supply one.
+- `UseMeter(RayTreeMeter)` on `IChangeTrackingBuilder` accepts a caller-owned
+  meter. The tracker tracks ownership via an `ownsMeter` flag: auto-created meters
+  are disposed with the tracker; caller-supplied meters are left alone.
+- `EntityChangeTracker.Meter` exposes the meter so callers can inspect or share it.
+- `AddChangeTracking` (Generic Host) registers `RayTreeMeter` as a DI singleton and
+  feeds it back into the builder via `UseMeter`, so custom instrumentation code can
+  inject `RayTreeMeter` directly.
+
+**`RayTree.OpenTelemetry` — OTel SDK peer assembly**
+
+New assembly with zero production dependency on `RayTree.Core` beyond the meter
+name constant. `RayTree.Core` and `RayTree.Hosting` continue to depend only on the
+BCL (`System.Diagnostics.Metrics`) — applications that do not pull in
+`RayTree.OpenTelemetry` receive zero transitive OTel dependencies.
+
+```csharp
+services.AddOpenTelemetry()
+    .WithMetrics(metrics => metrics
+        .AddRayTreeMetrics()     // ← the only call needed
+        .AddPrometheusExporter());
+```
+
+- `RayTreeInstrumentation` — `public static class` exposing
+  `public const string MeterName = "RayTree"`. Use this in custom OTel views
+  instead of hard-coding the literal.
+- `MeterProviderBuilderExtensions.AddRayTreeMetrics` — thin `AddMeter(MeterName)`
+  pass-through. Does not configure exporters, views, or histogram bucket
+  boundaries; callers retain full control.
+
+#### Documentation
+
+- New `docs/opentelemetry-metrics.md`: full instrument inventory with tags and
+  units, Generic Host and standalone `MeterListener` wire-up examples, pending-gauge
+  cache behaviour, suggested histogram bucket boundaries for 8 instruments, sample
+  Prometheus queries (throughput, tail latency, backlog alert, retry shape), and
+  `UseMeter` injection example.
+- `docs/README.md`: OpenTelemetry Metrics added to the Features list.
+- `docs/configuration.md`: "Observability — OpenTelemetry Metrics" section with
+  default and custom meter usage.
+
+### Breaking Changes
+
+#### `IOutbox` gains `GetPendingCountAsync`
+
+```csharp
+Task<long> GetPendingCountAsync(Type entityType, CancellationToken ct = default);
+```
+
+Returns the count of unpublished records for the given entity type. Used by the
+`raytree.outbox.pending` observable gauge. External `IOutbox` implementations must
+add this method.
+
+#### `ChangePublisher` constructor requires `RayTreeMeter`
+
+Before: `new ChangePublisher(ILoggerFactory)`  
+After: `new ChangePublisher(ILoggerFactory, RayTreeMeter)`
+
+`RayTreeMeter` is required (non-nullable). The builder layer constructs a default
+meter when the caller does not supply one; there is no internal fallback inside
+`ChangePublisher`.
+
+#### `OutboxPublisherService` constructor requires `RayTreeMeter`
+
+Before: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory)`  
+After: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory, RayTreeMeter)`
+
+#### `ChangeSubscriber` constructor requires `RayTreeMeter`
+
+Before: `new ChangeSubscriber(ILogger<ChangeSubscriber>, IDeduplicationStore?, SubscriberOptions?)`  
+After: `new ChangeSubscriber(ILogger<ChangeSubscriber>, RayTreeMeter, IDeduplicationStore?, SubscriberOptions?)`
+
+### Tests
+
+- `OutboxPublisherServiceMetricsTests` — new test: `PublishWithRetry_OnExhaustion_RecordsAttemptsAndFailureDurations`
+  verifies that `raytree.outbox.publish.attempts` and `raytree.outbox.publish.duration`
+  are both recorded when all retry attempts are exhausted.
+- `ChangeSubscriberMetricsTests` — new test: `ProcessMessageAsync_HandlerAlwaysFails_RecordsAttemptsFailuresAndProcessingDurations`
+  verifies `raytree.subscriber.handler.attempts`, `raytree.subscriber.handler.failures`,
+  and `raytree.subscriber.processing.duration` on full retry exhaustion.
+- `RayTreeMeterPendingGaugeCacheTests` (3 tests) — pins the pending-gauge cache contract:
+  two observations within TTL hit the outbox once; `TimeSpan.Zero` disables the cache;
+  TTL expiry triggers a re-poll.
+- `UseMeterOwnershipTests` (2 tests) — proves that a caller-supplied meter is not
+  disposed when the tracker is disposed, and that a builder-created meter is.
+- `RayTreeMeterEndToEndTests` (3 tests, `RayTree.OpenTelemetry.Tests`) — end-to-end
+  OTel SDK pipeline tests: real instruments flow through `AddRayTreeMetrics` and a
+  `BaseExporter<Metric>`; all instrument names pass the Prometheus naming validation;
+  unit metadata (`s`, `By`) survives the pipeline.
+
+#### `RabbitMqConsumer` constructor simplified
+
+`RabbitMqConsumer` no longer accepts an `ILoggerFactory` parameter. Message-receive
+errors now silently nack and requeue without a log entry; the consumer's internal
+channel handles retries at the broker level. Builder call-sites using
+`UseRabbitMq(configure)` are unaffected — the extension method was updated in
+parallel. Direct construction is affected:
+
+Before: `new RabbitMqConsumer(options, loggerFactory)`  
+After: `new RabbitMqConsumer(options)`
+
+### Removed
+
+#### `RayTree.Plugins.Serializers.MsgPack` project deleted
+
+The `RayTree.Plugins.Serializers.MsgPack` assembly was a duplicate of
+`RayTree.Plugins.Serializers.MessagePack` (different namespace, identical
+implementation). It has been removed. Use `RayTree.Plugins.Serializers.MessagePack`
+(`MessagePackSerializerPlugin` in the `RayTree.Plugins.Serializers.MessagePack`
+namespace) instead.
+
+### Fixed
+
+- `GetPendingCountAsync_OnEmptyTable_ReturnsZero` (PostgreSQL integration test) was
+  returning 3 instead of 0 because the shared `pending_count_outbox` table was not
+  cleaned up between tests. Added `[TearDown]` with `TRUNCATE TABLE` to isolate
+  each test.
+
+### Infrastructure
+
+#### Solution format migrated to `.slnx`
+
+`RayTree.sln` has been replaced by `RayTree.slnx` (the new XML-based Visual Studio
+solution format). No project files changed; only the solution container format
+updated. CI pipelines reference `RayTree.slnx`. If you have local shell scripts or
+IDE settings pointing at `RayTree.sln`, update them to `RayTree.slnx`.
+
+#### Security policy (`SECURITY.md`)
+
+A `SECURITY.md` file has been added at the repo root. It documents the supported
+version policy (latest only) and the responsible-disclosure process via GitHub
+Security Advisories.
+
+### Dependencies
+
+| Package | From | To |
+|---|---|---|
+| `Microsoft.Extensions.Logging.Abstractions` | `10.0.7` | `10.0.8` |
+| `Microsoft.Extensions.DependencyInjection.Abstractions` | `10.0.7` | `10.0.8` |
+| `Microsoft.EntityFrameworkCore` | `10.0.7` | `10.0.8` |
+| `Microsoft.EntityFrameworkCore.InMemory` | `10.0.7` | `10.0.8` |
+| `Microsoft.Extensions.Hosting.Abstractions` | — | `10.0.8` (new — replaces full `Hosting`) |
+| `Microsoft.Extensions.Options.ConfigurationExtensions` | — | `10.0.8` (new — replaces `Configuration.Binder`) |
+| `OpenTelemetry` | — | `1.15.3` (new — `RayTree.OpenTelemetry` only) |
+| `OpenTelemetry.Api` | — | `1.15.3` (new — `RayTree.OpenTelemetry` only) |
+| `Microsoft.Extensions.Hosting` | `10.0.7` | removed (replaced by `Hosting.Abstractions`) |
+| `Microsoft.Extensions.Configuration.Binder` | `10.0.7` | removed (replaced by `Options.ConfigurationExtensions`) |
+| `Microsoft.EntityFrameworkCore.Relational` | `10.0.7` | removed (unused direct reference) |
+| `Microsoft.Extensions.DependencyInjection` | `10.0.7` | removed (unused direct reference) |
+
+---
+
 ## [0.0.8-pre-release]
 
 ### Breaking Changes
