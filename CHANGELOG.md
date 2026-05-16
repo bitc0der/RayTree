@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.0.10-pre-release]
 
 ### Added
 
@@ -186,7 +186,7 @@ add this method.
 
 #### `ChangePublisher` constructor requires `RayTreeMeter`
 
-Before: `new ChangePublisher(ILoggerFactory)`  
+Before: `new ChangePublisher(ILoggerFactory)`
 After: `new ChangePublisher(ILoggerFactory, RayTreeMeter)`
 
 `RayTreeMeter` is required (non-nullable). The builder layer constructs a default
@@ -195,12 +195,12 @@ meter when the caller does not supply one; there is no internal fallback inside
 
 #### `OutboxPublisherService` constructor requires `RayTreeMeter`
 
-Before: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory)`  
+Before: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory)`
 After: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory, RayTreeMeter)`
 
 #### `ChangeSubscriber` constructor requires `RayTreeMeter`
 
-Before: `new ChangeSubscriber(ILogger<ChangeSubscriber>, IDeduplicationStore?, SubscriberOptions?)`  
+Before: `new ChangeSubscriber(ILogger<ChangeSubscriber>, IDeduplicationStore?, SubscriberOptions?)`
 After: `new ChangeSubscriber(ILogger<ChangeSubscriber>, RayTreeMeter, IDeduplicationStore?, SubscriberOptions?)`
 
 ### Tests
@@ -229,7 +229,7 @@ channel handles retries at the broker level. Builder call-sites using
 `UseRabbitMq(configure)` are unaffected — the extension method was updated in
 parallel. Direct construction is affected:
 
-Before: `new RabbitMqConsumer(options, loggerFactory)`  
+Before: `new RabbitMqConsumer(options, loggerFactory)`
 After: `new RabbitMqConsumer(options)`
 
 ### Removed
@@ -342,14 +342,14 @@ New internal infrastructure supporting the above:
 
 ### Breaking Changes
 
-- `PostgreSqlOutbox<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.  
-  Before: `new PostgreSqlOutbox<TEntity>(options)`  
-  After: `new PostgreSqlOutbox<TEntity>(options, loggerFactory)`  
+- `PostgreSqlOutbox<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.
+  Before: `new PostgreSqlOutbox<TEntity>(options)`
+  After: `new PostgreSqlOutbox<TEntity>(options, loggerFactory)`
   Builder call-sites are unaffected (the extension method absorbs the default).
 
-- `PostgreSqlRepository<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.  
-  Before: `new PostgreSqlRepository<TEntity>(options)`  
-  After: `new PostgreSqlRepository<TEntity>(options, loggerFactory)`  
+- `PostgreSqlRepository<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.
+  Before: `new PostgreSqlRepository<TEntity>(options)`
+  After: `new PostgreSqlRepository<TEntity>(options, loggerFactory)`
   Builder call-sites are unaffected.
 
 ---
