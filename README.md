@@ -1,6 +1,6 @@
 # RayTree
 
-A modular .NET 8 entity change-tracking library built on the **outbox pattern**. Track inserts, updates, and deletes on any entity type, persist them reliably via an outbox, and fan them out to RabbitMQ, Kafka, PostgreSQL NOTIFY, or any custom broker — with built-in serialization, compression, deduplication, and retry.
+A modular .NET 10 entity change-tracking library built on the **outbox pattern**. Track inserts, updates, and deletes on any entity type, persist them reliably via an outbox, and fan them out to RabbitMQ, Kafka, PostgreSQL NOTIFY, or any custom broker — with built-in serialization, compression, deduplication, and retry.
 
 ## Pipeline
 
@@ -22,6 +22,7 @@ EntityChangeTracker.TrackInsertAsync / TrackUpdateAsync / TrackDeleteAsync
 | `RayTree.Core` | Core abstractions, `EntityChangeTracker`, fluent builders |
 | `RayTree.Hosting` | `AddChangeTracking` for .NET Generic Host / ASP.NET Core |
 | `RayTree.EntityFrameworkCore` | `EntityChangeInterceptor` — auto-track EF Core `SaveChanges` |
+| `RayTree.OpenTelemetry` | OTel SDK wiring (`AddRayTreeMetrics`, `RayTreeInstrumentation` constants) |
 | `RayTree.Plugins.InMemory` | In-memory outbox, queue, and repository (tests / local dev) |
 | `RayTree.Plugins.PostgreSQL` | PostgreSQL outbox + NOTIFY/LISTEN fast-path publisher. Schema is derived from entity properties and managed automatically — tables are created on first run and migrated on subsequent runs (new columns added, index definitions kept in sync). Customisable via `[Table]`, `[Column]`, `[NotMapped]`, `[Required]`, `[MaxLength]`, and `[StringLength]` attributes. See [Database Migration Guide](docs/database-migration.md). |
 | `RayTree.Plugins.RabbitMQ` | RabbitMQ publisher and consumer |
@@ -38,20 +39,23 @@ EntityChangeTracker.TrackInsertAsync / TrackUpdateAsync / TrackDeleteAsync
 ### Standalone (no DI)
 
 ```csharp
-var consumer = new RabbitMqConsumer(consumerOptions);
+using RayTree.Core.Tracking;
+using RayTree.Plugins.InMemory;
+using RayTree.Plugins.RabbitMQ;
+using RayTree.Plugins.Serializers.Json;
 
-var tracker = new ChangeTrackingBuilder()
+var tracker = await new ChangeTrackingBuilder()
     .UseSerializer<JsonSerializerPlugin>(_ => new JsonSerializerPlugin())
     .UseCompressor<NoOpCompressorPlugin>(_ => new NoOpCompressorPlugin())
     .ForEntity<Order>(e => e
         .UseOutbox(new InMemoryOutbox())
         .UsePublisher(new RabbitMqPublisher(publisherOptions))
-        .UseConsumer(consumer)
+        .UseConsumer(new RabbitMqConsumer(consumerOptions))
         .OnInsert(async (change, ct) =>
         {
             Console.WriteLine($"Order {change.EntityId} inserted");
         }))
-    .Build(); // initializes and starts publisher loops
+    .BuildAsync(); // initializes and starts publisher loops
 
 // Publish a change
 await tracker.TrackInsertAsync(new Order { Id = 1, Total = 49.99m });
@@ -65,11 +69,22 @@ tracker.Dispose();
 ### .NET Generic Host / ASP.NET Core
 
 ```csharp
+using RayTree.Core.Tracking;
+using RayTree.Hosting;
+using RayTree.Plugins.PostgreSQL.Outbox;
+using RayTree.Plugins.PostgreSQL.Extensions;
+using RayTree.Plugins.RabbitMQ;
+using RayTree.Plugins.Serializers.Json;
+
 builder.Services.AddChangeTracking(builder.Configuration, b => b
     .UseSerializer<JsonSerializerPlugin>(_ => new JsonSerializerPlugin())
     .UseCompressor<NoOpCompressorPlugin>(_ => new NoOpCompressorPlugin())
+    .UsePostgreSqlOutbox(entityType => new PostgreSqlOutboxOptions
+    {
+        ConnectionString = connectionString,
+        OutboxTableName = $"{entityType.Name.ToLower()}_outbox"
+    })
     .ForEntity<Order>(e => e
-        .UsePostgreSqlOutbox(new PostgreSqlOutboxOptions { ConnectionString = connectionString })
         .UsePublisher(new RabbitMqPublisher(publisherOptions))
         .UseConsumer(new RabbitMqConsumer(consumerOptions))
         .OnInsert(async (change, ct) => { /* handle insert */ })
@@ -95,10 +110,10 @@ Optional `appsettings.json` overrides:
 ```csharp
 services.AddDbContext<AppDbContext>(options => options
     .UseNpgsql(connectionString)
-    .AddInterceptors(new EntityChangeInterceptor(tracker)));
+    .AddInterceptors(new EntityChangeInterceptor(tracker, new[] { typeof(Order), typeof(Customer) })));
 ```
 
-Changes are automatically tracked on `SaveChangesAsync` based on EF change-tracker state.
+Changes are automatically tracked on `SaveChangesAsync` based on EF change-tracker state. Pass the entity types you want the interceptor to observe.
 
 ### Publisher-only builder
 
@@ -136,8 +151,9 @@ Register a deduplication store to suppress duplicate deliveries:
 // In-memory (default, single process)
 // No configuration needed — InMemoryDeduplicationStore is used automatically.
 
-// Redis (distributed)
-builder.ForEntity<Order>(e => e.UseDeduplicationStore(new RedisDeduplicationStore(redis)));
+// Custom store
+builder.ForEntity<Order>(e => e.UseSubscriberOptions(opts => opts.MaxRetries = 3));
+// Then register your custom IDeduplicationStore implementation via UseDeduplicationStore()
 ```
 
 ## Running tests
@@ -147,6 +163,13 @@ builder.ForEntity<Order>(e => e.UseDeduplicationStore(new RedisDeduplicationStor
 dotnet test tests/RayTree.Core.Tests
 dotnet test tests/RayTree.Plugins.InMemory.Tests
 dotnet test tests/RayTree.EntityFrameworkCore.Tests
+dotnet test tests/RayTree.OpenTelemetry.Tests
+dotnet test tests/RayTree.Plugins.Serializers.Json.Tests
+dotnet test tests/RayTree.Plugins.Serializers.MessagePack.Tests
+dotnet test tests/RayTree.Plugins.Serializers.Protobuf.Tests
+dotnet test tests/RayTree.Plugins.Compressors.Gzip.Tests
+dotnet test tests/RayTree.Plugins.Compressors.Brotli.Tests
+dotnet test tests/RayTree.Plugins.Compressors.Lz4.Tests
 
 # Integration tests (requires Docker — Testcontainers spins up containers automatically)
 dotnet test tests/RayTree.Plugins.PostgreSQL.Tests
