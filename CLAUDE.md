@@ -133,6 +133,13 @@ Do not override these rules. If a rule from `.editorconfig` conflicts with a gen
 
 ## .NET Conventions
 
+### Common
+
+- Prefer interfaces over abstract classes for plugin contracts — they are easier to implement and compose.
+- Constructor injection for all dependencies. No service locator, no `static` state, no hidden dependencies.
+- Avoid `object` parameters in public APIs where it is possible — use generics or specific types.
+- Document public APIs with XML doc comments (`/// <summary>`) — especially parameters, return values, and exceptions thrown.
+
 ### async / await
 
 - Every method that does I/O must be `async` and accept a `CancellationToken` as its last parameter. Never swallow or ignore the token.
@@ -158,17 +165,22 @@ Do not override these rules. If a rule from `.editorconfig` conflicts with a gen
 ### LINQ and collections
 
 - Do not enumerate an `IEnumerable<T>` more than once — call `.ToList()` or `.ToArray()` at the point of materialisation and reuse the result.
-- Return `IReadOnlyList<T>` or `IReadOnlyCollection<T>` from public APIs when the caller must not mutate the result. Return `IEnumerable<T>` only when lazy streaming is intentional.
+- Return `IReadOnlyList<T>` or `IReadOnlyCollection<T>` from public APIs when the caller must not mutate the result. Use `IAsyncEnumerable<T>` for streaming results. Return `IEnumerable<T>` only when lazy streaming is intentional.
 - Prefer `List<T>.ForEach` / `foreach` over LINQ `Select` + side-effects. LINQ is for projections, not mutations.
 - Avoid chaining more than three LINQ operators without assigning an intermediate result to a named variable — readability over one-liners.
 
 ### Test conventions
 
+- Write tests for new code. Every new public method or significant logic branch needs test coverage.
 - Test method names follow the pattern `MethodUnderTest_Scenario_ExpectedBehaviour` (e.g., `WriteAsync_WhenEntityIsNull_ThrowsArgumentNullException`).
 - Each test follows Arrange / Act / Assert with a blank line between sections.
 - Assert only one logical outcome per test. Multiple `Assert` calls are fine when they all verify the same logical fact.
 - Do not share mutable state between tests in the same class. Each test arranges its own dependencies.
 - Unit tests must not touch the file system, network, or real time (`DateTime.UtcNow`). Inject `TimeProvider` or a clock abstraction if the production code reads the clock.
+- Test edge cases: null inputs, empty collections, cancellation, exceptions, boundary values.
+- Use `Assert.ThrowsAsync<T>()` for async exception tests, not `try/catch` with `Assert.Fail()`.
+- Mock at the interface level. Use the plugin interfaces (`IOutbox`, `IQueuePublisher`, etc.) as mock boundaries, etc.
+- Keep tests fast. Unit tests should complete in milliseconds. If a test is slow, it probably needs Docker and belongs in an integration test project.
 
 ### Span&lt;T&gt; and Memory&lt;T&gt;
 
@@ -184,6 +196,14 @@ Do not override these rules. If a rule from `.editorconfig` conflicts with a gen
 - Prefer string interpolation (`$"..."`) over `string.Concat` or `+` for readability. Use `string.Format` only when formatting must be passed around as a delegate.
 - Avoid `ToString()` on nullable types — null-check or use `?.ToString() ?? string.Empty` explicitly.
 
+### Nullability Discipline
+
+- Every reference type must be annotated. `string` means non-null; `string?` means nullable.
+- Initialize required fields in the constructor or with a default value. The compiler will flag unassigned non-nullable fields.
+- Use `ArgumentNullException.ThrowIfNull()` for guard clauses — it is concise and recognized by the nullability analyzer.
+- Return `Empty` collections instead of `null`. Use `Array.Empty<T>()`, `Enumerable.Empty<T>()`, or `ReadOnlyCollection<T>.Empty`.
+- When in doubt, make it non-nullable and throw `ArgumentNullException` if the caller passes null. This is safer and easier to reason about.
+
 ## Design Principles
 
 All code in this repository must respect the following principles. When reviewing or modifying code, check for violations before accepting a change.
@@ -198,6 +218,34 @@ All code in this repository must respect the following principles. When reviewin
 - **YAGNI** — do not add features, overloads, or extension points for hypothetical future requirements. Three similar lines are better than a premature abstraction.
 - **Constructor injection** — dependencies are declared in the constructor, never set via properties or internal methods after construction. Optional dependencies use nullable parameters (`ChangeSubscriber? subscriber = null`).
 - **Dead code** — unused fields, parameters, methods, and classes are removed immediately. A field that is injected but never read is a bug, not a harmless remnant.
+
+## AI Coding Agent Rules
+
+These rules are optimized for Claude Code (and similar AI coding agents) working in this repository. They prioritize safety, efficiency, and correctness.
+
+### Efficient Workflow
+
+- Don't guess, ask clarifying questions. Especially - when in doubt.
+- Read before editing. Always read the full file (or relevant section) before making changes.
+- Search before creating. Check if a type, method, or pattern already exists before writing new code.
+- Batch independent operations. When multiple files need similar changes, identify all targets first, then edit them in parallel.
+- Use existing patterns. Copy the structure, naming, and conventions from neighboring files rather than inventing new ones.
+- Understand the dependency graph before changing interfaces. A change to `IOutbox` affects every outbox implementation.
+
+### Safety First
+
+- Never commit unless the user explicitly asks. Always confirm before running `git commit`.
+- Never delete files unless the user asks or they are provably dead code (zero references across the entire solution).
+- Never hardcode secrets, connection strings, or credentials. Use configuration, environment variables, or test fixtures.
+- Never suppress warnings with `#pragma` or `<NoWarn>` unless there is a documented, unavoidable reason.
+
+### Verify Before Declaring Done
+
+- Always build after making code changes: `dotnet build RayTree.sln`
+- Always run relevant tests after changes: find the matching test project and run it.
+- Zero warnings is the standard — `TreatWarningsAsErrors=true` is global.
+- If tests fail, fix the root cause, do not modify tests to pass unless the test itself was wrong (explain why).
+- Run `dotnet format --verify-no-changes` if unsure about style compliance.
 
 ## CI
 
