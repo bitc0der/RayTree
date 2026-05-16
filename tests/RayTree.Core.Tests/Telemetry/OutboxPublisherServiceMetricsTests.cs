@@ -33,6 +33,30 @@ public class OutboxPublisherServiceMetricsTests
         return (publisher, meter, collector, outbox);
     }
 
+    private static async Task WaitForMetricAsync(TestMetricsCollector collector, string name, double expectedValue, TimeSpan timeout)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            if (collector.Sum(name) >= expectedValue)
+                return;
+            await Task.Delay(10);
+        }
+        throw new TimeoutException($"Metric '{name}' did not reach {expectedValue} within {timeout}");
+    }
+
+    private static async Task WaitForMetricCountAsync(TestMetricsCollector collector, string name, int minCount, TimeSpan timeout)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            if (collector.Get(name).Count >= minCount)
+                return;
+            await Task.Delay(10);
+        }
+        throw new TimeoutException($"Metric '{name}' did not reach {minCount} measurements within {timeout}");
+    }
+
     [Test]
     public async Task PublishWithRetry_OnSuccess_IncrementsPublished_RecordsLag_RecordsPayloadSize()
     {
@@ -58,7 +82,7 @@ public class OutboxPublisherServiceMetricsTests
 
         using var svc = new OutboxPublisherService(publisher, typeof(Sample), options, NullLoggerFactory.Instance, meter);
         await svc.StartAsync();
-        await Task.Delay(300);
+        await WaitForMetricAsync(collector, "raytree.outbox.messages.published", 1, TimeSpan.FromSeconds(5));
         await svc.StopAsync();
 
         Assert.That(collector.Sum("raytree.outbox.messages.published"), Is.EqualTo(1));
@@ -98,7 +122,7 @@ public class OutboxPublisherServiceMetricsTests
 
         using var svc = new OutboxPublisherService(publisher, typeof(Sample), options, NullLoggerFactory.Instance, meter);
         await svc.StartAsync();
-        await Task.Delay(300);
+        await WaitForMetricAsync(collector, "raytree.outbox.messages.failed", 1, TimeSpan.FromSeconds(5));
         await svc.StopAsync();
 
         Assert.That(collector.Sum("raytree.outbox.messages.failed"), Is.GreaterThanOrEqualTo(1));
@@ -139,7 +163,7 @@ public class OutboxPublisherServiceMetricsTests
 
         using var svc = new OutboxPublisherService(publisher, typeof(Sample), options, NullLoggerFactory.Instance, meter);
         await svc.StartAsync();
-        await Task.Delay(300);
+        await WaitForMetricCountAsync(collector, "raytree.outbox.publish.attempts", 1, TimeSpan.FromSeconds(5));
         await svc.StopAsync();
 
         // Attempts must reflect the exhaustion value, not just success cases.
@@ -182,7 +206,7 @@ public class OutboxPublisherServiceMetricsTests
 
         using var svc = new OutboxPublisherService(publisher, typeof(Sample), options, NullLoggerFactory.Instance, meter);
         await svc.StartAsync();
-        await Task.Delay(250);
+        await WaitForMetricAsync(collector, "raytree.outbox.batch.size", 1, TimeSpan.FromSeconds(5));
         await svc.StopAsync();
 
         var batchValues = collector.Get("raytree.outbox.batch.size").Select(m => (int)m.Value).ToList();
