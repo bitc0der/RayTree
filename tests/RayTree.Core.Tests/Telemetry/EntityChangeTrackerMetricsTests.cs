@@ -61,23 +61,44 @@ public class EntityChangeTrackerMetricsTests
     }
 
     [Test]
-    public async Task NoListener_AllInstrumentationRuns_NoException()
+    public async Task NoListener_FullPublishSubscribePath_NoException()
     {
-        // Smoke test (10.15): no MeterListener attached anywhere — instrumentation must be silent.
+        // Smoke test (10.15): no MeterListener attached anywhere — instrumentation must be
+        // silent across the entire publish/subscribe pipeline, not just the write path.
+        var queue = new InMemoryQueue();
+        var handlerInvoked = new TaskCompletionSource<bool>();
+
         using var tracker = new ChangeTrackingBuilder(NullLoggerFactory.Instance)
+            // Default publisher polling is 5 s — speed it up so the test doesn't have to wait.
+            .UsePublisherOptions(o => o.PollingInterval = TimeSpan.FromMilliseconds(50))
             .ForEntity<Order>(e => e
                 .UseOutbox(new InMemoryOutbox())
-                .UsePublisher(new InMemoryQueue())
-                .UseConsumer(new InMemoryQueue())
+                .UsePublisher(queue)
+                .UseConsumer(queue)
                 .UseSerializer(new JsonSerializerPlugin())
-                .UseCompressor(new NoOpCompressorPlugin()))
+                .UseCompressor(new NoOpCompressorPlugin())
+                .OnChange(null, (_, _) =>
+                {
+                    handlerInvoked.TrySetResult(true);
+                    return Task.CompletedTask;
+                }))
             .Build();
+
+        using var consumerCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // Start the consumer loop in the background; the test asserts the full pipeline
+        // (track → outbox → publish → consume → deserialize → handler dispatch) runs without
+        // any instrumentation-related exception when no listener is attached.
+        _ = Task.Run(() => tracker.ConsumeFromConsumerAsync(queue, consumerCts.Token), consumerCts.Token);
 
         Assert.DoesNotThrowAsync(async () =>
         {
-            await tracker.TrackInsertAsync(new Order { Id = 1 });
-            await tracker.TrackUpdateAsync(new Order { Id = 1 });
+            await tracker.TrackInsertAsync(new Order { Id = 1, Name = "a" });
+            await tracker.TrackUpdateAsync(new Order { Id = 1, Name = "b" });
             await tracker.TrackDeleteAsync(new Order { Id = 1 });
+
+            // Wait for at least one handler dispatch to confirm the subscriber path executed.
+            var first = await Task.WhenAny(handlerInvoked.Task, Task.Delay(4000));
+            Assert.That(first, Is.SameAs(handlerInvoked.Task), "handler should have been invoked");
         });
     }
 }

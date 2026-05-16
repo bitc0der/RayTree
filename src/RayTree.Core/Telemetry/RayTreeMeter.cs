@@ -21,6 +21,13 @@ public sealed class RayTreeMeter : IDisposable
     private readonly object _gaugeGate = new();
     private Func<IEnumerable<(Type entityType, IOutbox outbox)>>? _pendingGaugeSource;
 
+    // Pending-count gauge cache. The OTel collection callback is synchronous and may fire as
+    // often as the configured collection interval (1 s for some Prometheus setups), so each
+    // call sampling N outboxes hits the DB N times. The cache memoises the last reading and
+    // refreshes only when stale to bound DB load to one query per outbox per refresh window.
+    private readonly TimeSpan _pendingCacheTtl;
+    private readonly Dictionary<Type, (long Count, DateTime SampledAt)> _pendingCache = new();
+
     // -------------------------------------------------------------------------
     // Publisher counters
     // -------------------------------------------------------------------------
@@ -54,8 +61,19 @@ public sealed class RayTreeMeter : IDisposable
     internal Histogram<double> SubscriberProcessingDuration { get; }
     internal Histogram<double> SubscriberLagDuration { get; }
 
-    public RayTreeMeter()
+    /// <summary>Default pending-count gauge cache TTL (10 seconds). Roughly aligns with typical
+    /// OTel collection cadence; tunable per-instance via the constructor.</summary>
+    public static readonly TimeSpan DefaultPendingCacheTtl = TimeSpan.FromSeconds(10);
+
+    public RayTreeMeter() : this(DefaultPendingCacheTtl) { }
+
+    /// <summary>
+    /// Constructs the meter with a custom pending-count gauge cache TTL. Pass
+    /// <see cref="TimeSpan.Zero"/> to disable caching (every observation polls the outbox).
+    /// </summary>
+    public RayTreeMeter(TimeSpan pendingCacheTtl)
     {
+        _pendingCacheTtl = pendingCacheTtl;
         var version = typeof(RayTreeMeter).Assembly.GetName().Version?.ToString() ?? "0.0.0";
         _meter = new Meter(MeterName, version);
 
@@ -106,22 +124,42 @@ public sealed class RayTreeMeter : IDisposable
 
         if (source == null) yield break;
 
+        var now = DateTime.UtcNow;
         foreach (var (entityType, outbox) in source())
         {
-            long count;
-            try
+            long? count = null;
+
+            // Cache lookup: return the previous value if it's still within the TTL window.
+            lock (_gaugeGate)
             {
-                // The OTel callback is synchronous; the count query is bounded by a partial index
-                // and runs at collection cadence (10s+), so blocking briefly here is acceptable.
-                count = outbox.GetPendingCountAsync(entityType).GetAwaiter().GetResult();
-            }
-            catch
-            {
-                // Never let a failed sample break the entire gauge — skip this entity type.
-                continue;
+                if (_pendingCache.TryGetValue(entityType, out var cached)
+                    && _pendingCacheTtl > TimeSpan.Zero
+                    && now - cached.SampledAt < _pendingCacheTtl)
+                {
+                    count = cached.Count;
+                }
             }
 
-            yield return new Measurement<long>(count, EntityTag(entityType));
+            if (count is null)
+            {
+                try
+                {
+                    // The OTel callback is synchronous; bounded by a partial index in the PG
+                    // case. Cached so we hit the DB at most once per TTL window per outbox.
+                    count = outbox.GetPendingCountAsync(entityType).GetAwaiter().GetResult();
+                }
+                catch
+                {
+                    // Never let a failed sample break the entire gauge — skip this entity type.
+                    // Don't update the cache so the next observation retries.
+                    continue;
+                }
+
+                lock (_gaugeGate)
+                    _pendingCache[entityType] = (count.Value, now);
+            }
+
+            yield return new Measurement<long>(count.Value, EntityTag(entityType));
         }
     }
 

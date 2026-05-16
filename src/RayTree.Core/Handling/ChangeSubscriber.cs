@@ -346,16 +346,19 @@ public class ChangeSubscriber : IDisposable
 
                 if (attempts > options.MaxRetries)
                 {
+                    _meter.SubscriberHandlerFailures.Add(1, entityTag, changeTag);
+                    // Record the attempts histogram on the failure path too so dashboards
+                    // showing retry-shape reflect the worst cases, not just successes.
+                    _meter.SubscriberHandlerAttempts.Record(attempts, entityTag);
+
                     if (options.SkipOnFailure)
                     {
-                        _meter.SubscriberHandlerFailures.Add(1, entityTag, changeTag);
                         _logger.LogError(ex,
                             "Handler for {EntityType} failed after {Attempts} attempt(s), skipping message",
                             registration.EntityType.Name, attempts);
                         return;
                     }
 
-                    _meter.SubscriberHandlerFailures.Add(1, entityTag, changeTag);
                     throw;
                 }
 

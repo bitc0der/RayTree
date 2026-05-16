@@ -74,11 +74,13 @@ The outbox pattern's defining health signals are **queue depth** (pending record
 
 **Alternative considered:** Name it `RayTree.Plugins.OpenTelemetry`. Rejected — the `Plugins.*` namespace is reserved for swap-in `IXxx` implementations (one outbox, one serializer, one broker per app). OTel integration is additive instrumentation, not a substitutable plugin.
 
-### D8: Builder integration — additive nullable parameter, default constructed in `Build()`
+### D8: Builder integration — `UseMeter` opt-in, builder constructs a default when absent; runtime services require a non-null meter
 
-**Choice:** `ChangeTrackingBuilder`, `ChangePublisherBuilder`, `ChangeSubscriberBuilder` get a `UseMeter(RayTreeMeter)` configuration method (optional). If not called, `Build()` constructs a fresh `RayTreeMeter` and passes it to the runtime services. The meter is owned by the tracker and disposed in `EntityChangeTracker.Dispose`.
+**Choice:** `ChangeTrackingBuilder`, `ChangePublisherBuilder`, `ChangeSubscriberBuilder` get a `UseMeter(RayTreeMeter)` configuration method (optional). If `UseMeter` is not called, `Build()` constructs a fresh `RayTreeMeter` and passes it to the runtime services. The runtime constructors — `ChangePublisher(ILoggerFactory, RayTreeMeter)`, `OutboxPublisherService(..., RayTreeMeter)`, `ChangeSubscriber(ILogger<…>, RayTreeMeter, …)` — declare `meter` as a **required, non-nullable** parameter and throw on null, consistent with the project's "no internal fallback" logger convention. When a builder constructs the meter on the caller's behalf the resulting tracker disposes it (`EntityChangeTracker.ownsMeter` flag); when the caller injects via `UseMeter` the caller retains ownership.
 
-**Rationale:** No constructor signature break. The `UseMeter` opt-in lets tests inject a meter scoped to the test (so `MeterListener` doesn't catch cross-test measurements). Default construction keeps the zero-config path simple.
+**Rationale:** Required injection at the runtime layer matches the existing `ILoggerFactory` discipline (services never `?? NullLoggerFactory.Instance` — that defaulting is the builder's job). The builder layer keeps zero-config ergonomics by manufacturing a default meter when the caller doesn't supply one. Test isolation comes via `UseMeter` with a per-test meter so a `MeterListener` filter can scope to a single tracker.
+
+**Note on existing test sites:** ~50 tests that constructed `ChangePublisher` / `ChangeSubscriber` / `OutboxPublisherService` directly were updated to pass `new RayTreeMeter()` explicitly. This is mechanical and one-time; new code should go through the builders.
 
 ## Risks / Trade-offs
 

@@ -158,6 +158,9 @@ public class OutboxPublisherService : IDisposable
                 if (attempts >= _options.MaxRetryCount)
                 {
                     _meter.OutboxFailed.Add(1, _entityTag, changeTag);
+                    // Record the attempts histogram on the failure path too so dashboards
+                    // showing "P99 attempts to publish" reflect the worst cases, not just successes.
+                    _meter.OutboxPublishAttempts.Record(attempts, _entityTag);
                     _logger.LogError(ex,
                         "Failed to publish change {ChangeId} for {EntityType} after {Retries} attempt(s)",
                         change.Id, _entityType.Name, attempts);

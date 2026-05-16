@@ -45,8 +45,8 @@ The system SHALL emit `System.Diagnostics.Metrics` instruments for every outbox 
 - **WHEN** `OutboxPublisherService` completes one publish attempt (whether it succeeded or threw)
 - **THEN** the `raytree.outbox.publish.duration` histogram records the elapsed seconds for that attempt, tagged with `entity_type` and `change_type`, with unit `s`
 
-#### Scenario: Attempts-to-success is recorded on success
-- **WHEN** `OutboxPublisherService` successfully publishes a change after N total attempts (N ≥ 1)
+#### Scenario: Attempts histogram is recorded for every completed publish (success or failure)
+- **WHEN** `OutboxPublisherService` finishes a publish — either successfully after N attempts or after exhausting all retries on the N-th attempt
 - **THEN** the `raytree.outbox.publish.attempts` histogram records the value N tagged with `entity_type`
 
 #### Scenario: End-to-end outbox lag is recorded
@@ -90,8 +90,8 @@ The system SHALL emit `System.Diagnostics.Metrics` instruments for every message
 - **WHEN** a handler invoked from `InvokeWithRetryAsync` throws on its final attempt and `SkipOnFailure=false`
 - **THEN** the `raytree.subscriber.handler.failures` counter is incremented by 1 with `entity_type` and `change_type` tags
 
-#### Scenario: Handler attempts-to-success is recorded
-- **WHEN** a handler invoked from `InvokeWithRetryAsync` returns successfully after N total attempts (N ≥ 1)
+#### Scenario: Handler attempts histogram is recorded for every completed dispatch (success or failure)
+- **WHEN** a handler invoked from `InvokeWithRetryAsync` finishes — either successfully after N attempts, or after exhausting all retries on the N-th attempt
 - **THEN** the `raytree.subscriber.handler.attempts` histogram records the value N tagged with `entity_type`
 
 #### Scenario: Single-attempt processing duration is recorded
