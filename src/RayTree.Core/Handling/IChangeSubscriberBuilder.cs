@@ -1,6 +1,7 @@
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Handling;
 
@@ -22,6 +23,13 @@ public interface IChangeSubscriberBuilder
 
     /// <summary>Registers a custom deduplication store shared by all entity consumers.</summary>
     IChangeSubscriberBuilder UseDeduplicationStore(IDeduplicationStore store);
+
+    /// <summary>
+    /// Injects an externally-owned <see cref="RayTreeMeter"/>. When omitted, <see cref="Build"/>
+    /// constructs a default meter — useful for test isolation (one meter per subscriber) or for
+    /// sharing a single meter across publisher and subscriber.
+    /// </summary>
+    IChangeSubscriberBuilder UseMeter(RayTreeMeter meter);
 
     /// <summary>
     /// Configures a single entity type via a scoped callback.  The callback receives an

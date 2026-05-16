@@ -5,6 +5,7 @@ using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Repository;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Distribution;
 
@@ -29,6 +30,7 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
 
     private Action<OutboxPublisherOptions>? _optionsConfigure;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
+    private RayTreeMeter? _meter;
     private bool _built;
 
     /// <inheritdoc/>
@@ -80,6 +82,14 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
     }
 
     /// <inheritdoc/>
+    public IChangePublisherBuilder UseMeter(RayTreeMeter meter)
+    {
+        ThrowIfBuilt();
+        _meter = meter ?? throw new ArgumentNullException(nameof(meter));
+        return this;
+    }
+
+    /// <inheritdoc/>
     public IChangePublisherBuilder ForEntity<TEntity>(Action<IEntityPublisherBuilder<TEntity>> configure)
         where TEntity : class
     {
@@ -91,11 +101,19 @@ public sealed class ChangePublisherBuilder : IChangePublisherBuilder
     }
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// When <see cref="UseMeter"/> has not been called, this method creates a default
+    /// <see cref="RayTreeMeter"/> that is passed to <see cref="ChangePublisher"/>. The publisher
+    /// does not dispose the meter; callers using this builder standalone (not via
+    /// <see cref="ChangeTrackingBuilder"/>) must call <see cref="UseMeter"/> and manage the
+    /// meter's lifetime themselves to avoid a resource leak.
+    /// </remarks>
     public ChangePublisher Build()
     {
         _built = true;
 
-        var publisher = new ChangePublisher(_loggerFactory);
+        var meter = _meter ?? new RayTreeMeter();
+        var publisher = new ChangePublisher(_loggerFactory, meter);
         _optionsConfigure?.Invoke(publisher.Options);
 
         var entityTypes = _outboxOverrides.Keys

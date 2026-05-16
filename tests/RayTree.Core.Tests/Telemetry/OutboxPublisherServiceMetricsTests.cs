@@ -1,0 +1,246 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using RayTree.Core.Distribution;
+using RayTree.Core.Models;
+using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
+using RayTree.Core.Plugins.Outbox;
+using RayTree.Core.Plugins.Publisher;
+using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
+using RayTree.Core.Tracking;
+using RayTree.Plugins.InMemory;
+using RayTree.Plugins.Serializers.Json;
+
+namespace RayTree.Core.Tests.Telemetry;
+
+[TestFixture]
+public class OutboxPublisherServiceMetricsTests
+{
+    private class Sample { public int Id { get; set; } }
+
+    private static (ChangePublisher publisher, RayTreeMeter meter, TestMetricsCollector collector, InMemoryOutbox outbox)
+        Build(IQueuePublisher queuePublisher)
+    {
+        var meter = new RayTreeMeter();
+        var collector = new TestMetricsCollector(meter);
+        var outbox = new InMemoryOutbox();
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance, meter);
+        publisher.RegisterOutbox(typeof(Sample), outbox);
+        publisher.RegisterPublisher(typeof(Sample), queuePublisher);
+        publisher.RegisterSerializer(typeof(Sample), new JsonSerializerPlugin());
+        publisher.RegisterCompressor(typeof(Sample), new NoOpCompressorPlugin());
+        return (publisher, meter, collector, outbox);
+    }
+
+    private static async Task WaitForMetricAsync(TestMetricsCollector collector, string name, double expectedValue, TimeSpan timeout)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            if (collector.Sum(name) >= expectedValue)
+                return;
+            await Task.Delay(10);
+        }
+        throw new TimeoutException($"Metric '{name}' did not reach {expectedValue} within {timeout}");
+    }
+
+    private static async Task WaitForMetricCountAsync(TestMetricsCollector collector, string name, int minCount, TimeSpan timeout)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            if (collector.Get(name).Count >= minCount)
+                return;
+            await Task.Delay(10);
+        }
+        throw new TimeoutException($"Metric '{name}' did not reach {minCount} measurements within {timeout}");
+    }
+
+    [Test]
+    public async Task PublishWithRetry_OnSuccess_IncrementsPublished_RecordsLag_RecordsPayloadSize()
+    {
+        var (publisher, meter, collector, outbox) = Build(new InMemoryQueue());
+        using var _meter = meter; using var _collector = collector; using var _publisher = publisher;
+
+        var options = new OutboxPublisherOptions
+        {
+            BatchSize         = 10,
+            PollingInterval   = TimeSpan.FromMilliseconds(50),
+            MaxPublishConcurrency = 1
+        };
+
+        await outbox.WriteAsync(new EntityChange<Sample>
+        {
+            EntityType    = typeof(Sample).FullName!,
+            EntityId      = "1",
+            ChangeType    = ChangeType.Insert,
+            CorrelationId = Guid.NewGuid(),
+            Timestamp     = DateTime.UtcNow.AddSeconds(-1.0),
+            State         = new Sample { Id = 1 }
+        });
+
+        using var svc = new OutboxPublisherService(publisher, typeof(Sample), options, NullLoggerFactory.Instance, meter);
+        await svc.StartAsync();
+        await WaitForMetricAsync(collector, "raytree.outbox.messages.published", 1, TimeSpan.FromSeconds(5));
+        await svc.StopAsync();
+
+        Assert.That(collector.Sum("raytree.outbox.messages.published"), Is.EqualTo(1));
+        Assert.That(collector.Get("raytree.outbox.publish.attempts")[0].Value, Is.EqualTo(1));
+        Assert.That(collector.Get("raytree.outbox.lag.duration")[0].Value, Is.InRange(0.5, 5.0));
+        Assert.That(collector.Get("raytree.outbox.payload.size")[0].Value, Is.GreaterThan(0));
+    }
+
+    [Test]
+    public async Task PublishWithRetry_AllAttemptsFail_IncrementsFailedCounter()
+    {
+        var queue = new Mock<IQueuePublisher>();
+        queue.Setup(q => q.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        queue.Setup(q => q.PublishAsync(It.IsAny<MessageEnvelope>(), It.IsAny<CancellationToken>()))
+             .ThrowsAsync(new InvalidOperationException("publish-broken"));
+
+        var (publisher, meter, collector, outbox) = Build(queue.Object);
+        using var _meter = meter; using var _collector = collector; using var _publisher = publisher;
+
+        var options = new OutboxPublisherOptions
+        {
+            BatchSize        = 1,
+            PollingInterval  = TimeSpan.FromMilliseconds(50),
+            MaxRetryCount    = 2,
+            RetryDelay       = TimeSpan.FromMilliseconds(1),
+            MaxPublishConcurrency = 1
+        };
+
+        await outbox.WriteAsync(new EntityChange<Sample>
+        {
+            EntityType    = typeof(Sample).FullName!,
+            EntityId      = "1",
+            ChangeType    = ChangeType.Insert,
+            CorrelationId = Guid.NewGuid(),
+            State         = new Sample { Id = 1 }
+        });
+
+        using var svc = new OutboxPublisherService(publisher, typeof(Sample), options, NullLoggerFactory.Instance, meter);
+        await svc.StartAsync();
+        await WaitForMetricAsync(collector, "raytree.outbox.messages.failed", 1, TimeSpan.FromSeconds(5));
+        await svc.StopAsync();
+
+        Assert.That(collector.Sum("raytree.outbox.messages.failed"), Is.GreaterThanOrEqualTo(1));
+    }
+
+    [Test]
+    public async Task PublishWithRetry_OnExhaustion_RecordsAttemptsAndFailureDurations()
+    {
+        // Spec: the attempts histogram is recorded for every completed publish — success OR
+        // failure. The publish.duration histogram is recorded per attempt regardless of
+        // outcome. This test exercises the failure path and asserts BOTH instruments fire,
+        // not just the failed counter.
+        var queue = new Mock<IQueuePublisher>();
+        queue.Setup(q => q.InitializeAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        queue.Setup(q => q.PublishAsync(It.IsAny<MessageEnvelope>(), It.IsAny<CancellationToken>()))
+             .ThrowsAsync(new InvalidOperationException("publish-broken"));
+
+        var (publisher, meter, collector, outbox) = Build(queue.Object);
+        using var _meter = meter; using var _collector = collector; using var _publisher = publisher;
+
+        var options = new OutboxPublisherOptions
+        {
+            BatchSize        = 1,
+            PollingInterval  = TimeSpan.FromMilliseconds(50),
+            MaxRetryCount    = 2,
+            RetryDelay       = TimeSpan.FromMilliseconds(1),
+            MaxPublishConcurrency = 1
+        };
+
+        await outbox.WriteAsync(new EntityChange<Sample>
+        {
+            EntityType    = typeof(Sample).FullName!,
+            EntityId      = "1",
+            ChangeType    = ChangeType.Insert,
+            CorrelationId = Guid.NewGuid(),
+            State         = new Sample { Id = 1 }
+        });
+
+        using var svc = new OutboxPublisherService(publisher, typeof(Sample), options, NullLoggerFactory.Instance, meter);
+        await svc.StartAsync();
+        await WaitForMetricCountAsync(collector, "raytree.outbox.publish.attempts", 1, TimeSpan.FromSeconds(5));
+        await svc.StopAsync();
+
+        // Attempts must reflect the exhaustion value, not just success cases.
+        var attempts = collector.Get("raytree.outbox.publish.attempts");
+        Assert.That(attempts, Is.Not.Empty, "attempts histogram must record on the failure path");
+        Assert.That(attempts.Select(m => (int)m.Value), Has.Some.EqualTo(options.MaxRetryCount));
+
+        // Per-attempt duration must be recorded even when each attempt threw.
+        var durations = collector.Get("raytree.outbox.publish.duration");
+        Assert.That(durations.Count, Is.GreaterThanOrEqualTo(options.MaxRetryCount),
+            "publish.duration must record one observation per attempt (success or failure)");
+        foreach (var d in durations)
+            Assert.That(d.Value, Is.GreaterThanOrEqualTo(0));
+    }
+
+    [Test]
+    public async Task ProcessBatch_RecordsBatchSizeHistogram()
+    {
+        var (publisher, meter, collector, outbox) = Build(new InMemoryQueue());
+        using var _meter = meter; using var _collector = collector; using var _publisher = publisher;
+
+        for (var i = 0; i < 3; i++)
+        {
+            await outbox.WriteAsync(new EntityChange<Sample>
+            {
+                EntityType = typeof(Sample).FullName!,
+                EntityId   = i.ToString(),
+                ChangeType = ChangeType.Insert,
+                CorrelationId = Guid.NewGuid(),
+                State      = new Sample { Id = i }
+            });
+        }
+
+        var options = new OutboxPublisherOptions
+        {
+            BatchSize       = 10,
+            PollingInterval = TimeSpan.FromMilliseconds(50),
+            MaxPublishConcurrency = 1
+        };
+
+        using var svc = new OutboxPublisherService(publisher, typeof(Sample), options, NullLoggerFactory.Instance, meter);
+        await svc.StartAsync();
+        await WaitForMetricAsync(collector, "raytree.outbox.batch.size", 1, TimeSpan.FromSeconds(5));
+        await svc.StopAsync();
+
+        var batchValues = collector.Get("raytree.outbox.batch.size").Select(m => (int)m.Value).ToList();
+        Assert.That(batchValues, Has.Some.EqualTo(3));
+    }
+
+    [Test]
+    public async Task PendingGauge_ReturnsCountForEachEntityType()
+    {
+        using var meter = new RayTreeMeter();
+        using var collector = new TestMetricsCollector(meter);
+
+        var outbox = new InMemoryOutbox();
+        await outbox.WriteAsync(new EntityChange<Sample>
+        {
+            EntityType = typeof(Sample).FullName!,
+            EntityId   = "1",
+            ChangeType = ChangeType.Insert,
+            State      = new Sample { Id = 1 }
+        });
+        await outbox.WriteAsync(new EntityChange<Sample>
+        {
+            EntityType = typeof(Sample).FullName!,
+            EntityId   = "2",
+            ChangeType = ChangeType.Insert,
+            State      = new Sample { Id = 2 }
+        });
+
+        meter.RegisterPendingGauge(() => new[] { (typeof(Sample), (IOutbox)outbox) });
+
+        collector.RecordObservableInstruments();
+
+        var pending = collector.Get("raytree.outbox.pending");
+        Assert.That(pending, Has.Some.Matches<TestMetricsCollector.RecordedMeasurement>(m =>
+            (string?)m.Tags["entity_type"] == "Sample" && m.Value == 2));
+    }
+}

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Hosting;
@@ -16,9 +17,15 @@ public static class ServiceCollectionExtensions
         Action<IChangeTrackingBuilder>? configure = null)
     {
         services.AddSingleton<EntityChangeTrackerFactory>();
+
+        // RayTreeMeter is a DI singleton so callers can also inject it directly for
+        // custom instrumentation. The container disposes it after the tracker.
+        services.AddSingleton<RayTreeMeter>();
+
         services.AddSingleton<EntityChangeTracker>(sp =>
         {
             var builder = new ChangeTrackingBuilder(sp.GetService<ILoggerFactory>());
+            builder.UseMeter(sp.GetRequiredService<RayTreeMeter>());
             configure?.Invoke(builder);
             return builder.Build();
         });

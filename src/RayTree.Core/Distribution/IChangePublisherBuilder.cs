@@ -3,6 +3,7 @@ using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Repository;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Distribution;
 
@@ -19,6 +20,13 @@ public interface IChangePublisherBuilder
     IChangePublisherBuilder UseCompressor<T>(Func<Type, IChangeCompressor> factory) where T : IChangeCompressor;
     IChangePublisherBuilder UseRepository<T>(Func<Type, IRepository> factory) where T : IRepository;
     IChangePublisherBuilder UseOptions(Action<OutboxPublisherOptions> configure);
+
+    /// <summary>
+    /// Injects an externally-owned <see cref="RayTreeMeter"/>. When omitted, <see cref="Build"/>
+    /// constructs a default meter — useful for test isolation (one meter per tracker) or for
+    /// sharing a single meter across publisher and subscriber.
+    /// </summary>
+    IChangePublisherBuilder UseMeter(RayTreeMeter meter);
 
     /// <summary>
     /// Configures a single entity type via a scoped callback. Returns the parent builder

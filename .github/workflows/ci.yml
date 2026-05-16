@@ -33,10 +33,10 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-
 
       - name: Restore
-        run: dotnet restore RayTree.sln
+        run: dotnet restore RayTree.slnx
 
       - name: Build
-        run: dotnet build RayTree.sln --no-restore -c Release
+        run: dotnet build RayTree.slnx --no-restore -c Release
 
       - name: Upload build output
         uses: actions/upload-artifact@v4

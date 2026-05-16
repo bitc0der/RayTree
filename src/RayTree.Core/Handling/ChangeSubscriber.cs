@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Models;
@@ -5,6 +6,7 @@ using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Core.Handling;
@@ -28,6 +30,7 @@ public class ChangeSubscriber : IDisposable
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
     private readonly ILogger<ChangeSubscriber> _logger;
+    private readonly RayTreeMeter _meter;
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _cleanupGate = new(1, 1);
     private DateTime _lastDedupCleanup = DateTime.MinValue;
@@ -40,10 +43,12 @@ public class ChangeSubscriber : IDisposable
 
     public ChangeSubscriber(
         ILogger<ChangeSubscriber> logger,
+        RayTreeMeter meter,
         IDeduplicationStore? dedupStore = null,
         SubscriberOptions? options = null)
     {
         _logger     = logger ?? throw new ArgumentNullException(nameof(logger));
+        _meter      = meter  ?? throw new ArgumentNullException(nameof(meter));
         _dedupStore = dedupStore ?? new InMemoryDeduplicationStore();
         _options    = options    ?? new SubscriberOptions();
     }
@@ -153,15 +158,24 @@ public class ChangeSubscriber : IDisposable
     public async Task ProcessMessageAsync(MessageEnvelope envelope,
         CancellationToken cancellationToken = default)
     {
+        var changeTag = RayTreeMeter.ChangeTag(envelope.ChangeType);
+
         var entityType = ResolveType(envelope.EntityType);
         if (entityType == null)
         {
+            _meter.SubscriberSkipped.Add(1,
+                RayTreeMeter.EntityTag(envelope.EntityType),
+                changeTag,
+                RayTreeMeter.ReasonTag("unknown_type"));
             _logger.LogWarning("Unknown entity type '{EntityType}' in message envelope, skipping", envelope.EntityType);
             return;
         }
 
+        var entityTag = RayTreeMeter.EntityTag(entityType);
+
         if (!await _dedupStore.TryMarkProcessedAsync(envelope.CorrelationId.ToString(), cancellationToken))
         {
+            _meter.SubscriberDeduplicated.Add(1, entityTag, changeTag);
             _logger.LogDebug("Duplicate message {CorrelationId} for {EntityType}, skipping",
                 envelope.CorrelationId, envelope.EntityType);
             return;
@@ -169,6 +183,7 @@ public class ChangeSubscriber : IDisposable
 
         if (!_handlers.TryGetValue(entityType, out var handlers) || handlers.Count == 0)
         {
+            _meter.SubscriberSkipped.Add(1, entityTag, changeTag, RayTreeMeter.ReasonTag("no_handler"));
             _logger.LogDebug("No handlers registered for {EntityType}, skipping", entityType.Name);
             return;
         }
@@ -179,6 +194,7 @@ public class ChangeSubscriber : IDisposable
 
         if (matchingHandlers.Count == 0)
         {
+            _meter.SubscriberSkipped.Add(1, entityTag, changeTag, RayTreeMeter.ReasonTag("no_handler"));
             _logger.LogDebug("No handlers matched change type {ChangeType} for {EntityType}, skipping",
                 envelope.ChangeType, entityType.Name);
             return;
@@ -192,7 +208,7 @@ public class ChangeSubscriber : IDisposable
         try
         {
             foreach (var registration in matchingHandlers)
-                await InvokeWithRetryAsync(registration, change, cancellationToken);
+                await InvokeWithRetryAsync(registration, change, entityTag, changeTag, cancellationToken);
         }
         catch
         {
@@ -204,6 +220,11 @@ public class ChangeSubscriber : IDisposable
             await _dedupStore.RevertProcessedAsync(envelope.CorrelationId.ToString(), cancellationToken);
             throw;
         }
+
+        _meter.SubscriberProcessed.Add(1, entityTag, changeTag);
+        _meter.SubscriberLagDuration.Record(
+            Math.Max(0, (DateTime.UtcNow - envelope.Timestamp).TotalSeconds),
+            entityTag, changeTag);
 
         _logger.LogDebug("Processed {ChangeType} change for {EntityType} ({CorrelationId})",
             envelope.ChangeType, entityType.Name, envelope.CorrelationId);
@@ -301,37 +322,50 @@ public class ChangeSubscriber : IDisposable
     /// precedence over the global options supplied to the constructor.
     /// </summary>
     private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change,
+        KeyValuePair<string, object?> entityTag, KeyValuePair<string, object?> changeTag,
         CancellationToken ct)
     {
         var options = _entityOptions.GetValueOrDefault(registration.EntityType) ?? _options;
-        var attempt = 0;
+        var attempts = 0;
         while (true)
         {
+            attempts++;
+            var sw = Stopwatch.StartNew();
             try
             {
                 await registration.Handler(change, ct);
+                sw.Stop();
+                _meter.SubscriberProcessingDuration.Record(sw.Elapsed.TotalSeconds, entityTag, changeTag);
+                _meter.SubscriberHandlerAttempts.Record(attempts, entityTag);
                 return;
             }
             catch (Exception ex)
             {
-                if (attempt >= options.MaxRetries)
+                sw.Stop();
+                _meter.SubscriberProcessingDuration.Record(sw.Elapsed.TotalSeconds, entityTag, changeTag);
+
+                if (attempts > options.MaxRetries)
                 {
+                    _meter.SubscriberHandlerFailures.Add(1, entityTag, changeTag);
+                    // Record the attempts histogram on the failure path too so dashboards
+                    // showing retry-shape reflect the worst cases, not just successes.
+                    _meter.SubscriberHandlerAttempts.Record(attempts, entityTag);
+
                     if (options.SkipOnFailure)
                     {
                         _logger.LogError(ex,
                             "Handler for {EntityType} failed after {Attempts} attempt(s), skipping message",
-                            registration.EntityType.Name, attempt + 1);
+                            registration.EntityType.Name, attempts);
                         return;
                     }
 
                     throw;
                 }
 
-                attempt++;
                 _logger.LogWarning(ex,
                     "Handler for {EntityType} failed on attempt {Attempt}, retrying",
-                    registration.EntityType.Name, attempt);
-                await Task.Delay(options.RetryDelay * attempt, ct);
+                    registration.EntityType.Name, attempts);
+                await Task.Delay(options.RetryDelay * attempts, ct);
             }
         }
     }

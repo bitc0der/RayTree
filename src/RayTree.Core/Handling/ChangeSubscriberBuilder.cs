@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Handling;
 
@@ -17,6 +18,7 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     private IChangeCompressor? _globalCompressor;
     private IDeduplicationStore? _dedupStore;
     private ILoggerFactory _loggerFactory = NullLoggerFactory.Instance;
+    private RayTreeMeter? _meter;
     private readonly SubscriberOptions _globalOptions = new();
     private readonly List<Action<ChangeSubscriber>> _entityApplicators = new();
     private bool _built;
@@ -58,6 +60,15 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     }
 
     /// <inheritdoc/>
+    public IChangeSubscriberBuilder UseMeter(RayTreeMeter meter)
+    {
+        ArgumentNullException.ThrowIfNull(meter);
+        ThrowIfBuilt();
+        _meter = meter;
+        return this;
+    }
+
+    /// <inheritdoc/>
     public IChangeSubscriberBuilder ForEntity<TEntity>(Action<IEntitySubscriberBuilder<TEntity>> configure)
         where TEntity : class
     {
@@ -80,6 +91,13 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     /// When provided (e.g., bound from <c>appsettings.json</c> via <c>IOptions</c>), takes
     /// precedence over options configured via <see cref="UseOptions"/>.
     /// </param>
+    /// <remarks>
+    /// When <see cref="UseMeter"/> has not been called, this method creates a default
+    /// <see cref="RayTreeMeter"/> that is passed to <see cref="ChangeSubscriber"/>. The subscriber
+    /// does not dispose the meter; callers using this builder standalone (not via
+    /// <see cref="ChangeTrackingBuilder"/>) must call <see cref="UseMeter"/> and manage the
+    /// meter's lifetime themselves to avoid a resource leak.
+    /// </remarks>
     public ChangeSubscriber Build(
         IDeduplicationStore? dedupStoreOverride = null,
         SubscriberOptions? optionsOverride = null)
@@ -87,8 +105,9 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
         _built = true;
         var effectiveDedupStore = dedupStoreOverride ?? _dedupStore;
         var effectiveOptions    = optionsOverride    ?? _globalOptions;
+        var meter               = _meter ?? new RayTreeMeter();
         var logger              = _loggerFactory.CreateLogger<ChangeSubscriber>();
-        var subscriber          = new ChangeSubscriber(logger, effectiveDedupStore, effectiveOptions);
+        var subscriber          = new ChangeSubscriber(logger, meter, effectiveDedupStore, effectiveOptions);
 
         foreach (var apply in _entityApplicators)
             apply(subscriber);

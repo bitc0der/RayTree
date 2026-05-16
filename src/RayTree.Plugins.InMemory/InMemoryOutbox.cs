@@ -118,6 +118,14 @@ public class InMemoryOutbox : IOutbox
         return Task.FromResult(change as EntityChange<TEntity>);
     }
 
+    public Task<long> GetPendingCountAsync(Type entityType, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entityType);
+        var typeName = entityType.FullName;
+        var count = _store.Values.LongCount(c => !c.Published && c.EntityType == typeName);
+        return Task.FromResult(count);
+    }
+
     public IReadOnlyList<EntityChange> GetAll() => _store.Values.ToList();
 
     public void Clear()

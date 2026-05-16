@@ -2,6 +2,7 @@ using System.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using RayTree.Core.Distribution;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Outbox;
@@ -64,9 +65,9 @@ public class OutboxPublisherServiceTests
     [Test]
     public async Task StopAsync_Completes_WithinTimeout()
     {
-        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromSeconds(1) };
-        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance, publisher.Meter);
 
         await service.StartAsync();
 
@@ -78,9 +79,9 @@ public class OutboxPublisherServiceTests
     [Test]
     public void Dispose_DoesNotThrow()
     {
-        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
         var options = new OutboxPublisherOptions { PollingInterval = TimeSpan.FromHours(1) };
-        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance, publisher.Meter);
 
         Assert.DoesNotThrow(() => service.Dispose());
     }
@@ -103,7 +104,7 @@ public class OutboxPublisherServiceTests
             CleanupInterval        = TimeSpan.Zero,
             CleanupRetentionPeriod = TimeSpan.FromDays(7)
         };
-        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance, publisher.Meter);
 
         await service.StartAsync();
         var triggered = await Task.WhenAny(cleanupCalled.Task, Task.Delay(5000));
@@ -131,7 +132,7 @@ public class OutboxPublisherServiceTests
             CleanupInterval        = TimeSpan.FromHours(1),
             CleanupRetentionPeriod = TimeSpan.FromDays(7)
         };
-        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance, publisher.Meter);
 
         await service.StartAsync();
         // Wait until the eager first-tick cleanup fires, then let a few more poll cycles pass.
@@ -164,7 +165,7 @@ public class OutboxPublisherServiceTests
             CleanupRetentionPeriod    = TimeSpan.FromDays(7),
             StaleUnpublishedThreshold = TimeSpan.FromDays(30)
         };
-        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance, publisher.Meter);
 
         await service.StartAsync();
         var triggered = await Task.WhenAny(staleCalled.Task, Task.Delay(5000));
@@ -193,7 +194,7 @@ public class OutboxPublisherServiceTests
             CleanupRetentionPeriod    = TimeSpan.FromDays(7),
             StaleUnpublishedThreshold = null
         };
-        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance, publisher.Meter);
 
         await service.StartAsync();
         // Wait until published cleanup ran — if stale cleanup were wired up, it would have fired by now.
@@ -226,7 +227,7 @@ public class OutboxPublisherServiceTests
             CleanupInterval        = TimeSpan.Zero,
             CleanupRetentionPeriod = TimeSpan.FromDays(7)
         };
-        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance);
+        var service = new OutboxPublisherService(publisher, typeof(DummyEntity), options, NullLoggerFactory.Instance, publisher.Meter);
 
         await service.StartAsync();
         var triggered = await Task.WhenAny(loopConfirmed.Task, Task.Delay(5000));
@@ -244,7 +245,7 @@ public class OutboxPublisherServiceTests
 
         var serializer = new Mock<IChangeSerializer>();
 
-        var cp = new ChangePublisher(NullLoggerFactory.Instance);
+        var cp = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
         cp.RegisterOutbox(typeof(DummyEntity), outbox);
         cp.RegisterPublisher(typeof(DummyEntity), queuePublisher.Object);
         cp.RegisterSerializer(typeof(DummyEntity), serializer.Object);
@@ -269,7 +270,7 @@ public class ConcurrentChangeDetectionTests
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var publisher = new ChangePublisher(NullLoggerFactory.Instance);
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
         publisher.RegisterOutbox(typeof(SampleEntity), outbox.Object);
         var tracker = new EntityChangeTracker(publisher);
 

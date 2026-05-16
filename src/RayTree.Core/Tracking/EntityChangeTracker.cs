@@ -2,6 +2,7 @@ using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Consumer;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Tracking;
 
@@ -9,15 +10,32 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
 {
     private readonly ChangePublisher _publisher;
     private readonly ChangeSubscriber? _subscriber;
+    private readonly RayTreeMeter _meter;
+    private readonly bool _ownsMeter;
     private bool _disposed;
 
     public ChangePublisher Publisher => _publisher;
     public ChangeSubscriber? Subscriber => _subscriber;
 
-    public EntityChangeTracker(ChangePublisher publisher, ChangeSubscriber? subscriber = null)
+    /// <summary>The meter used by this tracker's publisher and subscriber.</summary>
+    public RayTreeMeter Meter => _meter;
+
+    /// <summary>
+    /// Constructs a tracker. When <paramref name="ownsMeter"/> is <c>true</c>,
+    /// <see cref="Dispose"/> also disposes <paramref name="meter"/>. Builders that create
+    /// the meter on the caller's behalf should pass <c>ownsMeter: true</c>; callers that
+    /// inject their own meter via <c>UseMeter</c> should pass <c>false</c>.
+    /// </summary>
+    public EntityChangeTracker(
+        ChangePublisher publisher,
+        ChangeSubscriber? subscriber = null,
+        RayTreeMeter? meter = null,
+        bool ownsMeter = false)
     {
         _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
         _subscriber = subscriber;
+        _meter      = meter ?? publisher.Meter;
+        _ownsMeter  = ownsMeter;
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -117,6 +135,10 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     {
         var outbox = _publisher.GetOutbox(typeof(TEntity));
         await outbox.WriteAsync(change, cancellationToken);
+
+        _meter.OutboxWrites.Add(1,
+            RayTreeMeter.EntityTag(typeof(TEntity)),
+            RayTreeMeter.ChangeTag(change.ChangeType));
     }
 
     private static string GetEntityId<TEntity>(TEntity entity)
@@ -134,5 +156,6 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
 
         _publisher.Dispose();
         _subscriber?.Dispose();
+        if (_ownsMeter) _meter.Dispose();
     }
 }

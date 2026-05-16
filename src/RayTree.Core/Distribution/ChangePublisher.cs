@@ -5,6 +5,7 @@ using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Repository;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Distribution;
 
@@ -23,12 +24,20 @@ public sealed class ChangePublisher : IDisposable
     private readonly List<OutboxPublisherService> _publisherServices = new();
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<ChangePublisher> _logger;
+    private readonly RayTreeMeter _meter;
 
     public OutboxPublisherOptions Options { get; } = new();
 
-    public ChangePublisher(ILoggerFactory loggerFactory)
+    /// <summary>The meter used by this publisher and its background services.
+    /// First-party plugin assemblies (e.g. <c>RayTree.Plugins.PostgreSQL</c>) may read this
+    /// property to obtain the shared meter; use the public emission methods on
+    /// <see cref="RayTreeMeter"/> rather than its internal instrument properties.</summary>
+    public RayTreeMeter Meter => _meter;
+
+    public ChangePublisher(ILoggerFactory loggerFactory, RayTreeMeter meter)
     {
-        _loggerFactory = loggerFactory;
+        _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
+        _meter         = meter         ?? throw new ArgumentNullException(nameof(meter));
         _logger        = loggerFactory.CreateLogger<ChangePublisher>();
     }
 
@@ -74,7 +83,7 @@ public sealed class ChangePublisher : IDisposable
         foreach (var entityType in _publishers.Keys)
         {
             _logger.LogDebug("Registering outbox publisher service for {EntityType}", entityType.Name);
-            var service = new OutboxPublisherService(this, entityType, Options, _loggerFactory);
+            var service = new OutboxPublisherService(this, entityType, Options, _loggerFactory, _meter);
             _publisherServices.Add(service);
             await service.StartAsync(cancellationToken);
         }

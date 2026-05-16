@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>OpenTelemetry integration for RayTree change tracking — exposes the &quot;RayTree&quot; meter to MeterProviderBuilder.</Description>
+    <PackageTags>opentelemetry;metrics;observability;change-tracking</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Api"/>
+  </ItemGroup>
+</Project>

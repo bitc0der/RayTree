@@ -5,6 +5,7 @@ using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Tracking;
 
@@ -20,6 +21,14 @@ public interface IChangeTrackingBuilder
     // Subscriber global configuration
     IChangeTrackingBuilder UseSubscriberOptions(Action<SubscriberOptions> configure);
     IChangeTrackingBuilder UseDeduplicationStore(IDeduplicationStore store);
+
+    /// <summary>
+    /// Injects an externally-owned <see cref="RayTreeMeter"/>. The same meter is shared
+    /// between publisher and subscriber. Useful for test isolation (a per-test meter lets a
+    /// <c>MeterListener</c> filter to a single tracker). When omitted, the builder constructs
+    /// a default meter, and the returned <see cref="EntityChangeTracker"/> disposes it.
+    /// </summary>
+    IChangeTrackingBuilder UseMeter(RayTreeMeter meter);
 
     /// <summary>
     /// Configures a single entity type using a scoped callback. Global serializer/compressor/publisher

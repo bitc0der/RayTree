@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
@@ -28,7 +29,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
 
     private EntityChangeTracker BuildTracker(RabbitMqPublisher publisher)
     {
-        var changePublisher = new ChangePublisher(NullLoggerFactory.Instance);
+        var changePublisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
         changePublisher.RegisterOutbox(typeof(Order), new InMemoryOutbox());
         changePublisher.RegisterPublisher(typeof(Order), publisher);
         changePublisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
@@ -59,7 +60,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
             DeclareQueue = true,
             ExchangeName = "entity_changes",
             BindingKey = "#"
-        }, NullLoggerFactory.Instance);
+        });
 
     // -------------------------------------------------------------------------
     // Tests
@@ -76,7 +77,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
-        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, new RayTreeMeter());
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
@@ -114,7 +115,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
-        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, new RayTreeMeter());
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
@@ -154,7 +155,7 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
         var received = new List<EntityChange>();
         var allReceived = new TaskCompletionSource<bool>();
 
-        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance);
+        var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, new RayTreeMeter());
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
