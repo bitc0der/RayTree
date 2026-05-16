@@ -136,6 +136,7 @@ Do not override these rules. If a rule from `.editorconfig` conflicts with a gen
 
 ### Common
 
+- Breaking changes is not critical, just ask or notify. Backward compatibility can be avoided
 - Prefer interfaces over abstract classes for plugin contracts — they are easier to implement and compose.
 - Constructor injection for all dependencies. No service locator, no `static` state, no hidden dependencies.
 - Avoid `object` parameters in public APIs where it is possible — use generics or specific types.
