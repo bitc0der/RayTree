@@ -45,7 +45,7 @@ using RayTree.Plugins.InMemory;
 using RayTree.Plugins.RabbitMQ;
 using RayTree.Plugins.Serializers.Json;
 
-var tracker = await new ChangeTrackingBuilder()
+var tracker = await EntityChangeTracker.Create()
     .UseSerializer<JsonSerializerPlugin>(_ => new JsonSerializerPlugin())
     .UseCompressor<NoOpCompressorPlugin>(_ => new NoOpCompressorPlugin())
     .ForEntity<Order>(e => e
@@ -114,7 +114,7 @@ Give each named handler its own broker subscription, retry budget, and deduplica
 // For testing/local dev — InMemoryBroadcastQueue fans out to every subscriber
 var broadcast = new InMemoryBroadcastQueue();
 
-var tracker = new ChangeTrackingBuilder()
+var tracker = EntityChangeTracker.Create()
     .ForEntity<Order>(e => e
         .UseOutbox(new InMemoryOutbox())
         .UsePublisher(broadcast)
@@ -224,7 +224,7 @@ using RayTree.Plugins.Deduplication.Redis;
 
 var multiplexer = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
 
-var tracker = new ChangeTrackingBuilder()
+var tracker = EntityChangeTracker.Create()
     .UseRedisDeduplication(multiplexer)                     // default options
     // or with custom options:
     .UseRedisDeduplication(multiplexer, opt =>
@@ -237,7 +237,7 @@ var tracker = new ChangeTrackingBuilder()
     .Build();
 
 // Custom store
-var tracker = new ChangeTrackingBuilder()
+var tracker = EntityChangeTracker.Create()
     .UseDeduplicationStore(new MyCustomStore())
     .ForEntity<Order>(e => e /* ... */)
     .Build();

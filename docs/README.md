@@ -11,14 +11,14 @@ A modular .NET 8.0 entity change tracking system with outbox pattern support, qu
 - **Modular Plugins** - Each serializer and compressor in its own package
 - **In-Memory Testing** - Full in-memory implementation for development and testing
 - **Auto-Initialization** - Automatic database schema initialization on `Build()` / `BuildAsync()`
-- **Structured Logging** - `Microsoft.Extensions.Logging` throughout; pass `ILoggerFactory` to `ChangeTrackingBuilder` or let `AddChangeTracking` wire it from DI automatically
+- **Structured Logging** - `Microsoft.Extensions.Logging` throughout; pass `ILoggerFactory` to `EntityChangeTracker.Create()` or let `AddChangeTracking` wire it from DI automatically
 - **OpenTelemetry Metrics** - `System.Diagnostics.Metrics` instruments on a `"RayTree"` meter for outbox writes, publish/subscribe latency, payload size, queue depth, and retry shape. Zero OTel SDK dependency unless the optional `RayTree.OpenTelemetry` package is referenced. See [OpenTelemetry Metrics Guide](opentelemetry-metrics.md).
 
 ## Quick Start
 
 ```csharp
 // Optional: pass ILoggerFactory for structured log output (defaults to NullLoggerFactory)
-var builder = new ChangeTrackingBuilder(loggerFactory);
+var builder = EntityChangeTracker.Create(loggerFactory);
 
 builder.ForEntity<Product>(e => e
     .UsePostgreSqlOutbox(new PostgreSqlOutboxOptions
@@ -44,7 +44,7 @@ await tracker.TrackDeleteAsync(new Product { Id = 1, Name = "Widget Pro" });
 Set a serializer or compressor for all entity types at once using builder extension methods. Per-entity calls inside `ForEntity` override the global default:
 
 ```csharp
-var builder = new ChangeTrackingBuilder();
+var builder = EntityChangeTracker.Create();
 builder.UseJsonSerializer();
 builder.UseGzipCompressor();
 
@@ -252,7 +252,7 @@ Generated outbox columns (alongside the fixed metadata columns):
 ## In-Memory Mode (Testing)
 
 ```csharp
-var builder = new ChangeTrackingBuilder();
+var builder = EntityChangeTracker.Create();
 
 builder.ForEntity<Product>(e => e
     .UseOutbox(new InMemoryOutbox())
@@ -339,7 +339,7 @@ Cleanup errors are isolated: a transient database failure logs an error but does
 Publisher options are global (not per entity) and are set on the top-level builder via `UsePublisherOptions`. When using the Generic Host they can alternatively be bound from `appsettings.json` via `AddChangeTracking` (see below).
 
 ```csharp
-var builder = new ChangeTrackingBuilder(loggerFactory);
+var builder = EntityChangeTracker.Create(loggerFactory);
 
 // Rotation options are set at the builder level, not inside ForEntity.
 builder.UsePublisherOptions(o =>

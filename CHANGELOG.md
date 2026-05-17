@@ -6,6 +6,69 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.12-pre-release]
+
+### Added
+
+#### `EntityChangeTracker.Create()` — canonical entry point (`RayTree.Core`)
+
+New public static factory method that returns `IChangeTrackingBuilder`. This is the new
+canonical way to start building a tracker:
+
+```csharp
+// Without logging (defaults to NullLoggerFactory)
+var tracker = EntityChangeTracker.Create()
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
+
+// With logging
+var tracker = EntityChangeTracker.Create(loggerFactory)
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
+```
+
+The optional `ILoggerFactory?` parameter defaults to `NullLoggerFactory.Instance` when `null`.
+
+### Changed (breaking)
+
+#### `ChangeTrackingBuilder` constructor is now `internal`; class is `sealed` (`RayTree.Core`)
+
+`ChangeTrackingBuilder` can no longer be instantiated directly or subclassed. Use
+`EntityChangeTracker.Create()` instead:
+
+```csharp
+// Before
+var tracker = new ChangeTrackingBuilder()
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
+
+var tracker = new ChangeTrackingBuilder(loggerFactory)
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
+
+// After
+var tracker = EntityChangeTracker.Create()
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
+
+var tracker = EntityChangeTracker.Create(loggerFactory)
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
+```
+
+#### `EntityChangeTracker` constructor is now `internal` (`RayTree.Core`)
+
+`EntityChangeTracker` can no longer be constructed directly. Use `EntityChangeTracker.Create()`
+(or `AddChangeTracking` in the Generic Host) to obtain a fully configured instance.
+
+### Fixed
+
+#### Duplicate `<see cref>` XML doc tag in `ChangeSubscriberBuilder.Build()` (`RayTree.Core`)
+
+Removed a duplicate `<see cref>` tag from the `Build()` parameter remarks XML documentation.
+
+---
+
 ## [0.0.11-pre-release]
 
 ### Added

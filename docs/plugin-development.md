@@ -53,7 +53,7 @@ public interface IRepository<TEntity> : IRepository where TEntity : class
     Task InsertAsync(TEntity entity, CancellationToken cancellationToken = default);
     Task UpdateAsync(TEntity entity, CancellationToken cancellationToken = default);
     Task DeleteAsync(TEntity entity, CancellationToken cancellationToken = default);
-    Task<TEntity?> GetByIdAsync(object id, CancellationToken cancellationToken = default);
+    Task<TEntity?> GetByIdAsync(object[] keyValues, CancellationToken cancellationToken = default);
 }
 
 public interface IRepository
@@ -186,17 +186,16 @@ public static class MyOutboxExtensions
 
 ## Testing Plugins
 
-Register plugins directly on `ChangePublisher` and construct `EntityChangeTracker` from it:
+Use the builder to wire plugins and construct `EntityChangeTracker`:
 
 ```csharp
-var publisher = new ChangePublisher(NullLoggerFactory.Instance);
-publisher.RegisterOutbox(typeof(MyEntity), new InMemoryOutbox());
-publisher.RegisterPublisher(typeof(MyEntity), new InMemoryQueue());
-publisher.RegisterSerializer(typeof(MyEntity), new MyCustomSerializer());
-publisher.RegisterCompressor(typeof(MyEntity), new MyCustomCompressor());
-
-var tracker = new EntityChangeTracker(publisher);
-await tracker.InitializeAsync();
+using var tracker = EntityChangeTracker.Create()
+    .ForEntity<MyEntity>(e => e
+        .UseOutbox(new InMemoryOutbox())
+        .UsePublisher(new InMemoryQueue())
+        .UseSerializer(new MyCustomSerializer())
+        .UseCompressor(new MyCustomCompressor()))
+    .Build();
 ```
 
 Verify serializer round-trips:
