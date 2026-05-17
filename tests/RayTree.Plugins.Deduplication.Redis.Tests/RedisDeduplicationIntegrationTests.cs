@@ -1,4 +1,3 @@
-using RayTree.Plugins.Deduplication.Redis;
 using StackExchange.Redis;
 using Testcontainers.Redis;
 
@@ -7,7 +6,7 @@ namespace RayTree.Plugins.Deduplication.Redis.Tests;
 [NonParallelizable]
 public class RedisDeduplicationIntegrationTests : IAsyncDisposable
 {
-    private readonly RedisContainer _redis = new RedisBuilder("redis:7.4-alpine").Build();
+    private readonly RedisContainer _redis = new RedisBuilder("redis:8.6.3-alpine3.23").Build();
     private IConnectionMultiplexer _multiplexer = null!;
 
     [OneTimeSetUp]

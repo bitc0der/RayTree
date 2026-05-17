@@ -1,5 +1,4 @@
 using Moq;
-using RayTree.Plugins.Deduplication.Redis;
 using StackExchange.Redis;
 
 namespace RayTree.Plugins.Deduplication.Redis.Tests;
