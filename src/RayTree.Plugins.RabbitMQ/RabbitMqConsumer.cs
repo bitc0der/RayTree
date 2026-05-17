@@ -116,7 +116,7 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
     {
         if (!_options.AckAfterHandler) return;
         if (_channel is null) return;
-        if (!envelope.TryGetDeliveryTag(out var tag)) return;
+        if (!envelope.TryTakeDeliveryTag(out var tag)) return;
 
         await _channel.BasicAckAsync(tag, multiple: false, cancellationToken: cancellationToken);
     }
@@ -131,7 +131,7 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
     {
         if (!_options.AckAfterHandler) return;
         if (_channel is null) return;
-        if (!envelope.TryGetDeliveryTag(out var tag)) return;
+        if (!envelope.TryTakeDeliveryTag(out var tag)) return;
 
         await _channel.BasicNackAsync(tag, multiple: false, requeue: true, cancellationToken: cancellationToken);
     }

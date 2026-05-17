@@ -292,24 +292,38 @@ public class ChangeSubscriber : IDisposable
             consumer.ConsumeAsync(cancellationToken),
             parallelOptions,
             async (envelope, token) =>
+                await DispatchIsolatedAndAcknowledgeAsync(
+                    consumer, envelope, entityType, handlerName, effectiveOptions, token));
+    }
+
+    /// <summary>
+    /// Isolated-mode dispatch wrapper: mirrors <see cref="DispatchAndAcknowledgeAsync"/>
+    /// for the per-(entity, handler-name) consume path. On normal completion (handler
+    /// success, dedup hit, no-handler skip, SkipOnFailure swallow) calls
+    /// <see cref="IQueueConsumer.AcknowledgeAsync"/>; on unhandled exception calls
+    /// <see cref="IQueueConsumer.NegativeAcknowledgeAsync"/> before rethrowing.
+    /// </summary>
+    private async Task DispatchIsolatedAndAcknowledgeAsync(
+        IQueueConsumer consumer, MessageEnvelope envelope,
+        Type entityType, string handlerName, SubscriberOptions effectiveOptions,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ProcessIsolatedMessageAsync(envelope, entityType, handlerName, effectiveOptions, cancellationToken);
+            await consumer.AcknowledgeAsync(envelope, cancellationToken);
+        }
+        catch
+        {
+            try { await consumer.NegativeAcknowledgeAsync(envelope, cancellationToken); }
+            catch (Exception nackEx)
             {
-                try
-                {
-                    await ProcessIsolatedMessageAsync(envelope, entityType, handlerName, effectiveOptions, token);
-                    await consumer.AcknowledgeAsync(envelope, token);
-                }
-                catch
-                {
-                    try { await consumer.NegativeAcknowledgeAsync(envelope, token); }
-                    catch (Exception nackEx)
-                    {
-                        _logger.LogError(nackEx,
-                            "NegativeAcknowledgeAsync failed for isolated handler '{HandlerName}' on {EntityType} ({CorrelationId})",
-                            handlerName, entityType.Name, envelope.CorrelationId);
-                    }
-                    throw;
-                }
-            });
+                _logger.LogError(nackEx,
+                    "NegativeAcknowledgeAsync failed for isolated handler '{HandlerName}' on {EntityType} ({CorrelationId})",
+                    handlerName, entityType.Name, envelope.CorrelationId);
+            }
+            throw;
+        }
     }
 
     // -------------------------------------------------------------------------

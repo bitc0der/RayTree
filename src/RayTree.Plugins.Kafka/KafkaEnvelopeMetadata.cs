@@ -16,13 +16,19 @@ internal static class KafkaEnvelopeMetadata
     internal static void SetConsumeResult(this MessageEnvelope envelope, ConsumeResult<string, byte[]> result)
         => envelope.Metadata[ConsumeResultKey] = result;
 
-    internal static bool TryGetConsumeResult(
+    /// <summary>
+    /// Reads and <b>removes</b> the consume-result metadata in one atomic-style step so
+    /// that a subsequent Ack/Nack call cannot accidentally commit/seek the same offset
+    /// twice (defensive against double-dispatch by callers).
+    /// </summary>
+    internal static bool TryTakeConsumeResult(
         this MessageEnvelope envelope,
         out ConsumeResult<string, byte[]>? result)
     {
         if (envelope.Metadata.TryGetValue(ConsumeResultKey, out var raw)
             && raw is ConsumeResult<string, byte[]> r)
         {
+            envelope.Metadata.Remove(ConsumeResultKey);
             result = r;
             return true;
         }

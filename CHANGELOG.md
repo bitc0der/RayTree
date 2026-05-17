@@ -10,6 +10,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+#### Optional at-least-once delivery (`RayTree.Core`, `RayTree.Plugins.RabbitMQ`, `RayTree.Plugins.Kafka`)
+
+`IQueueConsumer` gains two default-no-op methods — `AcknowledgeAsync(MessageEnvelope, CancellationToken)`
+and `NegativeAcknowledgeAsync(MessageEnvelope, CancellationToken)` — that `ChangeSubscriber`
+invokes after each dispatched message: ACK on normal completion (handler success, dedup hit,
+no-handler skip, `SkipOnFailure` swallow), NACK on retry-exhaustion with `SkipOnFailure = false`.
+Existing custom `IQueueConsumer` implementations inherit the no-ops and behave unchanged
+(source-compatible, binary-compatible). Both shared-mode (`ConsumeFromConsumerAsync`) and
+isolated-mode (`ConsumeIsolatedFromConsumerAsync`) consume loops participate; the custom-reader
+overload (`ConsumeFromQueueAsync<TQueue>`) is at-most-once by design.
+
+**`MessageEnvelope.Metadata`** — lazy-allocated `IDictionary<string, object?>` for consumer-private
+broker state (delivery tags, lock tokens, receipt handles). Not part of the wire format; not
+inspected by handlers.
+
+**RabbitMQ opt-in** (`RabbitMqConsumerOptions.AckAfterHandler`, default `false`): when `true`,
+the broker ACK is deferred until handler completion. NACK requeues via `BasicNackAsync(requeue: true)`.
+Delivery tag is stashed in `MessageEnvelope.Metadata` via the internal `RabbitMqEnvelopeMetadata`
+take-on-read accessor so a double-Ack attempt is a silent no-op rather than a broker error.
+
+**Kafka opt-in** (`KafkaConsumerOptions.AckAfterHandler`, default `false`): when `true`, the
+offset commit is deferred. The subscriber posts the original `ConsumeResult` plus a
+`Commit`/`SeekBack` discriminator to an internal post-handler channel; the poll thread drains
+it at the top of each iteration (Confluent.Kafka requires `Consume`/`Commit`/`Seek` on the
+same thread). When pending work is queued, the next `Consume()` uses `TimeSpan.Zero` so commits
+don't wait a full poll cycle. NACK performs `_consumer.Seek(TopicPartitionOffset)` so the
+failed message is redelivered in the same consumer process, not just on restart. Parse-failure
+path always commits immediately to avoid poison-pilling the partition. Requires
+`SubscriberOptions.MaxDegreeOfParallelism = 1` per partition.
+
+```csharp
+// At-most-once (default — unchanged):
+new RabbitMqConsumer(new RabbitMqConsumerOptions { QueueName = "orders" });
+
+// At-least-once (opt-in):
+new RabbitMqConsumer(new RabbitMqConsumerOptions
+{
+    QueueName       = "orders",
+    AckAfterHandler = true,
+});
+```
+
 #### Handler dispatch modes — Shared and Isolated (`RayTree.Core`, `RayTree.Hosting`, `RayTree.Plugins.InMemory`)
 
 Two explicit handler-dispatch strategies are now available, selected at consumer-binding time.

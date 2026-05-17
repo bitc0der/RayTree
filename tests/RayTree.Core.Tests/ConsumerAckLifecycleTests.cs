@@ -205,6 +205,123 @@ public class ConsumerAckLifecycleTests
     }
 
     // -------------------------------------------------------------------------
+    // Isolated mode — ACK on successful handler dispatch
+    // -------------------------------------------------------------------------
+
+    [Test]
+    public async Task ConsumeIsolatedFromConsumerAsync_HandlerSucceeds_CallsAcknowledge()
+    {
+        var envelope   = InsertEnvelope();
+        var consumer   = new RecordingConsumer(envelope);
+        var subscriber = MakeSubscriber();
+        subscriber.RegisterIsolatedConsumer<Order>("read-model", consumer);
+        subscriber.RegisterIsolatedHandler<Order>("read-model", ChangeType.Insert,
+            (_, _) => Task.CompletedTask);
+
+        await subscriber.ConsumeIsolatedFromConsumerAsync(consumer, typeof(Order), "read-model");
+
+        Assert.That(consumer.Acked,  Is.EquivalentTo(new[] { envelope.CorrelationId }));
+        Assert.That(consumer.Nacked, Is.Empty);
+    }
+
+    // -------------------------------------------------------------------------
+    // Isolated mode — NACK fires when handler exhausts retries with SkipOnFailure = false
+    // -------------------------------------------------------------------------
+
+    [Test]
+    public void ConsumeIsolatedFromConsumerAsync_HandlerExhaustsRetries_CallsNegativeAcknowledge()
+    {
+        var envelope   = InsertEnvelope();
+        var consumer   = new RecordingConsumer(envelope);
+        var subscriber = MakeSubscriber(new SubscriberOptions
+        {
+            MaxRetries     = 0,
+            RetryDelay     = TimeSpan.Zero,
+            SkipOnFailure  = false,
+        });
+        subscriber.RegisterIsolatedConsumer<Order>("notifier", consumer);
+        subscriber.RegisterIsolatedHandler<Order>("notifier", ChangeType.Insert,
+            (_, _) => throw new InvalidOperationException("boom"));
+
+        Assert.ThrowsAsync<InvalidOperationException>(
+            () => subscriber.ConsumeIsolatedFromConsumerAsync(consumer, typeof(Order), "notifier"));
+
+        Assert.That(consumer.Acked,  Is.Empty);
+        Assert.That(consumer.Nacked, Is.EquivalentTo(new[] { envelope.CorrelationId }));
+    }
+
+    // -------------------------------------------------------------------------
+    // Robustness — a consumer override that ignores envelopes without metadata
+    // must be safe to call repeatedly (no exception, no observable effect).
+    // This is the contract the RabbitMQ/Kafka consumers rely on for the "no
+    // metadata" path (parse-failure path, double-Ack attempts, etc.).
+    // -------------------------------------------------------------------------
+
+    [Test]
+    public async Task ConsumerOverride_EnvelopeWithoutMetadata_AckAndNackAreSilentNoOp()
+    {
+        var consumer = new MetadataRequiringConsumer();
+        var envelope = InsertEnvelope();   // fresh envelope, empty metadata
+
+        // Neither call should throw — the consumer's overrides correctly detect
+        // the absence of its expected metadata key and return without side-effect.
+        await consumer.AcknowledgeAsync(envelope);
+        await consumer.NegativeAcknowledgeAsync(envelope);
+
+        Assert.That(consumer.AckCallsApplied,  Is.Zero);
+        Assert.That(consumer.NackCallsApplied, Is.Zero);
+    }
+
+    /// <summary>
+    /// Consumer that mimics RabbitMqConsumer / KafkaConsumer: only acts on envelopes
+    /// that carry its specific metadata key. Used to verify the silent-no-op contract.
+    /// </summary>
+    private sealed class MetadataRequiringConsumer : IQueueConsumer
+    {
+        private const string Key = "test.required_metadata";
+
+        public int AckCallsApplied  { get; private set; }
+        public int NackCallsApplied { get; private set; }
+
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public IAsyncEnumerable<MessageEnvelope> ConsumeAsync(CancellationToken cancellationToken = default)
+            => EmptyAsyncEnumerable<MessageEnvelope>.Instance;
+
+        public Task AcknowledgeAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
+        {
+            if (envelope.Metadata.TryGetValue(Key, out _))
+            {
+                AckCallsApplied++;
+                envelope.Metadata.Remove(Key);
+            }
+            return Task.CompletedTask;
+        }
+
+        public Task NegativeAcknowledgeAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
+        {
+            if (envelope.Metadata.TryGetValue(Key, out _))
+            {
+                NackCallsApplied++;
+                envelope.Metadata.Remove(Key);
+            }
+            return Task.CompletedTask;
+        }
+    }
+
+    private static class EmptyAsyncEnumerable<T>
+    {
+        public static readonly IAsyncEnumerable<T> Instance = Create();
+
+        private static async IAsyncEnumerable<T> Create()
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Metadata bag — lazy allocation, round-trip
     // -------------------------------------------------------------------------
 

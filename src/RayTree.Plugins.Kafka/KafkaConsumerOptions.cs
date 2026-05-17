@@ -33,6 +33,20 @@ public class KafkaConsumerOptions
     /// of out-of-order offsets could advance the committed offset past an in-flight message,
     /// undoing the at-least-once guarantee.
     /// </para>
+    /// <para>
+    /// <b>Commit latency:</b> deferred commits are applied on the poll thread between
+    /// <c>Consume()</c> calls. On a busy partition this happens almost immediately
+    /// (next message arrival); on an idle partition the commit waits up to
+    /// <see cref="PollTimeoutMs"/> ms for the next poll cycle. Lower <c>PollTimeoutMs</c>
+    /// if commit responsiveness on idle topics matters for your workload (trade: CPU).
+    /// </para>
+    /// <para>
+    /// <b>Handler failure (NACK):</b> when a handler exhausts retries with
+    /// <see cref="RayTree.Core.Handling.SubscriberOptions.SkipOnFailure"/> = <c>false</c>,
+    /// the consumer performs an in-process <c>Seek</c> back to the failed message's offset
+    /// so it (and everything after) is redelivered on the next poll — without requiring
+    /// a process restart or partition reassignment.
+    /// </para>
     /// </summary>
     public bool AckAfterHandler { get; set; }
 }
