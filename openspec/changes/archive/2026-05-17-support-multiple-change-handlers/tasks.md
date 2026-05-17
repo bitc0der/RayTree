@@ -79,4 +79,4 @@
 - [x] 10.1 `dotnet build RayTree.sln -c Release` succeeds with zero warnings
 - [x] 10.2 All `RayTree.Core.Tests` pass, including the new Shared-mode and Isolated-mode test classes
 - [x] 10.3 `RayTree.Plugins.InMemory.Tests` passes, including new broadcast-queue tests
-- [ ] 10.4 Run integration test suites (`PostgreSQL`, `RabbitMQ`, `Kafka`) and confirm no regressions in Shared-mode flows
+- [x] 10.4 Run integration test suites (`PostgreSQL`, `RabbitMQ`, `Kafka`) and confirm no regressions in Shared-mode flows

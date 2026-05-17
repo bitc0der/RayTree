@@ -1,70 +1,53 @@
-## ADDED Requirements
-
-### Requirement: Queue source registered per entity in fluent configuration
-Each entity SHALL have its queue source registered through the fluent configuration builder so that the subscriber knows where to consume messages from.
-
-#### Scenario: Register InMemoryQueue as consume source
-- **WHEN** `.UseQueue<Order>(queue)` is called on the subscriber configuration builder
-- **THEN** the subscriber SHALL consume `Order` messages from that `InMemoryQueue` instance
-
-#### Scenario: Register queue source with entity in DI setup
-- **WHEN** `AddChangeSubscriber()` is used and `.UseQueue<Order>(queue)` is called on the returned builder
-- **THEN** the DI-registered `ChangeSubscriber` SHALL be bound to that queue for `Order` messages
-
-#### Scenario: Multiple entities with independent queue sources
-- **WHEN** different entities are each configured with `.UseQueue<T>(queue)` using separate queue instances
-- **THEN** each entity SHALL consume independently from its own queue source
-
-### Requirement: Hosted service SHALL auto-start consumption for all registered queues
-When `ChangeSubscriberHostedService` starts, it SHALL begin consuming from every queue registered via the fluent configuration.
-
-#### Scenario: StartAsync launches consume loops
-- **WHEN** the ASP.NET Core host starts and `ChangeSubscriberHostedService.StartAsync` is called
-- **THEN** a consume loop SHALL begin for each registered entity queue, running as background tasks
-
-#### Scenario: StopAsync cancels all consume loops
-- **WHEN** `StopAsync` is called on the hosted service
-- **THEN** all running consume loops SHALL be cancelled and drained gracefully before returning
-
-### Requirement: DI-registered options and deduplication store applied to subscriber
-The `ChangeSubscriber` instance built by `AddChangeSubscriber` SHALL use the `SubscriberOptions` and `IDeduplicationStore` registered in the DI container.
-
-#### Scenario: Options from configuration applied
-- **WHEN** `SubscriberOptions` is bound from `IConfiguration` (section `ChangeTracking:Subscriber`)
-- **THEN** the `ChangeSubscriber` instance SHALL use those options (MaxRetries, RetryDelay, SkipOnFailure, etc.)
-
-#### Scenario: Deduplication store from DI applied
-- **WHEN** an `IDeduplicationStore` is registered in DI (e.g. via `.UseRedisDeduplication()`)
-- **THEN** the `ChangeSubscriber` instance SHALL use that store for deduplication, not the default in-memory store
+## MODIFIED Requirements
 
 ### Requirement: Subscriber queue configuration example
-The following example illustrates the complete queue configuration for a subscriber in an ASP.NET Core application:
+The fluent configuration for subscribers SHALL select a handler-dispatch mode by which consumer-binding method is called on `IEntityBuilder<TEntity>`. `UseConsumer(IQueueConsumer)` selects `Shared` mode and forks the chain into `ISharedHandlerBuilder<TEntity>`; `UseConsumerFactory(Func<string, IQueueConsumer>)` selects `Isolated` mode and forks the chain into `IIsolatedHandlerBuilder<TEntity>`. Handler-registration methods (`OnInsert`, `OnUpdate`, `OnDelete`, `OnChange`) are only available on the post-fork builders.
+
+The following example illustrates both modes side-by-side in an ASP.NET Core application:
 
 ```csharp
 // Program.cs
-var orderQueue = new InMemoryQueue(); // or a RabbitMQ/Kafka queue instance
+var auditConsumer = new InMemoryQueue();  // single consumer for Shared-mode entity
 
 builder.Services
-    .AddChangeSubscriber(builder.Configuration)
-    .ConsumeEntity<Order>()
-    .UseQueue<Order>(orderQueue)
-    .UseSerializer<Order>(new JsonSerializerPlugin())
-    .UseCompressor<Order>(new GzipCompressorPlugin())
-    .OnInsert<Order>(async (change, ct) =>
-    {
-        // change.State is the fully-typed Order after insertion
-        Console.WriteLine($"New order: {change.EntityId}, total: {change.State?.Total}");
-    })
-    .OnUpdate<Order>(async (change, ct) =>
-    {
-        Console.WriteLine($"Order updated: {change.EntityId}");
-    })
-    .OnDelete<Order>(async (change, ct) =>
-    {
-        // change.State holds the Order state before deletion
-        Console.WriteLine($"Order deleted: {change.EntityId}");
-    })
-    .UseRedisDeduplication("localhost:6379");
+    .AddChangeTracking(builder.Configuration, ct => ct
+        .UseOutbox<PostgreSqlOutbox<Order>>(t =>
+            new PostgreSqlOutbox<Order>(pgOptions, loggerFactory))
+        .UsePublisher<KafkaPublisher>(t => new KafkaPublisher(kafkaPubOptions))
+        .UseSerializer<JsonSerializerPlugin>(t => new JsonSerializerPlugin())
+
+        // Shared mode — one delivery shared by all handlers, in-process sequential dispatch.
+        .ForEntity<AuditLog>(e => e
+            .UseConsumer(auditConsumer)                       // returns ISharedHandlerBuilder<AuditLog>
+                .OnInsert(async (change, ct) =>               // anonymous — no name required
+                {
+                    await sink.AppendAsync(change, ct);
+                })
+                .OnInsert(async (change, ct) =>               // second handler — accumulates, does not replace
+                {
+                    await metrics.RecordAsync(change, ct);
+                }))
+
+        // Isolated mode — each named handler has its own broker subscription, retry,
+        // and dedup namespace. The factory is invoked once per unique handler name.
+        .ForEntity<Order>(e => e
+            .UseConsumerFactory(handlerName => new KafkaConsumer(
+                kafkaConsumerOptions with { GroupId = $"orders-{handlerName}" },
+                loggerFactory))                               // returns IIsolatedHandlerBuilder<Order>
+                .OnInsert("read-model", async (change, ct) =>
+                {
+                    await readModel.UpsertAsync(change.State!, ct);
+                })
+                .OnInsert("notifier", async (change, ct) =>
+                {
+                    await notifier.PublishCreatedAsync(change.EntityId, ct);
+                })
+                .OnUpdate("read-model", async (change, ct) =>
+                {
+                    await readModel.UpsertAsync(change.State!, ct);
+                }))
+
+        .UseRedisDeduplication("localhost:6379"));
 ```
 
 `appsettings.json`:
@@ -81,4 +64,12 @@ builder.Services
 }
 ```
 
-The `ChangeSubscriberHostedService` registered by `AddChangeSubscriber` SHALL automatically start consuming from `orderQueue` when the host starts, with no additional wiring required from the caller.
+`ChangeTrackingHostedService` SHALL start one consume loop per entity in `Shared` mode and one consume loop per `(entity, handlerName)` pair in `Isolated` mode, with no additional wiring required from the caller.
+
+The compiler SHALL prevent the following misconfigurations:
+- Calling `OnInsert` (or any handler method) on `IEntityBuilder<TEntity>` before binding a consumer — the methods do not exist on that interface.
+- Calling the anonymous `OnInsert(handler)` overload after `UseConsumerFactory` — only named overloads exist on `IIsolatedHandlerBuilder<TEntity>`.
+- Calling the named `OnInsert(handlerName, handler)` overload after `UseConsumer` — only anonymous overloads exist on `ISharedHandlerBuilder<TEntity>`.
+- Calling both `UseConsumer` and `UseConsumerFactory` in the same chain — the post-fork interface does not expose the other binding method.
+
+Handler-name uniqueness within an `Isolated` entity SHALL be validated at `Build()` time and throw `InvalidOperationException` on duplicate `(action, handlerName)` pairs.
