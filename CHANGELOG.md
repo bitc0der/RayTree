@@ -6,6 +6,44 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.11-pre-release]
+
+### Added
+
+#### Redis deduplication store (`RayTree.Plugins.Deduplication.Redis`)
+
+New package providing a Redis-backed `IDeduplicationStore` for distributed deployments where
+deduplication state must survive process restarts or be shared across multiple subscriber
+instances.
+
+- `RedisDeduplicationStore` — stores processed correlation IDs in Redis using a single atomic
+  `SET NX EX` command. Keys expire automatically via Redis TTL, so `CleanupAsync` is a no-op.
+- `RedisDeduplicationOptions` — configures key prefix (default `"default"`), retention period
+  (default 24 h), and logical database index (default `-1`).
+- `UseRedisDeduplication(IConnectionMultiplexer)` and
+  `UseRedisDeduplication(IConnectionMultiplexer, Action<RedisDeduplicationOptions>)` extension
+  methods on both `IChangeSubscriberBuilder` and `IChangeTrackingBuilder`.
+
+Key format: `raytree:dedup:{KeyPrefix}:{correlationId}`.
+
+```csharp
+var multiplexer = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+
+var tracker = new ChangeTrackingBuilder()
+    .UseRedisDeduplication(multiplexer, opt =>
+    {
+        opt.KeyPrefix       = "my-service";
+        opt.RetentionPeriod = TimeSpan.FromHours(48);
+    })
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
+```
+
+`InMemoryDeduplicationStore` remains the default for single-process and test scenarios — no
+configuration change required for existing deployments.
+
+---
+
 ## [0.0.10-pre-release]
 
 ### Changed (breaking)

@@ -26,6 +26,7 @@ dotnet test tests/RayTree.Core.Tests --filter "FullyQualifiedName~NoSerializer"
 dotnet test tests/RayTree.Plugins.PostgreSQL.Tests
 dotnet test tests/RayTree.Plugins.RabbitMQ.Tests
 dotnet test tests/RayTree.Plugins.Kafka.Tests
+dotnet test tests/RayTree.Plugins.Deduplication.Redis.Tests
 ```
 
 `TreatWarningsAsErrors=true` is global. Nullable warnings are always errors. All new public code must satisfy these constraints.
