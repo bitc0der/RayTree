@@ -15,23 +15,26 @@ public class RedisDeduplicationStoreTests
         _db = new Mock<IDatabase>(MockBehavior.Strict);
         _multiplexer = new Mock<IConnectionMultiplexer>(MockBehavior.Strict);
         _multiplexer.Setup(m => m.GetDatabase(It.IsAny<int>(), It.IsAny<object?>())).Returns(_db.Object);
-        _multiplexer.Setup(m => m.GetDatabase()).Returns(_db.Object);
     }
 
     [Test]
-    public async Task TryMarkProcessedAsync_WhenKeyAbsent_CallsStringSetWithNotExistsAndReturnTrue()
+    public async Task TryMarkProcessedAsync_WhenKeyAbsent_ReturnsTrueAndWritesKeyWithNxTtl()
     {
+        // Arrange
         var options = new RedisDeduplicationOptions();
         _db.Setup(d => d.StringSetAsync(
-                "raytree:dedup:default:corr-1",
-                (RedisValue)"1",
-                options.RetentionPeriod,
-                When.NotExists))
+                key: "raytree:dedup:default:corr-1",
+                value: (RedisValue)"1",
+                expiry: options.RetentionPeriod,
+                when: When.NotExists))
             .ReturnsAsync(true);
 
-        var store = new RedisDeduplicationStore(_multiplexer.Object, options);
+        var store = new RedisDeduplicationStore(multiplexer: _multiplexer.Object, options: options);
+
+        // Act
         var result = await store.TryMarkProcessedAsync("corr-1");
 
+        // Assert
         Assert.That(result, Is.True);
         _db.VerifyAll();
     }
@@ -39,70 +42,86 @@ public class RedisDeduplicationStoreTests
     [Test]
     public async Task TryMarkProcessedAsync_WhenKeyPresent_ReturnsFalse()
     {
+        // Arrange
         var options = new RedisDeduplicationOptions();
         _db.Setup(d => d.StringSetAsync(
-                "raytree:dedup:default:corr-2",
-                (RedisValue)"1",
-                options.RetentionPeriod,
-                When.NotExists))
+                key: "raytree:dedup:default:corr-2",
+                value: (RedisValue)"1",
+                expiry: options.RetentionPeriod,
+                when: When.NotExists))
             .ReturnsAsync(false);
 
-        var store = new RedisDeduplicationStore(_multiplexer.Object, options);
+        var store = new RedisDeduplicationStore(multiplexer: _multiplexer.Object, options: options);
+
+        // Act
         var result = await store.TryMarkProcessedAsync("corr-2");
 
+        // Assert
         Assert.That(result, Is.False);
     }
 
     [Test]
-    public async Task RevertProcessedAsync_CallsKeyDeleteWithCorrectKey()
+    public async Task RevertProcessedAsync_Always_DeletesKeyByCorrelationId()
     {
+        // Arrange
         var options = new RedisDeduplicationOptions();
-        _db.Setup(d => d.KeyDeleteAsync("raytree:dedup:default:corr-3", CommandFlags.None))
+        _db.Setup(d => d.KeyDeleteAsync(key: "raytree:dedup:default:corr-3", flags: CommandFlags.None))
             .ReturnsAsync(true);
 
-        var store = new RedisDeduplicationStore(_multiplexer.Object, options);
+        var store = new RedisDeduplicationStore(multiplexer: _multiplexer.Object, options: options);
+
+        // Act
         await store.RevertProcessedAsync("corr-3");
 
+        // Assert
         _db.VerifyAll();
     }
 
     [Test]
-    public async Task CleanupAsync_IssuesNoRedisCommands()
+    public async Task CleanupAsync_Always_IssuesNoRedisCommands()
     {
+        // Arrange
         var strictDb = new Mock<IDatabase>(MockBehavior.Strict);
         var strictMux = new Mock<IConnectionMultiplexer>(MockBehavior.Strict);
         strictMux.Setup(m => m.GetDatabase(It.IsAny<int>(), It.IsAny<object?>())).Returns(strictDb.Object);
 
-        var store = new RedisDeduplicationStore(strictMux.Object, new RedisDeduplicationOptions());
+        var store = new RedisDeduplicationStore(multiplexer: strictMux.Object, options: new RedisDeduplicationOptions());
 
-        // No calls on strictDb are set up — any Redis call would throw
+        // Act
         await store.CleanupAsync(TimeSpan.FromHours(1));
 
+        // Assert — no calls on strictDb set up; any Redis call would throw
         strictDb.VerifyNoOtherCalls();
     }
 
     [Test]
-    public async Task TryMarkProcessedAsync_WithCustomPrefix_UsesCorrectKeyFormat()
+    public async Task TryMarkProcessedAsync_WithCustomPrefix_FormatsKeyAsRayTreeDedupPrefixId()
     {
+        // Arrange
         var options = new RedisDeduplicationOptions { KeyPrefix = "orders" };
         _db.Setup(d => d.StringSetAsync(
-                "raytree:dedup:orders:corr-4",
-                (RedisValue)"1",
-                options.RetentionPeriod,
-                When.NotExists))
+                key: "raytree:dedup:orders:corr-4",
+                value: (RedisValue)"1",
+                expiry: options.RetentionPeriod,
+                when: When.NotExists))
             .ReturnsAsync(true);
 
-        var store = new RedisDeduplicationStore(_multiplexer.Object, options);
+        var store = new RedisDeduplicationStore(multiplexer: _multiplexer.Object, options: options);
+
+        // Act
         await store.TryMarkProcessedAsync("corr-4");
 
+        // Assert
         _db.VerifyAll();
     }
 
     [Test]
-    public void DefaultOptions_HaveExpectedValues()
+    public void RedisDeduplicationOptions_DefaultConstructor_HasExpectedPropertyValues()
     {
+        // Act
         var options = new RedisDeduplicationOptions();
 
+        // Assert
         Assert.Multiple(() =>
         {
             Assert.That(options.KeyPrefix, Is.EqualTo("default"));
@@ -114,22 +133,28 @@ public class RedisDeduplicationStoreTests
     [Test]
     public void Constructor_WhenDatabaseIsNegative_PassesNegativeOneToGetDatabase()
     {
+        // Arrange
         var mux = new Mock<IConnectionMultiplexer>(MockBehavior.Strict);
-        mux.Setup(m => m.GetDatabase(-1, It.IsAny<object?>())).Returns(_db.Object);
+        mux.Setup(m => m.GetDatabase(db: -1, asyncState: It.IsAny<object?>())).Returns(_db.Object);
 
-        _ = new RedisDeduplicationStore(mux.Object, new RedisDeduplicationOptions { Database = -1 });
+        // Act
+        _ = new RedisDeduplicationStore(multiplexer: mux.Object, options: new RedisDeduplicationOptions { Database = -1 });
 
-        mux.Verify(m => m.GetDatabase(-1, It.IsAny<object?>()), Times.Once);
+        // Assert
+        mux.Verify(m => m.GetDatabase(db: -1, asyncState: It.IsAny<object?>()), Times.Once);
     }
 
     [Test]
     public void Constructor_WhenDatabaseIsNonNegative_PassesIndexToGetDatabase()
     {
+        // Arrange
         var mux = new Mock<IConnectionMultiplexer>(MockBehavior.Strict);
-        mux.Setup(m => m.GetDatabase(2, It.IsAny<object?>())).Returns(_db.Object);
+        mux.Setup(m => m.GetDatabase(db: 2, asyncState: It.IsAny<object?>())).Returns(_db.Object);
 
-        _ = new RedisDeduplicationStore(mux.Object, new RedisDeduplicationOptions { Database = 2 });
+        // Act
+        _ = new RedisDeduplicationStore(multiplexer: mux.Object, options: new RedisDeduplicationOptions { Database = 2 });
 
-        mux.Verify(m => m.GetDatabase(2, It.IsAny<object?>()), Times.Once);
+        // Assert
+        mux.Verify(m => m.GetDatabase(db: 2, asyncState: It.IsAny<object?>()), Times.Once);
     }
 }
