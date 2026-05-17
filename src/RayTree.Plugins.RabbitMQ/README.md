@@ -82,12 +82,12 @@ sequenceDiagram
     participant Broker as RabbitMQ
 
     App->>Tracker: TrackInsertAsync(order)
-    Tracker->>Outbox: WriteAsync(EntityChange&lt;Order&gt;)
+    Tracker->>Outbox: WriteAsync EntityChange of Order
     Note over Tracker,Outbox: synchronous - durably persisted before return
 
     loop poll every PublisherOptions.PollingInterval
         Loop->>Outbox: GetUnpublishedAsync(batchSize)
-        Outbox-->>Loop: List&lt;EntityChange&lt;Order&gt;&gt;
+        Outbox-->>Loop: batch of EntityChange records
         loop per change (Parallel.ForEachAsync, bounded by MaxPublishConcurrency)
             Loop->>Ser: SerializeAsync(change) → bytes
             Loop->>Cmp: CompressAsync(bytes) → payload

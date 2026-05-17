@@ -81,11 +81,11 @@ sequenceDiagram
     participant Broker as Kafka
 
     App->>Tracker: TrackInsertAsync(order)
-    Tracker->>Outbox: WriteAsync(EntityChange&lt;Order&gt;)
+    Tracker->>Outbox: WriteAsync EntityChange of Order
 
     loop poll every PublisherOptions.PollingInterval
         Loop->>Outbox: GetUnpublishedAsync(batchSize)
-        Outbox-->>Loop: List&lt;EntityChange&lt;Order&gt;&gt;
+        Outbox-->>Loop: batch of EntityChange records
         loop per change (Parallel.ForEachAsync, MaxPublishConcurrency)
             Loop->>Ser: SerializeAsync → bytes
             Loop->>Cmp: CompressAsync → payload
