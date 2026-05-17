@@ -82,12 +82,12 @@ sequenceDiagram
     participant Broker as RabbitMQ
 
     App->>Tracker: TrackInsertAsync(order)
-    Tracker->>Outbox: WriteAsync(EntityChange<Order>)
+    Tracker->>Outbox: WriteAsync(EntityChange&lt;Order&gt;)
     Note over Tracker,Outbox: synchronous - durably persisted before return
 
     loop poll every PublisherOptions.PollingInterval
         Loop->>Outbox: GetUnpublishedAsync(batchSize)
-        Outbox-->>Loop: List<EntityChange<Order>>
+        Outbox-->>Loop: List&lt;EntityChange&lt;Order&gt;&gt;
         loop per change (Parallel.ForEachAsync, bounded by MaxPublishConcurrency)
             Loop->>Ser: SerializeAsync(change) → bytes
             Loop->>Cmp: CompressAsync(bytes) → payload
@@ -181,7 +181,7 @@ sequenceDiagram
     autonumber
     participant Broker as RabbitMQ
     participant Cons as RabbitMqConsumer
-    participant Buf as Channel&lt;MessageEnvelope&gt;
+    participant Buf as EnvelopeBuffer
     participant Sub as ChangeSubscriber
     participant Dedup as IDeduplicationStore
     participant H as Handler
@@ -218,7 +218,7 @@ sequenceDiagram
     participant Broker as RabbitMQ
     participant Cons as RabbitMqConsumer
     participant Meta as MessageEnvelope.Metadata
-    participant Buf as Channel&lt;MessageEnvelope&gt;
+    participant Buf as EnvelopeBuffer
     participant Sub as ChangeSubscriber
     participant H as Handler
 

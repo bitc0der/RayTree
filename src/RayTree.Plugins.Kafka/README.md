@@ -81,11 +81,11 @@ sequenceDiagram
     participant Broker as Kafka
 
     App->>Tracker: TrackInsertAsync(order)
-    Tracker->>Outbox: WriteAsync(EntityChange<Order>)
+    Tracker->>Outbox: WriteAsync(EntityChange&lt;Order&gt;)
 
     loop poll every PublisherOptions.PollingInterval
         Loop->>Outbox: GetUnpublishedAsync(batchSize)
-        Outbox-->>Loop: List<EntityChange<Order>>
+        Outbox-->>Loop: List&lt;EntityChange&lt;Order&gt;&gt;
         loop per change (Parallel.ForEachAsync, MaxPublishConcurrency)
             Loop->>Ser: SerializeAsync → bytes
             Loop->>Cmp: CompressAsync → payload
@@ -174,8 +174,8 @@ flowchart LR
     end
 
     subgraph DotNet["⚙ .NET async world"]
-        Buf["Channel&lt;MessageEnvelope&gt;<br/>(SingleReader, SingleWriter)"]
-        PostCh["Channel&lt;(ConsumeResult,<br/>PostHandlerAction)&gt;<br/>(SingleReader)"]
+        Buf["Envelope buffer<br/>SingleReader, SingleWriter"]
+        PostCh["Post-handler queue<br/>ConsumeResult + action<br/>SingleReader"]
         Sub["ChangeSubscriber"]
         Handlers["Handler delegate(s)"]
     end
@@ -198,7 +198,7 @@ sequenceDiagram
     participant Broker as Kafka
     participant Poll as Poll Thread
     participant Cons as IConsumer
-    participant Buf as Channel&lt;Envelope&gt;
+    participant Buf as EnvelopeBuffer
     participant Sub as ChangeSubscriber
     participant H as Handler
 
@@ -228,7 +228,7 @@ sequenceDiagram
     participant Cons as IConsumer
     participant PostCh as PostHandler Channel
     participant Meta as Envelope.Metadata
-    participant Buf as Channel&lt;Envelope&gt;
+    participant Buf as EnvelopeBuffer
     participant Sub as ChangeSubscriber
     participant H as Handler
 
