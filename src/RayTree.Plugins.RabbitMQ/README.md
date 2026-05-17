@@ -75,7 +75,7 @@ sequenceDiagram
     participant App as Application
     participant Tracker as EntityChangeTracker
     participant Outbox as IOutbox
-    participant Loop as OutboxPublisherService<br/>(background)
+    participant PubSvc as OutboxPublisherSvc
     participant Ser as IChangeSerializer
     participant Cmp as IChangeCompressor
     participant Pub as RabbitMqPublisher
@@ -86,15 +86,15 @@ sequenceDiagram
     Note over Tracker,Outbox: synchronous - durably persisted before return
 
     loop poll every PublisherOptions.PollingInterval
-        Loop->>Outbox: GetUnpublishedAsync(batchSize)
-        Outbox-->>Loop: batch of EntityChange records
+        PubSvc->>Outbox: GetUnpublishedAsync(batchSize)
+        Outbox-->>PubSvc: batch of EntityChange records
         loop per change (Parallel.ForEachAsync, bounded by MaxPublishConcurrency)
-            Loop->>Ser: SerializeAsync(change) → bytes
-            Loop->>Cmp: CompressAsync(bytes) → payload
-            Loop->>Pub: PublishAsync(MessageEnvelope { headers, payload })
-            Pub->>Broker: BasicPublishAsync(exchange,<br/>routingKey, properties, body)
+            PubSvc->>Ser: SerializeAsync(change) returns bytes
+            PubSvc->>Cmp: CompressAsync(bytes) returns payload
+            PubSvc->>Pub: PublishAsync(MessageEnvelope)
+            Pub->>Broker: BasicPublishAsync(exchange, routingKey, properties, body)
             Broker-->>Pub: ack
-            Loop->>Outbox: MarkPublishedAsync(id)
+            PubSvc->>Outbox: MarkPublishedAsync(id)
         end
     end
 ```
@@ -217,7 +217,7 @@ sequenceDiagram
     autonumber
     participant Broker as RabbitMQ
     participant Cons as RabbitMqConsumer
-    participant Meta as MessageEnvelope.Metadata
+    participant Meta as EnvelopeMetadata
     participant Buf as EnvelopeBuffer
     participant Sub as ChangeSubscriber
     participant H as Handler

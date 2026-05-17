@@ -73,27 +73,27 @@ sequenceDiagram
     participant App as Application
     participant Tracker as EntityChangeTracker
     participant Outbox as IOutbox
-    participant Loop as OutboxPublisherService<br/>(background)
+    participant PubSvc as OutboxPublisherSvc
     participant Ser as IChangeSerializer
     participant Cmp as IChangeCompressor
     participant Pub as KafkaPublisher
-    participant Prod as IProducer<br/>(Confluent.Kafka)
+    participant Prod as IProducer
     participant Broker as Kafka
 
     App->>Tracker: TrackInsertAsync(order)
     Tracker->>Outbox: WriteAsync EntityChange of Order
 
     loop poll every PublisherOptions.PollingInterval
-        Loop->>Outbox: GetUnpublishedAsync(batchSize)
-        Outbox-->>Loop: batch of EntityChange records
+        PubSvc->>Outbox: GetUnpublishedAsync(batchSize)
+        Outbox-->>PubSvc: batch of EntityChange records
         loop per change (Parallel.ForEachAsync, MaxPublishConcurrency)
-            Loop->>Ser: SerializeAsync → bytes
-            Loop->>Cmp: CompressAsync → payload
-            Loop->>Pub: PublishAsync(MessageEnvelope)
-            Pub->>Prod: ProduceAsync(Topic,<br/>Message{Key, Value, Headers})
+            PubSvc->>Ser: SerializeAsync returns bytes
+            PubSvc->>Cmp: CompressAsync returns payload
+            PubSvc->>Pub: PublishAsync(MessageEnvelope)
+            Pub->>Prod: ProduceAsync(Topic, Message)
             Prod->>Broker: produce, await acks=all
             Broker-->>Prod: DeliveryReport
-            Loop->>Outbox: MarkPublishedAsync(id)
+            PubSvc->>Outbox: MarkPublishedAsync(id)
         end
     end
 ```
@@ -196,7 +196,7 @@ The poll thread is the **sole writer** to `Buf` and the **sole reader** of `Post
 sequenceDiagram
     autonumber
     participant Broker as Kafka
-    participant Poll as Poll Thread
+    participant Poll as PollThread
     participant Cons as IConsumer
     participant Buf as EnvelopeBuffer
     participant Sub as ChangeSubscriber
@@ -224,10 +224,10 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant Broker as Kafka
-    participant Poll as Poll Thread
+    participant Poll as PollThread
     participant Cons as IConsumer
-    participant PostCh as PostHandler Channel
-    participant Meta as Envelope.Metadata
+    participant PostCh as PostHandlerChannel
+    participant Meta as EnvelopeMetadata
     participant Buf as EnvelopeBuffer
     participant Sub as ChangeSubscriber
     participant H as Handler
