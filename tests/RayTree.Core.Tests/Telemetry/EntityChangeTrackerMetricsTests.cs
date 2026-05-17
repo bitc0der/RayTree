@@ -76,7 +76,7 @@ public class EntityChangeTrackerMetricsTests
                 .UseSerializer(new JsonSerializerPlugin())
                 .UseCompressor(new NoOpCompressorPlugin())
                 .UseConsumer(queue)
-                .OnChange(null, (_, _) =>
+                .OnChange(ChangeType.Insert, (_, _) =>
                 {
                     handlerInvoked.TrySetResult(true);
                     return Task.CompletedTask;

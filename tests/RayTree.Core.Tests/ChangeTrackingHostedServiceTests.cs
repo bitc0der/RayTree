@@ -63,12 +63,12 @@ public class ChangeTrackingHostedServiceTests
                      consumers[name] = q;
                      return q;
                  })
-                 .OnChange("read-model", changeType: null, (_, _) =>
+                 .OnChange("read-model", ChangeType.Insert, (_, _) =>
                  {
                      Interlocked.Increment(ref readModelCount);
                      return Task.CompletedTask;
                  })
-                 .OnChange("notifier", changeType: null, (_, _) =>
+                 .OnChange("notifier", ChangeType.Insert, (_, _) =>
                  {
                      Interlocked.Increment(ref notifierCount);
                      return Task.CompletedTask;

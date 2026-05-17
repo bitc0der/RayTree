@@ -15,7 +15,7 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
     : IIsolatedHandlerBuilder<TEntity>
     where TEntity : class
 {
-    private readonly List<(string HandlerName, ChangeType? ChangeType, ChangeHandlerAsync<TEntity> Handler, SubscriberOptions? Options)> _entries = new();
+    private readonly List<(string HandlerName, ChangeType ChangeType, ChangeHandlerAsync<TEntity> Handler, SubscriberOptions? Options)> _entries = new();
 
     /// <inheritdoc/>
     public IIsolatedHandlerBuilder<TEntity> OnInsert(string handlerName, ChangeHandlerAsync<TEntity> handler,
@@ -33,7 +33,7 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
         => OnChange(handlerName, ChangeType.Delete, handler, options);
 
     /// <inheritdoc/>
-    public IIsolatedHandlerBuilder<TEntity> OnChange(string handlerName, ChangeType? changeType,
+    public IIsolatedHandlerBuilder<TEntity> OnChange(string handlerName, ChangeType changeType,
         ChangeHandlerAsync<TEntity> handler, SubscriberOptions? options = null)
     {
         // Task 2.4 — reject null/empty names immediately at registration time
@@ -53,14 +53,13 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
     internal void Apply(ChangeSubscriber subscriber)
     {
         // --- Validate: no duplicate (action, handlerName) pairs ---
-        var seen = new HashSet<(ChangeType?, string)>();
+        var seen = new HashSet<(ChangeType, string)>();
         foreach (var (name, changeType, _, _) in _entries)
         {
             if (!seen.Add((changeType, name)))
             {
-                var actionLabel = changeType?.ToString() ?? "any";
                 throw new InvalidOperationException(
-                    $"Duplicate isolated handler registration: action '{actionLabel}' with name '{name}' " +
+                    $"Duplicate isolated handler registration: action '{changeType}' with name '{name}' " +
                     $"for entity '{typeof(TEntity).Name}'. Each (action, handlerName) pair must be unique.");
             }
         }

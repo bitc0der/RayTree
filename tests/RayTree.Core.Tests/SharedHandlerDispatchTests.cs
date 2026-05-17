@@ -63,21 +63,33 @@ public class SharedHandlerDispatchTests
     }
 
     // -------------------------------------------------------------------------
-    // Task 6.2 — OnInsert + catch-all OnChange(null) both invoked for an Insert
+    // Task 6.2 (revised) — explicit per-change-type registrations dispatch only to
+    // the matching handler. The previous "catch-all OnChange(null)" form was removed
+    // when ChangeType became required on handler registration — handlers now bind to
+    // exactly one concrete type. A consumer that wants the same logic for several
+    // change types registers the same delegate against each one.
     // -------------------------------------------------------------------------
 
     [Test]
-    public async Task InsertHandler_PlusCatchAll_BothInvokedOnInsert()
+    public async Task SameDelegate_RegisteredForInsertAndUpdate_FiresForBoth()
     {
-        var invoked = new List<string>();
+        var invoked = new List<ChangeType>();
+        ChangeHandlerAsync<Order> handler = (change, _) =>
+        {
+            invoked.Add(change.ChangeType);
+            return Task.CompletedTask;
+        };
+
         var subscriber = MakeSubscriber();
         subscriber
-            .OnChange<Order>(ChangeType.Insert, (_, _) => { invoked.Add("insert"); return Task.CompletedTask; })
-            .OnChange<Order>(null,              (_, _) => { invoked.Add("catchall"); return Task.CompletedTask; });
+            .OnChange<Order>(ChangeType.Insert, handler)
+            .OnChange<Order>(ChangeType.Update, handler);
 
         await subscriber.ProcessMessageAsync(InsertEnvelope());
+        await subscriber.ProcessMessageAsync(UpdateEnvelope());
 
-        Assert.That(invoked, Is.EqualTo(new[] { "insert", "catchall" }));
+        Assert.That(invoked, Is.EqualTo(new[] { ChangeType.Insert, ChangeType.Update }),
+            "same delegate registered for two change types should fire once per type");
     }
 
     // -------------------------------------------------------------------------
@@ -112,7 +124,7 @@ public class SharedHandlerDispatchTests
         subscriber
             .OnChange<Order>(ChangeType.Insert, (_, _) => { order.Add("A"); return Task.CompletedTask; })
             .OnChange<Order>(ChangeType.Insert, (_, _) => { order.Add("B"); return Task.CompletedTask; })
-            .OnChange<Order>(null,              (_, _) => { order.Add("C"); return Task.CompletedTask; });
+            .OnChange<Order>(ChangeType.Insert, (_, _) => { order.Add("C"); return Task.CompletedTask; });
 
         await subscriber.ProcessMessageAsync(InsertEnvelope());
 

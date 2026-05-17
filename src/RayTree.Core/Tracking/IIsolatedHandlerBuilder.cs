@@ -93,15 +93,15 @@ public interface IIsolatedHandlerBuilder<TEntity> where TEntity : class
         SubscriberOptions? options = null);
 
     /// <summary>
-    /// Adds a named handler for the specified change type, or for all change types when
-    /// <paramref name="changeType"/> is <c>null</c>.
+    /// Adds a named handler for the specified change type. To react to multiple change
+    /// types with the same logic, call this method (or the type-specific overloads) once
+    /// per type — there is no longer a wildcard <c>null</c> form. Every handler must
+    /// bind to a concrete <see cref="ChangeType"/>.
     /// </summary>
     /// <param name="handlerName">
     /// A non-null, non-empty stable identifier for this handler.
     /// </param>
-    /// <param name="changeType">
-    /// The change type to filter on, or <c>null</c> to match all change types.
-    /// </param>
+    /// <param name="changeType">The change type to filter on.</param>
     /// <param name="handler">The handler delegate to invoke.</param>
     /// <param name="options">
     /// Optional per-handler <see cref="SubscriberOptions"/>. The first non-null options
@@ -113,7 +113,7 @@ public interface IIsolatedHandlerBuilder<TEntity> where TEntity : class
     /// <returns>This builder instance for further fluent chaining.</returns>
     IIsolatedHandlerBuilder<TEntity> OnChange(
         string handlerName,
-        ChangeType? changeType,
+        ChangeType changeType,
         ChangeHandlerAsync<TEntity> handler,
         SubscriberOptions? options = null);
 }

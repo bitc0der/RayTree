@@ -19,7 +19,7 @@ internal sealed class EntitySubscriberBuilder<TEntity>(ChangeSubscriberBuilder p
     private IChangeCompressor? _compressor;
     private Action<SubscriberOptions>? _optionsConfigure;
 
-    private readonly List<(ChangeType? ChangeType, ChangeHandlerAsync<TEntity> Handler)> _handlers = new();
+    private readonly List<(ChangeType ChangeType, ChangeHandlerAsync<TEntity> Handler)> _handlers = new();
 
     /// <inheritdoc/>
     public IEntitySubscriberBuilder<TEntity> UseConsumer(IQueueConsumer consumer)
@@ -66,7 +66,7 @@ internal sealed class EntitySubscriberBuilder<TEntity>(ChangeSubscriberBuilder p
         => OnChange(ChangeType.Delete, handler);
 
     /// <inheritdoc/>
-    public IEntitySubscriberBuilder<TEntity> OnChange(ChangeType? changeType, ChangeHandlerAsync<TEntity> handler)
+    public IEntitySubscriberBuilder<TEntity> OnChange(ChangeType changeType, ChangeHandlerAsync<TEntity> handler)
     {
         ArgumentNullException.ThrowIfNull(handler);
         _handlers.Add((changeType, handler));

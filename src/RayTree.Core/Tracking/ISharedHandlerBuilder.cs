@@ -42,9 +42,11 @@ public interface ISharedHandlerBuilder<TEntity> where TEntity : class
     ISharedHandlerBuilder<TEntity> OnDelete(ChangeHandlerAsync<TEntity> handler);
 
     /// <summary>
-    /// Adds a handler for the specified change type, or for all change types when
-    /// <paramref name="changeType"/> is <c>null</c>.
-    /// Accumulates with any previously registered handlers for the same entity.
+    /// Adds a handler for the specified change type. Accumulates with any previously
+    /// registered handlers for the same entity. To react to multiple change types with
+    /// the same logic, call this method (or the type-specific overloads) once per type;
+    /// there is no longer a wildcard <c>null</c> form — every handler must bind to a
+    /// concrete <see cref="ChangeType"/>.
     /// </summary>
-    ISharedHandlerBuilder<TEntity> OnChange(ChangeType? changeType, ChangeHandlerAsync<TEntity> handler);
+    ISharedHandlerBuilder<TEntity> OnChange(ChangeType changeType, ChangeHandlerAsync<TEntity> handler);
 }

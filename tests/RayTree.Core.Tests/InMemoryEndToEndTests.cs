@@ -120,18 +120,25 @@ public class InMemoryEndToEndTests
     }
 
     [Test]
-    public async Task OnChange_WithNullChangeType_ReceivesAllTypes()
+    public async Task ThreeHandlersSameDelegate_ReceiveAllThreeChangeTypes()
     {
+        // Catch-all OnChange(null) was removed; ChangeType is now required on every
+        // handler registration. To react to all three change types with the same logic,
+        // register the same delegate three times.
         var received = new List<ChangeType>();
         var allThree = new TaskCompletionSource<bool>();
 
-        var (subscriber, cts, _) = StartSubscriber(s =>
-            s.OnChange<Order>(changeType: null, (change, _) =>
-            {
-                lock (received) received.Add(change.ChangeType);
-                if (received.Count == 3) allThree.TrySetResult(true);
-                return Task.CompletedTask;
-            }));
+        ChangeHandlerAsync<Order> handler = (change, _) =>
+        {
+            lock (received) received.Add(change.ChangeType);
+            if (received.Count == 3) allThree.TrySetResult(true);
+            return Task.CompletedTask;
+        };
+
+        var (subscriber, cts, _) = StartSubscriber(s => s
+            .OnChange<Order>(ChangeType.Insert, handler)
+            .OnChange<Order>(ChangeType.Update, handler)
+            .OnChange<Order>(ChangeType.Delete, handler));
 
         await _tracker.TrackInsertAsync(new Order { Id = 1, Total = 10m });
         await _tracker.TrackUpdateAsync(new Order { Id = 2, Total = 20m });
@@ -258,7 +265,7 @@ public class InMemoryEndToEndTests
         subscriber
             .UseSerializer<Order>(new JsonSerializerPlugin())
             .RegisterQueue<Order>(_queue)
-            .OnChange<Order>(null, (_, _) =>
+            .OnChange<Order>(ChangeType.Insert, (_, _) =>
             {
                 var n = Interlocked.Increment(ref attempts);
                 if (n < 3) throw new InvalidOperationException("transient");
@@ -293,7 +300,7 @@ public class InMemoryEndToEndTests
         subscriber
             .UseSerializer<Order>(new JsonSerializerPlugin())
             .RegisterQueue<Order>(_queue)
-            .OnChange<Order>(null, (_, _) =>
+            .OnChange<Order>(ChangeType.Insert, (_, _) =>
             {
                 var n = Interlocked.Increment(ref attempts);
                 if (n == 2) secondAttempt.TrySetResult(true);

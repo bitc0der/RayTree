@@ -44,7 +44,7 @@ internal sealed class SharedHandlerBuilder<TEntity> : ISharedHandlerBuilder<TEnt
     }
 
     /// <inheritdoc/>
-    public ISharedHandlerBuilder<TEntity> OnChange(ChangeType? changeType, ChangeHandlerAsync<TEntity> handler)
+    public ISharedHandlerBuilder<TEntity> OnChange(ChangeType changeType, ChangeHandlerAsync<TEntity> handler)
     {
         ArgumentNullException.ThrowIfNull(handler);
         _subBuilder.OnChange(changeType, handler);

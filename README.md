@@ -169,7 +169,7 @@ var subscriber = new ChangeSubscriberBuilder()
     .UseCompressor(new NoOpCompressorPlugin())
     .ForEntity<Order>(e => e
         .UseConsumer(new KafkaConsumer(consumerOptions))
-        .OnChange(changeType: null, async (change, ct) => { /* handle any */ }))
+        .OnChange(ChangeType.Insert, async (change, ct) => { /* handle insert */ }))
     .Build();
 ```
 

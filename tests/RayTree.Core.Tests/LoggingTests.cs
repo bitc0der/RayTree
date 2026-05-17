@@ -232,7 +232,7 @@ public class LoggingTests
         var subscriber      = new ChangeSubscriber(recordingLogger, new RayTreeMeter(), options: options);
 
         subscriber.RegisterQueue<SampleEntity>(new InMemoryQueue());
-        subscriber.OnChange<SampleEntity>(changeType: null, (_, _) =>
+        subscriber.OnChange<SampleEntity>(ChangeType.Update, (_, _) =>
             throw new InvalidOperationException("Simulated handler failure"));
 
         var envelope = new MessageEnvelope

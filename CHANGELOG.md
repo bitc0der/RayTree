@@ -8,6 +8,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.0.10-pre-release]
 
+### Changed (breaking)
+
+#### `ChangeType` is required on every handler registration (`RayTree.Core`)
+
+`OnChange(changeType, handler)` now takes a non-nullable `ChangeType`. The previous wildcard
+`OnChange(changeType: null, handler)` form — which fired the handler for every change type —
+has been removed across all four registration surfaces:
+
+- `IEntitySubscriberBuilder<TEntity>.OnChange`
+- `ISharedHandlerBuilder<TEntity>.OnChange`
+- `IIsolatedHandlerBuilder<TEntity>.OnChange`
+- `ChangeSubscriber.OnChange<TEntity>` and internal `RegisterIsolatedHandler<TEntity>`
+
+`HandlerRegistration.ChangeType` is now `ChangeType` (not `ChangeType?`), and the dispatch
+matcher inside `ChangeSubscriber.ProcessMessageAsync` / `ProcessIsolatedMessageAsync` is a
+strict equality check (`h.ChangeType == envelope.ChangeType`) — no implicit fall-through.
+
+**Migration:** replace each catch-all registration with one call per change type binding the
+same delegate.
+
+```csharp
+// Before (no longer compiles):
+.OnChange<Order>(changeType: null, handler)
+
+// After:
+.OnChange<Order>(ChangeType.Insert, handler)
+.OnChange<Order>(ChangeType.Update, handler)
+.OnChange<Order>(ChangeType.Delete, handler)
+```
+
+The `IOutbox.GetUnpublishedAsync(ChangeType? changeType, …)` query filter is **unaffected** —
+its nullable `changeType` parameter is a query filter (`null` = no filter), a different
+contract from handler binding.
+
 ### Added
 
 #### Optional at-least-once delivery (`RayTree.Core`, `RayTree.Plugins.RabbitMQ`, `RayTree.Plugins.Kafka`)

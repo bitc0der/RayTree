@@ -120,12 +120,14 @@ public class ChangeSubscriber : IDisposable
     /// <summary>
     /// Registers a typed handler under a specific handler name for Isolated mode.
     /// Handlers sharing a name but targeting different <paramref name="changeType"/> values
-    /// live in the same list and are disambiguated by the consume loop.
+    /// live in the same list and are disambiguated by the consume loop. Each handler
+    /// binds to exactly one concrete <see cref="ChangeType"/>; register multiple handlers
+    /// under the same name to react to multiple change types.
     /// Task 3.3.
     /// </summary>
     internal void RegisterIsolatedHandler<TEntity>(
         string handlerName,
-        ChangeType? changeType,
+        ChangeType changeType,
         ChangeHandlerAsync<TEntity> handler)
         where TEntity : class
     {
@@ -181,7 +183,7 @@ public class ChangeSubscriber : IDisposable
         return this;
     }
 
-    public ChangeSubscriber OnChange<TEntity>(ChangeType? changeType, ChangeHandlerAsync<TEntity> handler)
+    public ChangeSubscriber OnChange<TEntity>(ChangeType changeType, ChangeHandlerAsync<TEntity> handler)
         where TEntity : class
     {
         if (!_handlers.ContainsKey(typeof(TEntity)))
@@ -364,7 +366,7 @@ public class ChangeSubscriber : IDisposable
         }
 
         var matchingHandlers = handlers
-            .Where(h => h.ChangeType == null || h.ChangeType == envelope.ChangeType)
+            .Where(h => h.ChangeType == envelope.ChangeType)
             .ToList();
 
         if (matchingHandlers.Count == 0)
@@ -450,7 +452,7 @@ public class ChangeSubscriber : IDisposable
         }
 
         var matchingHandlers = allHandlers
-            .Where(h => h.ChangeType == null || h.ChangeType == envelope.ChangeType)
+            .Where(h => h.ChangeType == envelope.ChangeType)
             .ToList();
 
         if (matchingHandlers.Count == 0)
