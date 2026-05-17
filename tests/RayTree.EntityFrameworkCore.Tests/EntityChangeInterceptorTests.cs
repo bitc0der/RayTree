@@ -1,13 +1,13 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using RayTree.Core.Distribution;
-using RayTree.Core.Telemetry;
 using RayTree.Core.Models;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
 using RayTree.EntityFrameworkCore.Interceptors;
 using RayTree.EntityFrameworkCore.Extensions;
+using RayTree.Plugins.InMemory;
+using RayTree.Plugins.Serializers.Json;
 
 namespace RayTree.EntityFrameworkCore.Tests;
 
@@ -38,15 +38,18 @@ public class EntityChangeInterceptorTests
     }
 
     private static EntityChangeTracker BuildTracker(IOutbox outbox)
-    {
-        var publisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
-        publisher.RegisterOutbox(typeof(TestEntity), outbox);
-        return new EntityChangeTracker(publisher);
-    }
+        => EntityChangeTracker.Create()
+            .ForEntity<TestEntity>(e => e
+                .UseOutbox(outbox)
+                .UsePublisher(new InMemoryQueue())
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()))
+            .Build();
 
     [Test]
     public async Task SavingChangesAsync_DetectsAddedEntities()
     {
+        // Arrange
         var outbox = new Mock<IOutbox>();
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -60,17 +63,19 @@ public class EntityChangeInterceptorTests
             .Options;
 
         await using var context = new TestDbContext(options);
-
         context.TestEntities.Add(new TestEntity { Name = "New", CreatedAt = DateTime.UtcNow });
 
+        // Act
         await context.SaveChangesAsync();
 
+        // Assert
         outbox.Verify(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Test]
     public async Task SavingChangesAsync_DetectsModifiedEntities()
     {
+        // Arrange
         var outbox = new Mock<IOutbox>();
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -84,21 +89,23 @@ public class EntityChangeInterceptorTests
             .Options;
 
         await using var context = new TestDbContext(options);
-
         context.TestEntities.Add(new TestEntity { Name = "Original", CreatedAt = DateTime.UtcNow });
         await context.SaveChangesAsync();
 
         var entity = context.TestEntities.First();
         entity.Name = "Modified";
 
+        // Act
         await context.SaveChangesAsync();
 
+        // Assert
         outbox.Verify(o => o.WriteAsync(It.Is<EntityChange<TestEntity>>(c => c.ChangeType == ChangeType.Update), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Test]
     public async Task SavingChangesAsync_DetectsDeletedEntities()
     {
+        // Arrange
         var outbox = new Mock<IOutbox>();
         outbox.Setup(o => o.WriteAsync(It.IsAny<EntityChange<TestEntity>>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -112,25 +119,29 @@ public class EntityChangeInterceptorTests
             .Options;
 
         await using var context = new TestDbContext(options);
-
         context.TestEntities.Add(new TestEntity { Name = "To Delete", CreatedAt = DateTime.UtcNow });
         await context.SaveChangesAsync();
 
         var entity = context.TestEntities.First();
         context.TestEntities.Remove(entity);
 
+        // Act
         await context.SaveChangesAsync();
 
+        // Assert
         outbox.Verify(o => o.WriteAsync(It.Is<EntityChange<TestEntity>>(c => c.ChangeType == ChangeType.Delete), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
     [Test]
     public void ServiceCollectionExtensions_AddChangeTracking_RegistersServices()
     {
+        // Arrange
         var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
 
+        // Act
         var result = services.AddChangeTracking();
 
+        // Assert
         Assert.That(result, Is.Not.Null);
     }
 }

@@ -1,12 +1,8 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging.Abstractions;
-using RayTree.Core.Distribution;
-using RayTree.Core.Telemetry;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
 using RayTree.EntityFrameworkCore.Interceptors;
-using RayTree.Plugins;
 using RayTree.Plugins.Compressors.Gzip;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.Serializers.Json;
@@ -15,23 +11,21 @@ namespace RayTree.EntityFrameworkCore.Tests;
 
 public class EndToEndInMemoryTests
 {
-    private static (ChangePublisher publisher, EntityChangeTracker tracker) BuildTracker(
-        InMemoryOutbox outbox, bool withQueue = false, bool withGzip = false)
-    {
-        var publisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
-        publisher.RegisterOutbox(typeof(Product), outbox);
-        publisher.RegisterSerializer(typeof(Product), new JsonSerializerPlugin());
-        publisher.RegisterCompressor(typeof(Product), withGzip ? new GzipCompressorPlugin() : (IChangeCompressor)new NoOpCompressorPlugin());
-        if (withQueue)
-            publisher.RegisterPublisher(typeof(Product), new InMemoryQueue());
-        return (publisher, new EntityChangeTracker(publisher));
-    }
+    private static EntityChangeTracker BuildTracker(InMemoryOutbox outbox, bool withGzip = false)
+        => EntityChangeTracker.Create()
+            .ForEntity<Product>(e => e
+                .UseOutbox(outbox)
+                .UsePublisher(new InMemoryQueue())
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(withGzip ? new GzipCompressorPlugin() : (IChangeCompressor)new NoOpCompressorPlugin()))
+            .Build();
 
     [Test]
     public async Task EfCore_SaveChanges_WritesToInMemoryOutbox()
     {
+        // Arrange
         var outbox = new InMemoryOutbox();
-        var (_, tracker) = BuildTracker(outbox);
+        var tracker = BuildTracker(outbox);
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -40,10 +34,12 @@ public class EndToEndInMemoryTests
             .Options;
 
         await using var context = new TestDbContext(options);
-
         context.Products.Add(new Product { Name = "Widget", Price = 9.99m });
+
+        // Act
         await context.SaveChangesAsync();
 
+        // Assert
         var outboxEntries = outbox.GetAll();
         Assert.That(outboxEntries, Has.Count.EqualTo(1));
         Assert.That(outboxEntries[0].EntityType, Does.Contain("Product"));
@@ -53,8 +49,9 @@ public class EndToEndInMemoryTests
     [Test]
     public async Task EfCore_MultipleChanges_WritesAllToOutbox()
     {
+        // Arrange
         var outbox = new InMemoryOutbox();
-        var (_, tracker) = BuildTracker(outbox);
+        var tracker = BuildTracker(outbox);
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -63,19 +60,22 @@ public class EndToEndInMemoryTests
             .Options;
 
         await using var context = new TestDbContext(options);
-
         context.Products.Add(new Product { Name = "Gadget", Price = 19.99m });
         context.Products.Add(new Product { Name = "Doohickey", Price = 4.99m });
+
+        // Act
         await context.SaveChangesAsync();
 
+        // Assert
         Assert.That(outbox.GetAll(), Has.Count.EqualTo(2));
     }
 
     [Test]
     public async Task EfCore_UpdateChange_DetectedAndStored()
     {
+        // Arrange
         var outbox = new InMemoryOutbox();
-        var (_, tracker) = BuildTracker(outbox);
+        var tracker = BuildTracker(outbox);
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -91,6 +91,7 @@ public class EndToEndInMemoryTests
             productId = context.Products.First().Id;
         }
 
+        // Act
         await using (var context = new TestDbContext(options))
         {
             var product = context.Products.Find(productId);
@@ -101,6 +102,7 @@ public class EndToEndInMemoryTests
             }
         }
 
+        // Assert
         var updates = outbox.GetAll().Where(c => c.ChangeType == ChangeType.Update).ToList();
         Assert.That(updates, Is.Not.Empty);
     }
@@ -108,8 +110,9 @@ public class EndToEndInMemoryTests
     [Test]
     public async Task EfCore_DeleteChange_DetectedAndStored()
     {
+        // Arrange
         var outbox = new InMemoryOutbox();
-        var (_, tracker) = BuildTracker(outbox);
+        var tracker = BuildTracker(outbox);
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -125,6 +128,7 @@ public class EndToEndInMemoryTests
             productId = context.Products.First().Id;
         }
 
+        // Act
         await using (var context = new TestDbContext(options))
         {
             var product = context.Products.Find(productId);
@@ -135,6 +139,7 @@ public class EndToEndInMemoryTests
             }
         }
 
+        // Assert
         var deletes = outbox.GetAll().Where(c => c.ChangeType == ChangeType.Delete).ToList();
         Assert.That(deletes, Is.Not.Empty);
     }
@@ -142,14 +147,16 @@ public class EndToEndInMemoryTests
     [Test]
     public async Task EfCore_WithQueue_OutboxAndQueueRegistered()
     {
+        // Arrange
         var outbox = new InMemoryOutbox();
         var queue = new InMemoryQueue();
-        var publisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
-        publisher.RegisterOutbox(typeof(Product), outbox);
-        publisher.RegisterPublisher(typeof(Product), queue);
-        publisher.RegisterSerializer(typeof(Product), new JsonSerializerPlugin());
-        publisher.RegisterCompressor(typeof(Product), new NoOpCompressorPlugin());
-        var tracker = new EntityChangeTracker(publisher);
+        var tracker = EntityChangeTracker.Create()
+            .ForEntity<Product>(e => e
+                .UseOutbox(outbox)
+                .UsePublisher(queue)
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()))
+            .Build();
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -158,10 +165,12 @@ public class EndToEndInMemoryTests
             .Options;
 
         await using var context = new TestDbContext(options);
-
         context.Products.Add(new Product { Name = "Queued", Price = 42.0m });
+
+        // Act
         await context.SaveChangesAsync();
 
+        // Assert
         Assert.That(outbox.GetAll(), Has.Count.EqualTo(1));
         Assert.That(tracker.Publisher.GetPublisher(typeof(Product)), Is.Not.Null);
         Assert.That(tracker.Publisher.GetOutbox(typeof(Product)), Is.Not.Null);
@@ -170,33 +179,33 @@ public class EndToEndInMemoryTests
     [Test]
     public async Task EfCore_OutboxPublisher_DeliversToQueue()
     {
-        var outbox = new InMemoryOutbox();
+        // Arrange
         var queue = new InMemoryQueue();
-        var publisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
-        publisher.RegisterOutbox(typeof(Product), outbox);
-        publisher.RegisterPublisher(typeof(Product), queue);
-        publisher.RegisterSerializer(typeof(Product), new JsonSerializerPlugin());
-        publisher.RegisterCompressor(typeof(Product), new NoOpCompressorPlugin());
-        publisher.Options.PollingInterval = TimeSpan.FromMilliseconds(50);
+        using var tracker = EntityChangeTracker.Create()
+            .UsePublisherOptions(o => o.PollingInterval = TimeSpan.FromMilliseconds(50))
+            .ForEntity<Product>(e => e
+                .UseOutbox(new InMemoryOutbox())
+                .UsePublisher(queue)
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()))
+            .Build();
 
-        var tracker = new EntityChangeTracker(publisher);
-        await tracker.InitializeAsync();
-
+        // Act
         await tracker.TrackInsertAsync(new Product { Id = 1, Name = "Widget" });
 
+        // Assert
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var message = await queue.Reader.ReadAsync(cts.Token);
         Assert.That(message.EntityId, Is.EqualTo("1"));
         Assert.That(message.ChangeType, Is.EqualTo(ChangeType.Insert));
-
-        tracker.Dispose();
     }
 
     [Test]
     public async Task EfCore_WithCompression_RoundTripPreservesData()
     {
+        // Arrange
         var outbox = new InMemoryOutbox();
-        var (_, tracker) = BuildTracker(outbox, withGzip: true);
+        var tracker = BuildTracker(outbox, withGzip: true);
         var interceptor = new EntityChangeInterceptor(tracker, new[] { typeof(Product) });
 
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -205,10 +214,12 @@ public class EndToEndInMemoryTests
             .Options;
 
         await using var context = new TestDbContext(options);
-
         context.Products.Add(new Product { Name = "Compressed", Price = 15.0m });
+
+        // Act
         await context.SaveChangesAsync();
 
+        // Assert
         Assert.That(outbox.GetAll(), Has.Count.EqualTo(1));
     }
 

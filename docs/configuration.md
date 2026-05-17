@@ -1,15 +1,15 @@
 # Configuration Guide
 
-The primary configuration API is `ChangeTrackingBuilder`. It registers per-entity plugins, sets global defaults, and produces an `EntityChangeTracker` via `Build()` / `BuildAsync()`.
+The primary configuration API is accessed via `EntityChangeTracker.Create()`, which returns `IChangeTrackingBuilder`. It registers per-entity plugins, sets global defaults, and produces an `EntityChangeTracker` via `Build()` / `BuildAsync()`.
 
-## ChangeTrackingBuilder
+## EntityChangeTracker.Create()
 
 ### Per-Entity Configuration
 
 `ForEntity<T>` accepts a callback that scopes all per-entity configuration. The parent builder is always returned, so multiple entity registrations chain cleanly:
 
 ```csharp
-var builder = new ChangeTrackingBuilder();
+var builder = EntityChangeTracker.Create();
 
 builder
     .ForEntity<Product>(e => e
@@ -39,7 +39,7 @@ var tracker = builder.Build();
 Extension methods on `IChangeTrackingBuilder` set a default factory applied to every entity type that does not have an explicit override:
 
 ```csharp
-var builder = new ChangeTrackingBuilder();
+var builder = EntityChangeTracker.Create();
 builder.UseJsonSerializer();      // RayTree.Plugins.Serializers.Json
 builder.UseGzipCompressor();      // RayTree.Plugins.Compressors.Gzip
 // builder.UseProtobufSerializer()
@@ -130,7 +130,7 @@ See [trigger-setup.md](trigger-setup.md) for full details and hosting in ASP.NET
 
 ## ChangeTrackingConfiguration
 
-`ChangeTrackingConfiguration` is a thin wrapper around `ChangeTrackingBuilder` that adds `WithPollingInterval()` and `WithBatchSize()` convenience methods. It does **not** expose per-entity fluent configuration — use `ChangeTrackingBuilder` directly for most scenarios.
+`ChangeTrackingConfiguration` is a thin wrapper around `IChangeTrackingBuilder` that adds `WithPollingInterval()` and `WithBatchSize()` convenience methods. It does **not** expose per-entity fluent configuration — use `EntityChangeTracker.Create()` directly for most scenarios.
 
 ```csharp
 var config = new ChangeTrackingConfiguration()
@@ -329,18 +329,18 @@ RayTree uses `Microsoft.Extensions.Logging` throughout. All runtime service clas
 
 ### Standalone (no DI)
 
-Pass an `ILoggerFactory` to `ChangeTrackingBuilder`:
+Pass an `ILoggerFactory` to `EntityChangeTracker.Create()`:
 
 ```csharp
 // No logging (tests, scripts)
-var tracker = new ChangeTrackingBuilder().Build();
+var tracker = EntityChangeTracker.Create().Build();
 
 // With logging
 using var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
-var tracker = new ChangeTrackingBuilder(loggerFactory).Build();
+var tracker = EntityChangeTracker.Create(loggerFactory).Build();
 ```
 
-`ChangeTrackingBuilder` normalises `null` to `NullLoggerFactory.Instance`, so calling `new ChangeTrackingBuilder()` without an argument produces a working tracker with no log output.
+`EntityChangeTracker.Create()` normalises `null` to `NullLoggerFactory.Instance`, so calling `EntityChangeTracker.Create()` without an argument produces a working tracker with no log output.
 
 ### ASP.NET Core (DI)
 
@@ -392,7 +392,7 @@ RayTree emits `System.Diagnostics.Metrics` instruments on a `Meter` named `"RayT
 
 ### Default (built-in meter)
 
-`ChangeTrackingBuilder` creates a `RayTreeMeter` automatically and `EntityChangeTracker` disposes it. To collect the metrics, attach a `MeterListener` to the meter named `"RayTree"`, or use the OTel SDK via the `RayTree.OpenTelemetry` package:
+`EntityChangeTracker.Create()` creates a `RayTreeMeter` automatically and `EntityChangeTracker` disposes it. To collect the metrics, attach a `MeterListener` to the meter named `"RayTree"`, or use the OTel SDK via the `RayTree.OpenTelemetry` package:
 
 ```csharp
 services.AddOpenTelemetry()
@@ -407,7 +407,7 @@ Pass a `RayTreeMeter` instance to share it across trackers or to control its lif
 
 ```csharp
 var meter = new RayTreeMeter();
-var tracker = new ChangeTrackingBuilder(loggerFactory)
+var tracker = EntityChangeTracker.Create(loggerFactory)
     .UseMeter(meter)
     .ForEntity<Order>(/* ... */)
     .Build();

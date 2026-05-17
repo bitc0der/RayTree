@@ -12,14 +12,14 @@ using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Tracking;
 
-public class ChangeTrackingBuilder : IChangeTrackingBuilder
+public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
 {
     private readonly ChangePublisherBuilder _publisherBuilder = new();
     private readonly ChangeSubscriberBuilder _subscriberBuilder = new();
     private readonly ILoggerFactory _loggerFactory;
     private RayTreeMeter? _meter;
 
-    public ChangeTrackingBuilder(ILoggerFactory? loggerFactory = null)
+    internal ChangeTrackingBuilder(ILoggerFactory? loggerFactory = null)
     {
         _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
     }

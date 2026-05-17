@@ -85,7 +85,7 @@ public sealed class ChangeSubscriberBuilder : IChangeSubscriberBuilder
     /// </summary>
     /// <param name="dedupStoreOverride">
     /// When provided (e.g., resolved from DI), takes precedence over any store set on this
-    /// builder via <see cref="UseDeduplicationStore"/> or <see cref="UseRedisDeduplication"/>.
+    /// builder via <see cref="UseDeduplicationStore"/>.
     /// </param>
     /// <param name="optionsOverride">
     /// When provided (e.g., bound from <c>appsettings.json</c> via <c>IOptions</c>), takes
