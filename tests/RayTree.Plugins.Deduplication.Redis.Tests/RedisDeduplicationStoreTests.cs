@@ -58,6 +58,7 @@ public class RedisDeduplicationStoreTests
 
         // Assert
         Assert.That(result, Is.False);
+        _db.VerifyAll();
     }
 
     [Test]
@@ -156,5 +157,41 @@ public class RedisDeduplicationStoreTests
 
         // Assert
         mux.Verify(m => m.GetDatabase(db: 2, asyncState: It.IsAny<object?>()), Times.Once);
+    }
+
+    [Test]
+    public void Constructor_WhenMultiplexerIsNull_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            _ = new RedisDeduplicationStore(multiplexer: null!, options: new RedisDeduplicationOptions()));
+    }
+
+    [Test]
+    public void Constructor_WhenOptionsIsNull_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentNullException>(() =>
+            _ = new RedisDeduplicationStore(multiplexer: _multiplexer.Object, options: null!));
+    }
+
+    [Test]
+    public void RedisDeduplicationOptions_WhenKeyPrefixIsEmpty_ThrowsArgumentException()
+    {
+        // Arrange
+        var options = new RedisDeduplicationOptions();
+
+        // Act & Assert
+        Assert.Throws<ArgumentException>(() => options.KeyPrefix = string.Empty);
+    }
+
+    [Test]
+    public void RedisDeduplicationOptions_WhenKeyPrefixIsWhitespace_ThrowsArgumentException()
+    {
+        // Arrange
+        var options = new RedisDeduplicationOptions();
+
+        // Act & Assert
+        Assert.Throws<ArgumentException>(() => options.KeyPrefix = "   ");
     }
 }

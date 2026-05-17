@@ -31,6 +31,7 @@ public static class RedisDeduplicationExtensions
         IConnectionMultiplexer multiplexer,
         Action<RedisDeduplicationOptions> configure)
     {
+        ArgumentNullException.ThrowIfNull(configure);
         var options = new RedisDeduplicationOptions();
         configure(options);
         return builder.UseDeduplicationStore(
@@ -61,6 +62,7 @@ public static class RedisDeduplicationExtensions
         IConnectionMultiplexer multiplexer,
         Action<RedisDeduplicationOptions> configure)
     {
+        ArgumentNullException.ThrowIfNull(configure);
         var options = new RedisDeduplicationOptions();
         configure(options);
         return builder.UseDeduplicationStore(

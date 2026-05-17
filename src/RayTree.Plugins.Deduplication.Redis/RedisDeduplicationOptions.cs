@@ -6,9 +6,21 @@ public sealed class RedisDeduplicationOptions
     /// <summary>
     /// Key namespace prefix inserted between the <c>raytree:dedup:</c> root and the correlation ID.
     /// Use a distinct value per deployment when multiple RayTree instances share one Redis server.
-    /// Defaults to <c>"default"</c>.
+    /// Must not be null or whitespace. Defaults to <c>"default"</c>.
     /// </summary>
-    public string KeyPrefix { get; set; } = "default";
+    /// <exception cref="ArgumentException">Thrown when the value is null, empty, or whitespace.</exception>
+    public string KeyPrefix
+    {
+        get => _keyPrefix;
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                throw new ArgumentException(message: "KeyPrefix must not be null or whitespace.", paramName: nameof(value));
+            _keyPrefix = value;
+        }
+    }
+
+    private string _keyPrefix = "default";
 
     /// <summary>
     /// How long each processed correlation ID is retained in Redis.

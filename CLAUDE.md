@@ -136,6 +136,14 @@ All durations are emitted in seconds (`s`) per OTel semantic conventions; bytes 
 
 See `AGENTS.md` for all coding rules, design principles, testing conventions, nullability discipline, and AI agent workflow guidelines. Key `.editorconfig` conventions (naming, braces, using order) are summarized below; AGENTS.md is the canonical source.
 
+- Private/internal fields: `_camelCase`; static: `s_PascalCase`; constants: `PascalCase`
+- Expression-bodied members for single-expression members
+- `using` outside namespace; System namespaces first
+- Braces on a new line
+- Use named params, especially with multiple args of the same type
+
+`.editorconfig` wins over any conflicting suggestion.
+
 ## CI
 
 `.github/workflows/ci.yml` has three job groups: `build` (compile gate, uploads compiled output as an artifact with 1-day retention), `unit-tests` (9-way parallel matrix, no Docker, downloads build artifact — no rebuild), `integration-tests` (3-way matrix: PostgreSQL / RabbitMQ / Kafka, also downloads build artifact). No job rebuilds the solution; all test jobs depend on the shared artifact from `build`.
