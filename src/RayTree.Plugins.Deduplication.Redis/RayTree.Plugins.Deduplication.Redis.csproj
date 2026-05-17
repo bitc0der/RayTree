@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <Description>Redis-backed deduplication store plugin for RayTree</Description>
+    <PackageTags>redis;deduplication;change-tracking</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj"/>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="StackExchange.Redis"/>
+  </ItemGroup>
+</Project>
