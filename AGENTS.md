@@ -13,6 +13,7 @@ See `CLAUDE.md` for deep architecture documentation, plugin contracts, and key d
 - Batch independent operations. Identify all targets first, then edit them in parallel.
 - Use existing patterns. Copy the structure, naming, and conventions from neighboring files.
 - Understand the dependency graph before changing interfaces.
+- Ignore backward compability.
 
 ### Safety First
 
