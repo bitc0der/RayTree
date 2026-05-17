@@ -22,11 +22,21 @@ public delegate Task ChangeHandlerAsync<TEntity>(
 
 public class ChangeSubscriber : IDisposable
 {
+    // Shared-mode storage (keyed by entity type)
     private readonly Dictionary<Type, List<HandlerRegistration>> _handlers = new();
     private readonly Dictionary<Type, IChangeSerializer> _serializers = new();
     private readonly Dictionary<Type, IChangeCompressor> _compressors = new();
     private readonly Dictionary<Type, IQueueConsumer> _queues = new();
     private readonly Dictionary<Type, SubscriberOptions> _entityOptions = new();
+
+    // Isolated-mode storage (keyed by EntityHandlerKey)
+    // Task 3.1 — consumer per (entity, handlerName)
+    private readonly Dictionary<EntityHandlerKey, IQueueConsumer> _isolatedQueues = new();
+    // Task 3.2 — handlers per (entity, handlerName)
+    private readonly Dictionary<EntityHandlerKey, List<HandlerRegistration>> _isolatedHandlers = new();
+    // Per-handler subscriber options (takes precedence over entity-level and global options)
+    private readonly Dictionary<EntityHandlerKey, SubscriberOptions> _isolatedOptions = new();
+
     private readonly IDeduplicationStore _dedupStore;
     private readonly SubscriberOptions _options;
     private readonly ILogger<ChangeSubscriber> _logger;
@@ -53,7 +63,16 @@ public class ChangeSubscriber : IDisposable
         _options    = options    ?? new SubscriberOptions();
     }
 
+    /// <summary>Shared-mode consumers, keyed by entity type.</summary>
     public IReadOnlyDictionary<Type, IQueueConsumer> Queues => _queues;
+
+    /// <summary>
+    /// Isolated-mode consumers, keyed by <see cref="EntityHandlerKey"/>.
+    /// Exposed for <see cref="RayTree.Hosting.ChangeTrackingHostedService"/> to start one
+    /// consume loop per entry. Task 3.6.
+    /// </summary>
+    public IReadOnlyDictionary<EntityHandlerKey, IQueueConsumer> IsolatedQueues
+        => _isolatedQueues;
 
     public ChangeSubscriber ForEntity<TEntity>()
     {
@@ -87,6 +106,71 @@ public class ChangeSubscriber : IDisposable
         return this;
     }
 
+    /// <summary>
+    /// Stores the consumer dedicated to a named isolated handler. Called by
+    /// <see cref="IsolatedHandlerBuilder{TEntity}.Apply"/> once per unique handler name.
+    /// Task 3.4.
+    /// </summary>
+    internal void RegisterIsolatedConsumer<TEntity>(string handlerName, IQueueConsumer consumer)
+        where TEntity : class
+    {
+        _isolatedQueues[new EntityHandlerKey(typeof(TEntity), handlerName)] = consumer;
+    }
+
+    /// <summary>
+    /// Registers a typed handler under a specific handler name for Isolated mode.
+    /// Handlers sharing a name but targeting different <paramref name="changeType"/> values
+    /// live in the same list and are disambiguated by the consume loop. Each handler
+    /// binds to exactly one concrete <see cref="ChangeType"/>; register multiple handlers
+    /// under the same name to react to multiple change types.
+    /// Task 3.3.
+    /// </summary>
+    internal void RegisterIsolatedHandler<TEntity>(
+        string handlerName,
+        ChangeType changeType,
+        ChangeHandlerAsync<TEntity> handler)
+        where TEntity : class
+    {
+        var key = new EntityHandlerKey(typeof(TEntity), handlerName);
+        if (!_isolatedHandlers.TryGetValue(key, out var list))
+        {
+            list = new List<HandlerRegistration>();
+            _isolatedHandlers[key] = list;
+        }
+
+        list.Add(new HandlerRegistration
+        {
+            EntityType = typeof(TEntity),
+            ChangeType = changeType,
+            Handler    = (change, ct) => handler((EntityChange<TEntity>)change, ct)
+        });
+    }
+
+    /// <summary>
+    /// Registers per-handler <see cref="SubscriberOptions"/> for Isolated mode. These options
+    /// take precedence over entity-level and global options when resolving the DOP and retry
+    /// configuration for the named handler's consume loop.
+    /// </summary>
+    internal void RegisterIsolatedOptions<TEntity>(string handlerName, SubscriberOptions options)
+        where TEntity : class
+    {
+        _isolatedOptions[new EntityHandlerKey(typeof(TEntity), handlerName)] = options;
+    }
+
+    /// <summary>
+    /// Resolves the effective <see cref="SubscriberOptions"/> for a given entity type and
+    /// optional handler name. Resolution order (highest to lowest priority):
+    /// per-handler isolated options → per-entity options → global options.
+    /// </summary>
+    private SubscriberOptions GetEffectiveOptions(Type entityType, string? handlerName = null)
+    {
+        if (handlerName is not null
+            && _isolatedOptions.TryGetValue(new EntityHandlerKey(entityType, handlerName), out var isolated))
+            return isolated;
+
+        return _entityOptions.GetValueOrDefault(entityType) ?? _options;
+    }
+
     public ChangeSubscriber UseSerializer<TEntity>(IChangeSerializer serializer)
     {
         _serializers[typeof(TEntity)] = serializer;
@@ -99,7 +183,7 @@ public class ChangeSubscriber : IDisposable
         return this;
     }
 
-    public ChangeSubscriber OnChange<TEntity>(ChangeType? changeType, ChangeHandlerAsync<TEntity> handler)
+    public ChangeSubscriber OnChange<TEntity>(ChangeType changeType, ChangeHandlerAsync<TEntity> handler)
         where TEntity : class
     {
         if (!_handlers.ContainsKey(typeof(TEntity)))
@@ -132,7 +216,7 @@ public class ChangeSubscriber : IDisposable
         await Parallel.ForEachAsync(
             consumer.ConsumeAsync(cancellationToken),
             parallelOptions,
-            async (envelope, token) => await ProcessMessageAsync(envelope, token));
+            async (envelope, token) => await DispatchAndAcknowledgeAsync(consumer, envelope, token));
     }
 
     public async Task ConsumeFromQueueAsync<TQueue>(
@@ -140,6 +224,11 @@ public class ChangeSubscriber : IDisposable
         Func<TQueue, CancellationToken, IAsyncEnumerable<MessageEnvelope>> reader,
         CancellationToken cancellationToken = default)
     {
+        // Note: this overload does not have an IQueueConsumer to acknowledge against.
+        // Callers using a custom reader are responsible for any broker acknowledgement
+        // outside of ChangeSubscriber. This stays at-most-once by design — the typed
+        // overload ConsumeFromConsumerAsync(IQueueConsumer) is the path that participates
+        // in the optional Ack/Nack lifecycle.
         var parallelOptions = new ParallelOptions
         {
             MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism,
@@ -149,6 +238,94 @@ public class ChangeSubscriber : IDisposable
             reader(queue, cancellationToken),
             parallelOptions,
             async (envelope, token) => await ProcessMessageAsync(envelope, token));
+    }
+
+    /// <summary>
+    /// Shared-mode dispatch wrapper: invokes <see cref="ProcessMessageAsync"/> and then
+    /// calls <see cref="IQueueConsumer.AcknowledgeAsync"/> on success, or
+    /// <see cref="IQueueConsumer.NegativeAcknowledgeAsync"/> on failure. For consumers
+    /// that don't override the default no-op Ack/Nack methods this is a transparent
+    /// passthrough — the at-most-once contract is preserved.
+    /// </summary>
+    private async Task DispatchAndAcknowledgeAsync(
+        IQueueConsumer consumer, MessageEnvelope envelope, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ProcessMessageAsync(envelope, cancellationToken);
+            await consumer.AcknowledgeAsync(envelope, cancellationToken);
+        }
+        catch
+        {
+            // NACK first so the broker can requeue / leave the offset alone, then let
+            // the exception propagate. The Ack/Nack call is best-effort: a failure here
+            // is logged but does not mask the original handler exception.
+            try { await consumer.NegativeAcknowledgeAsync(envelope, cancellationToken); }
+            catch (Exception nackEx)
+            {
+                _logger.LogError(nackEx,
+                    "NegativeAcknowledgeAsync failed for {EntityType} ({CorrelationId})",
+                    envelope.EntityType, envelope.CorrelationId);
+            }
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Isolated-mode consume loop: reads envelopes from <paramref name="consumer"/> and
+    /// processes each one exclusively through handlers registered under
+    /// <paramref name="handlerName"/> for <paramref name="entityType"/>.
+    /// Uses dedup key <c>$"{correlationId}:{handlerName}"</c>.
+    /// Task 4.2.
+    /// </summary>
+    public async Task ConsumeIsolatedFromConsumerAsync(
+        IQueueConsumer consumer,
+        Type entityType,
+        string handlerName,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveOptions = GetEffectiveOptions(entityType, handlerName);
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = effectiveOptions.MaxDegreeOfParallelism,
+            CancellationToken      = cancellationToken
+        };
+        await Parallel.ForEachAsync(
+            consumer.ConsumeAsync(cancellationToken),
+            parallelOptions,
+            async (envelope, token) =>
+                await DispatchIsolatedAndAcknowledgeAsync(
+                    consumer, envelope, entityType, handlerName, effectiveOptions, token));
+    }
+
+    /// <summary>
+    /// Isolated-mode dispatch wrapper: mirrors <see cref="DispatchAndAcknowledgeAsync"/>
+    /// for the per-(entity, handler-name) consume path. On normal completion (handler
+    /// success, dedup hit, no-handler skip, SkipOnFailure swallow) calls
+    /// <see cref="IQueueConsumer.AcknowledgeAsync"/>; on unhandled exception calls
+    /// <see cref="IQueueConsumer.NegativeAcknowledgeAsync"/> before rethrowing.
+    /// </summary>
+    private async Task DispatchIsolatedAndAcknowledgeAsync(
+        IQueueConsumer consumer, MessageEnvelope envelope,
+        Type entityType, string handlerName, SubscriberOptions effectiveOptions,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ProcessIsolatedMessageAsync(envelope, entityType, handlerName, effectiveOptions, cancellationToken);
+            await consumer.AcknowledgeAsync(envelope, cancellationToken);
+        }
+        catch
+        {
+            try { await consumer.NegativeAcknowledgeAsync(envelope, cancellationToken); }
+            catch (Exception nackEx)
+            {
+                _logger.LogError(nackEx,
+                    "NegativeAcknowledgeAsync failed for isolated handler '{HandlerName}' on {EntityType} ({CorrelationId})",
+                    handlerName, entityType.Name, envelope.CorrelationId);
+            }
+            throw;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -189,7 +366,7 @@ public class ChangeSubscriber : IDisposable
         }
 
         var matchingHandlers = handlers
-            .Where(h => h.ChangeType == null || h.ChangeType == envelope.ChangeType)
+            .Where(h => h.ChangeType == envelope.ChangeType)
             .ToList();
 
         if (matchingHandlers.Count == 0)
@@ -204,11 +381,12 @@ public class ChangeSubscriber : IDisposable
         // receive the full entity state. Falls back to meta-only when no serializer is
         // registered for this entity type.
         var change = await DeserializeEnvelopeAsync(envelope, entityType, cancellationToken);
+        var options = GetEffectiveOptions(entityType);
 
         try
         {
             foreach (var registration in matchingHandlers)
-                await InvokeWithRetryAsync(registration, change, entityTag, changeTag, cancellationToken);
+                await InvokeWithRetryAsync(registration, change, options, entityTag, changeTag, cancellationToken);
         }
         catch
         {
@@ -228,6 +406,88 @@ public class ChangeSubscriber : IDisposable
 
         _logger.LogDebug("Processed {ChangeType} change for {EntityType} ({CorrelationId})",
             envelope.ChangeType, entityType.Name, envelope.CorrelationId);
+
+        await MaybeDedupCleanupAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Isolated-mode message processing. Mirrors <see cref="ProcessMessageAsync"/> but:
+    /// <list type="bullet">
+    ///   <item>Dedup key is <c>$"{correlationId}:{handlerName}"</c>.</item>
+    ///   <item>Only handlers registered under <paramref name="handlerName"/> for
+    ///   <paramref name="entityType"/> are dispatched.</item>
+    /// </list>
+    /// Task 3.5.
+    /// </summary>
+    private async Task ProcessIsolatedMessageAsync(
+        MessageEnvelope envelope,
+        Type entityType,
+        string handlerName,
+        SubscriberOptions effectiveOptions,
+        CancellationToken cancellationToken)
+    {
+        var changeTag = RayTreeMeter.ChangeTag(envelope.ChangeType);
+        var entityTag = RayTreeMeter.EntityTag(entityType);
+
+        // Isolated dedup key encodes both message identity and handler name
+        var dedupKey = $"{envelope.CorrelationId}:{handlerName}";
+
+        if (!await _dedupStore.TryMarkProcessedAsync(dedupKey, cancellationToken))
+        {
+            _meter.SubscriberDeduplicated.Add(1, entityTag, changeTag);
+            _logger.LogDebug(
+                "Duplicate isolated message {CorrelationId} for {EntityType}/{HandlerName}, skipping",
+                envelope.CorrelationId, entityType.Name, handlerName);
+            return;
+        }
+
+        var key = new EntityHandlerKey(entityType, handlerName);
+        if (!_isolatedHandlers.TryGetValue(key, out var allHandlers) || allHandlers.Count == 0)
+        {
+            _meter.SubscriberSkipped.Add(1, entityTag, changeTag, RayTreeMeter.ReasonTag("no_handler"));
+            _logger.LogDebug(
+                "No isolated handlers registered for {EntityType}/{HandlerName}, skipping",
+                entityType.Name, handlerName);
+            return;
+        }
+
+        var matchingHandlers = allHandlers
+            .Where(h => h.ChangeType == envelope.ChangeType)
+            .ToList();
+
+        if (matchingHandlers.Count == 0)
+        {
+            _meter.SubscriberSkipped.Add(1, entityTag, changeTag, RayTreeMeter.ReasonTag("no_handler"));
+            _logger.LogDebug(
+                "No isolated handlers matched change type {ChangeType} for {EntityType}/{HandlerName}, skipping",
+                envelope.ChangeType, entityType.Name, handlerName);
+            return;
+        }
+
+        var change = await DeserializeEnvelopeAsync(envelope, entityType, cancellationToken);
+
+        try
+        {
+            foreach (var registration in matchingHandlers)
+                await InvokeWithRetryAsync(registration, change, effectiveOptions, entityTag, changeTag, cancellationToken);
+        }
+        catch
+        {
+            _logger.LogWarning(
+                "Isolated handler '{HandlerName}' for {EntityType} exhausted all retries on {CorrelationId}; reverting dedup mark",
+                handlerName, entityType.Name, envelope.CorrelationId);
+            await _dedupStore.RevertProcessedAsync(dedupKey, cancellationToken);
+            throw;
+        }
+
+        _meter.SubscriberProcessed.Add(1, entityTag, changeTag);
+        _meter.SubscriberLagDuration.Record(
+            Math.Max(0, (DateTime.UtcNow - envelope.Timestamp).TotalSeconds),
+            entityTag, changeTag);
+
+        _logger.LogDebug(
+            "Isolated handler '{HandlerName}' processed {ChangeType} change for {EntityType} ({CorrelationId})",
+            handlerName, envelope.ChangeType, entityType.Name, envelope.CorrelationId);
 
         await MaybeDedupCleanupAsync(cancellationToken);
     }
@@ -316,16 +576,16 @@ public class ChangeSubscriber : IDisposable
 
     /// <summary>
     /// Invokes the handler with up to <see cref="SubscriberOptions.MaxRetries"/> retry
-    /// attempts after the initial call.  With <c>MaxRetries = N</c> the handler may be
+    /// attempts after the initial call. With <c>MaxRetries = N</c> the handler may be
     /// called at most <c>N + 1</c> times total (1 initial + N retries).
-    /// Per-entity options registered via <see cref="RegisterEntity{TEntity}"/> take
-    /// precedence over the global options supplied to the constructor.
+    /// The caller is responsible for supplying the effective <paramref name="options"/>
+    /// (resolved via <see cref="GetEffectiveOptions"/>).
     /// </summary>
     private async Task InvokeWithRetryAsync(HandlerRegistration registration, EntityChange change,
+        SubscriberOptions options,
         KeyValuePair<string, object?> entityTag, KeyValuePair<string, object?> changeTag,
         CancellationToken ct)
     {
-        var options = _entityOptions.GetValueOrDefault(registration.EntityType) ?? _options;
         var attempts = 0;
         while (true)
         {

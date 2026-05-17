@@ -70,10 +70,25 @@ EntityChangeTracker
 |---|---|
 | `RayTree.Plugins.PostgreSQL` | `PostgreSqlOutbox<TEntity>` — stores changes as flat columns (one column per entity property via `EntityColumnMapper`). Constructor: `PostgreSqlOutbox<TEntity>(PostgreSqlOutboxOptions, ILoggerFactory)` — both params required. `PostgreSqlRepository<TEntity>` constructor: `PostgreSqlRepository<TEntity>(PostgreSqlRepositoryOptions, ILoggerFactory)` — both params required. Builder extension methods accept `ILoggerFactory? loggerFactory = null` and default to `NullLoggerFactory.Instance`. `EntityColumnMapper` honours `System.ComponentModel.DataAnnotations` / `Schema` attributes: `[NotMapped]` excludes a property; `[Column("name")]` overrides the column name suffix (the `state_` prefix is always kept to avoid collisions with outbox metadata columns); `[Column(TypeName = "JSONB")]` sets the PostgreSQL type verbatim; `[Required]` forces `NOT NULL` on reference types; `[MaxLength(n)]`/`[StringLength(n)]` emits `VARCHAR(n)` instead of `TEXT`; `[Table("name")]` on the entity class is used as the base name when deriving default outbox/source table names; `[Key]` (one or more properties) identifies the business primary key — `PostgreSqlRepository` uses these for INSERT/UPDATE/DELETE/SELECT and adds a UNIQUE index on the corresponding `state_*` columns in the source table; for composite keys pair `[Key]` with `[Column(Order = n)]` to control column order. 1D arrays of primitive types are automatically mapped to the corresponding PostgreSQL array column type: `int[]` → `INTEGER[]`, `long[]` → `BIGINT[]`, `bool[]` → `BOOLEAN[]`, `string[]` → `TEXT[]`, `Guid[]` → `UUID[]`, `float[]` → `REAL[]`, `double[]` → `DOUBLE PRECISION[]`, `decimal[]` → `NUMERIC[]`, `DateTime[]`/`DateTimeOffset[]` → `TIMESTAMPTZ[]`, `short[]`/`byte[]`/`sbyte[]` → `SMALLINT[]`; nullable-element arrays (e.g. `int?[]`) strip the nullable wrapper before mapping the element type. Multi-dimensional arrays are not supported — declare the column type explicitly via `[Column(TypeName = "...")]` if needed. When reading values back, `EntityColumnMapper.ConvertFromDb` first attempts a direct CLR assignability check (Npgsql returns the correct array type natively) and falls back to `Convert.ChangeType` for scalar numeric coercions. Both `CleanupPublishedAsync` and `CleanupStaleUnpublishedAsync` delete in batches (`PostgreSqlOutboxOptions.CleanupBatchSize`, default 1000) using a `DELETE … WHERE id IN (SELECT id … LIMIT @BatchSize)` loop to avoid large single-statement locks and WAL spikes. **`InitializeAsync` manages schema automatically** — no flag required, always active. Fresh table path: single `CREATE TABLE IF NOT EXISTS` (columns + indexes). Existing table path: column diff via `SchemaMigrator` (adds missing columns with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`; guards NOT NULL without default on non-empty tables by throwing `InvalidOperationException`; logs `Warning` for orphan columns and type mismatches) + index diff via `IndexMigrator` (creates missing indexes; drops and recreates indexes whose definition changed — uniqueness, column order, or WHERE clause; logs `Warning` for orphan indexes). Internal infrastructure: `SchemaInspector` (static — `TableExistsAsync`, `GetColumnsAsync` via `information_schema.columns`, `GetIndexesAsync` via `pg_index` catalog using `unnest(indkey::smallint[]) WITH ORDINALITY` for ordered columns and `pg_get_expr` for WHERE, `ExecuteDdlAsync`, `TableHasRowsAsync`); `SchemaMigrator` (column diff, parameterised delegate for DDL generation and orphan filter); `IndexMigrator` (index diff with schema-qualified `DROP INDEX IF EXISTS public.{name}`; WHERE clause comparison is case-insensitive and trimmed); `PostgreSqlTypeNormalizer` (maps `information_schema` type fields to canonical DDL strings). `NotificationBasedPublisher` — NOTIFY/LISTEN fast-path with polling fallback; bounded by `NotificationBasedPublisherOptions.MaxConcurrentNotifications` (default 16) via a `SemaphoreSlim` in `OnNotification`; fallback polling uses `Parallel.ForEachAsync` with `MaxPublishConcurrency` (default 1 — sequential). Logs LISTEN connection loss at `Warning` (once, on the first unhealthy tick), recovery at `Information`, and claim contention (record already taken by another publisher) at `Debug`. |
 | `RayTree.Plugins.InMemory` | `InMemoryQueue` implements both `IQueuePublisher` and `IQueueConsumer` via `Channel<MessageEnvelope>`. Use for tests and local dev. |
-| `RayTree.Plugins.Kafka` | `KafkaPublisher` + `KafkaConsumer`. Consumer uses a dedicated background thread (channel-based) because Confluent.Kafka requires all `Consume`/`Commit` calls on one thread. `KafkaConsumer(KafkaConsumerOptions, ILoggerFactory)` — both params required. |
-| `RayTree.Plugins.RabbitMQ` | `RabbitMqPublisher` + `RabbitMqConsumer`. Consumer uses `AsyncEventingBasicConsumer` buffered via `Channel<MessageEnvelope>`. `RabbitMqConsumer(RabbitMqConsumerOptions)` — options only; no logger. Message-receive errors silently NACK and requeue without logging (acknowledged exception to the logging placement rule — NACK/requeue is the correct recovery action and no context is available at that point). |
+| `RayTree.Plugins.Kafka` | `KafkaPublisher` + `KafkaConsumer`. Consumer uses a dedicated background thread (channel-based) because Confluent.Kafka requires all `Consume`/`Commit`/`Seek` calls on one thread. `KafkaConsumer(KafkaConsumerOptions, ILoggerFactory)` — both params required. `KafkaConsumerOptions.AckAfterHandler` (default `false`) defers the offset commit; subscriber posts the `ConsumeResult` plus a `Commit`/`SeekBack` action through an internal post-handler channel that the poll thread drains at the top of each iteration (when items are queued, the next `Consume()` uses `TimeSpan.Zero` so commits don't wait a full poll cycle). `AcknowledgeAsync` → `Commit`; `NegativeAcknowledgeAsync` → `Seek(TopicPartitionOffset)` so the failed message is redelivered in the same consumer's lifetime, not just on restart. Parse-failure path always commits immediately to avoid poison-pilling the partition. Requires `SubscriberOptions.MaxDegreeOfParallelism = 1` per partition when `AckAfterHandler = true`. |
+| `RayTree.Plugins.RabbitMQ` | `RabbitMqPublisher` + `RabbitMqConsumer`. Consumer uses `AsyncEventingBasicConsumer` buffered via `Channel<MessageEnvelope>`. `RabbitMqConsumer(RabbitMqConsumerOptions)` — options only; no logger. Message-receive errors silently NACK and requeue without logging (acknowledged exception to the logging placement rule — NACK/requeue is the correct recovery action and no context is available at that point). `RabbitMqConsumerOptions.AckAfterHandler` (default `false`) defers the broker ACK until after `ChangeSubscriber` confirms handler success — delivery tag is stashed in `MessageEnvelope.Metadata` via the internal `RabbitMqEnvelopeMetadata` accessor; `AcknowledgeAsync` issues `BasicAckAsync`; `NegativeAcknowledgeAsync` issues `BasicNackAsync(requeue: true)`. |
 | `RayTree.Plugins.Serializers.*` | JSON, MessagePack, Protobuf — each in its own package. |
 | `RayTree.Plugins.Compressors.*` | Gzip, Brotli, LZ4 — each in its own package. |
+
+### Handler dispatch modes
+
+`IEntityBuilder<TEntity>` exposes two consumer-binding methods that select the dispatch mode and fork the fluent chain into a mode-specific builder:
+
+- **`UseConsumer(IQueueConsumer)` → `ISharedHandlerBuilder<TEntity>`** — *Shared* mode. All handlers registered on the returned builder share a single broker delivery. They run sequentially in registration order. Dedup key: `correlationId`. If any handler exhausts retries with `SkipOnFailure = false`, the message-level dedup mark is reverted so redelivery will re-run every handler. Callers must chain `UseSerializer`/`UseCompressor` on `IEntityBuilder` *before* calling `UseConsumer` (those methods are not on the post-fork builder).
+- **`UseConsumerFactory(Func<string, IQueueConsumer>)` → `IIsolatedHandlerBuilder<TEntity>`** — *Isolated* mode. Each named handler (`OnInsert("name", handler)`) gets its own broker subscription via the factory. Dedup key: `$"{correlationId}:{handlerName}"` — per-handler isolation. The framework starts one consume loop per `(entity type, handler name)` pair in `ChangeTrackingHostedService`. Handler names are stable deployment identifiers: renaming one is equivalent to creating a new subscription.
+
+Handler registration methods (`OnInsert`, `OnUpdate`, `OnDelete`, `OnChange`) exist only on the post-fork builders, not on `IEntityBuilder<TEntity>` — the compiler prevents registering handlers before binding a consumer, and prevents mixing anonymous and named overloads.
+
+**`ChangeType` is required on every handler registration.** `OnChange(changeType, handler)` takes a non-nullable `ChangeType`; the previous wildcard `null` form (which fired for every change type) was removed. Each handler binds to exactly one of `Insert` / `Update` / `Delete`. To react to multiple change types with the same logic, register the same delegate once per type — the dispatch matcher is now a strict equality check (`h.ChangeType == envelope.ChangeType`), and there is no implicit fall-through. This applies uniformly to `IEntitySubscriberBuilder<TEntity>`, `ISharedHandlerBuilder<TEntity>`, `IIsolatedHandlerBuilder<TEntity>`, and `ChangeSubscriber.OnChange<TEntity>` / `RegisterIsolatedHandler<TEntity>`. The `HandlerRegistration.ChangeType` field is correspondingly non-nullable.
+
+**Builder implementation classes** (`src/RayTree.Core/Handling`): `SharedHandlerBuilder<TEntity>` delegates to `EntitySubscriberBuilder<TEntity>`; `IsolatedHandlerBuilder<TEntity>` accumulates `(handlerName, changeType, handler)` tuples and validates them (unique `(action, name)` pairs; factory returns distinct non-null instances) at `Build()` time.
+
+**Delivery-guarantee mode (Shared and Isolated):** by default, `RabbitMqConsumer` and `KafkaConsumer` ACK/commit the broker delivery *before* handing the message to the subscriber (at-most-once — lowest latency, no broker-driven redelivery on crash). Opt in to at-least-once per consumer by setting `RabbitMqConsumerOptions.AckAfterHandler = true` or `KafkaConsumerOptions.AckAfterHandler = true`; the ACK is then deferred until `ChangeSubscriber` confirms all handlers completed successfully. On handler retry-exhaustion with `SkipOnFailure = false`, the consumer's `NegativeAcknowledgeAsync` requeues (RabbitMQ `BasicNack(requeue: true)`) or seeks back (Kafka `Seek` on the poll thread — redelivery happens in the same consumer process, no restart needed). Implementation: `IQueueConsumer` exposes default-no-op `AcknowledgeAsync` / `NegativeAcknowledgeAsync` methods; existing implementations inherit the no-ops and behave as at-most-once. Broker-private correlation state (delivery tag for RMQ, `ConsumeResult` for Kafka) travels with the envelope via `MessageEnvelope.Metadata` (lazy-allocated dict; consumed via take-on-read accessors so a double-ack is a silent no-op rather than a broker error). Kafka caveat: set `MaxDegreeOfParallelism = 1` per partition when `AckAfterHandler = true` — out-of-order commits could advance the offset past in-flight messages. The `ChangeSubscriber.ConsumeFromConsumerAsync(IQueueConsumer)` overload is the one that participates in the Ack lifecycle; the custom-reader overload `ConsumeFromQueueAsync<TQueue>` stays at-most-once by design (no `IQueueConsumer` to dispatch against).
 
 ### Subscriber-side (`src/RayTree.Core/Handling`)
 
@@ -117,136 +132,17 @@ All durations are emitted in seconds (`s`) per OTel semantic conventions; bytes 
 - **OTel SDK isolation via peer assembly**: `RayTree.Core` and `RayTree.Hosting` use only `System.Diagnostics.Metrics` (BCL) — no `OpenTelemetry.*` package references. `RayTree.OpenTelemetry` is a separate assembly with two members (`RayTreeInstrumentation.MeterName` + `AddRayTreeMetrics`) that an application opts into. Applications that don't need OTel receive zero transitive OTel dependencies; applications that do reference exactly one well-versioned dependency. This mirrors the `RayTree.Hosting` / `RayTree.EntityFrameworkCore` split.
 - **Logging placement rule**: `NullLoggerFactory.Instance` / `NullLogger<T>.Instance` defaults belong **only** in builders and builder-context extension methods (`ChangeTrackingBuilder`, `ChangePublisherBuilder`, `ChangeSubscriberBuilder`, `KafkaSubscriberExtensions.UseKafka`, `RabbitMqSubscriberExtensions.UseRabbitMq`, `BuilderExtensions.UsePostgreSqlOutbox`, `RepositoryExtensions.UsePostgreSqlRepository`). All runtime service classes (`ChangePublisher`, `OutboxPublisherService`, `ChangeSubscriber`, `ChangeTrackingHostedService`, `KafkaConsumer`, `NotificationBasedPublisher`, `OutboxCleanupService`, `PostgreSqlOutbox<TEntity>`, `PostgreSqlRepository<TEntity>`) require a non-nullable logger — no internal fallback. **Exception**: `RabbitMqConsumer` intentionally has no logger — message-receive errors silently NACK and requeue, which is the correct broker-level recovery; no useful context is available inside the RabbitMQ delivery callback to produce a meaningful log entry. This ensures that callers always make a conscious choice about whether to produce log output.
 
-## Code Style
+## Code Style & Conventions
 
-Follow `.editorconfig` at the repo root for all formatting and naming. Key conventions in effect:
+See `AGENTS.md` for all coding rules, design principles, testing conventions, nullability discipline, and AI agent workflow guidelines. Key `.editorconfig` conventions (naming, braces, using order) are summarized below; AGENTS.md is the canonical source.
 
-- Private/internal fields: `_camelCase`
-- Static private/internal fields: `s_PascalCase` prefix
-- Constants: `PascalCase`
-- Expression-bodied members preferred for single-expression methods, properties, and accessors
-- `using` directives outside the namespace
-- System `using` directives sorted first
-- Braces on a new line (`csharp_new_line_before_open_brace = all`)
-- Use named params, especially when there are multiple arg of the same type
+- Private/internal fields: `_camelCase`; static: `s_PascalCase`; constants: `PascalCase`
+- Expression-bodied members for single-expression members
+- `using` outside namespace; System namespaces first
+- Braces on a new line
+- Use named params, especially with multiple args of the same type
 
-Do not override these rules. If a rule from `.editorconfig` conflicts with a general suggestion, `.editorconfig` wins.
-
-## .NET Conventions
-
-### Common
-
-- Prefer interfaces over abstract classes for plugin contracts — they are easier to implement and compose.
-- Constructor injection for all dependencies. No service locator, no `static` state, no hidden dependencies.
-- Avoid `object` parameters in public APIs where it is possible — use generics or specific types.
-- Document public APIs with XML doc comments (`/// <summary>`) — especially parameters, return values, and exceptions thrown.
-
-### async / await
-
-- Every method that does I/O must be `async` and accept a `CancellationToken` as its last parameter. Never swallow or ignore the token.
-- Never use `async void` — use `async Task` instead. The sole exception is event handlers where the signature is imposed by the framework.
-- Do not use `.Result` or `.Wait()` on a `Task`. Always `await`. Blocking on async code deadlocks under `SynchronizationContext`.
-- Do not add `ConfigureAwait(false)` — this is a library, not an ASP.NET app, but the codebase does not apply it consistently so omit it everywhere for uniformity.
-- Name async methods with the `Async` suffix. Overloads that differ only by cancellation token still carry the suffix.
-
-### Exception handling
-
-- Catch the most specific exception type that is meaningful. Never `catch (Exception)` unless you are at a top-level loop boundary and log the error before continuing or rethrowing.
-- Do not swallow exceptions silently. If you catch and do not rethrow, log at `Error` with the original exception attached.
-- Use `OperationCanceledException` (not `TaskCanceledException`) as the canonical cancellation signal; let it propagate rather than catching it in inner loops.
-- Throw `InvalidOperationException` for programmer errors (wrong call order, missing required configuration). Throw `ArgumentException` / `ArgumentNullException` for bad caller input.
-- Avoid `try/catch` purely for control flow. Use `bool`-returning methods (e.g., `TryClaimForPublishingAsync`) instead.
-
-### Disposable
-
-- Implement `IAsyncDisposable` (not `IDisposable`) for types that own async resources (channels, connections, background tasks). Implement both only when a synchronous release path is genuinely needed.
-- Always `await using` or `using` in the consuming code; never call `Dispose()` / `DisposeAsync()` manually unless you own the lifetime explicitly.
-- Cancel the `CancellationTokenSource` before calling `Dispose()` on background-loop owners so the loop exits cleanly before the handle is released.
-
-### LINQ and collections
-
-- Do not enumerate an `IEnumerable<T>` more than once — call `.ToList()` or `.ToArray()` at the point of materialisation and reuse the result.
-- Return `IReadOnlyList<T>` or `IReadOnlyCollection<T>` from public APIs when the caller must not mutate the result. Use `IAsyncEnumerable<T>` for streaming results. Return `IEnumerable<T>` only when lazy streaming is intentional.
-- Prefer `List<T>.ForEach` / `foreach` over LINQ `Select` + side-effects. LINQ is for projections, not mutations.
-- Avoid chaining more than three LINQ operators without assigning an intermediate result to a named variable — readability over one-liners.
-
-### Test conventions
-
-- Write tests for new code. Every new public method or significant logic branch needs test coverage.
-- Test method names follow the pattern `MethodUnderTest_Scenario_ExpectedBehaviour` (e.g., `WriteAsync_WhenEntityIsNull_ThrowsArgumentNullException`).
-- Each test follows Arrange / Act / Assert with a blank line between sections.
-- Assert only one logical outcome per test. Multiple `Assert` calls are fine when they all verify the same logical fact.
-- Do not share mutable state between tests in the same class. Each test arranges its own dependencies.
-- Unit tests must not touch the file system, network, or real time (`DateTime.UtcNow`). Inject `TimeProvider` or a clock abstraction if the production code reads the clock.
-- Test edge cases: null inputs, empty collections, cancellation, exceptions, boundary values.
-- Use `Assert.ThrowsAsync<T>()` for async exception tests, not `try/catch` with `Assert.Fail()`.
-- Mock at the interface level. Use the plugin interfaces (`IOutbox`, `IQueuePublisher`, etc.) as mock boundaries, etc.
-- Keep tests fast. Unit tests should complete in milliseconds. If a test is slow, it probably needs Docker and belongs in an integration test project.
-
-### Span&lt;T&gt; and Memory&lt;T&gt;
-
-- Prefer `Span<T>` / `ReadOnlySpan<T>` over `byte[]` for synchronous, stack-local slicing (serialization scratch buffers, parsing). Do not store a `Span<T>` in a field or closure — it is stack-only.
-- Use `Memory<T>` / `ReadOnlyMemory<T>` when the slice must cross an `await` boundary or be stored on the heap (e.g., passed to an async I/O method).
-- Do not allocate a new `byte[]` just to pass a sub-range — use `.Slice(offset, length)` or `AsSpan()`/`AsMemory()` on the existing array.
-- When writing to a fixed-size destination prefer `Span<T>` overloads of `BinaryPrimitives`, `MemoryMarshal`, or `Encoding` over the array-allocating variants.
-- Avoid mixing `Span<T>` and `Memory<T>` in the same call chain without a deliberate reason; pick one ownership model per logical operation and stay consistent.
-
-### Strings and primitives
-
-- Use `string.Empty` instead of `""` for empty-string literals assigned to variables. Inline literals in interpolations are fine.
-- Prefer string interpolation (`$"..."`) over `string.Concat` or `+` for readability. Use `string.Format` only when formatting must be passed around as a delegate.
-- Avoid `ToString()` on nullable types — null-check or use `?.ToString() ?? string.Empty` explicitly.
-
-### Nullability Discipline
-
-- Every reference type must be annotated. `string` means non-null; `string?` means nullable.
-- Initialize required fields in the constructor or with a default value. The compiler will flag unassigned non-nullable fields.
-- Use `ArgumentNullException.ThrowIfNull()` for guard clauses — it is concise and recognized by the nullability analyzer.
-- Return `Empty` collections instead of `null`. Use `Array.Empty<T>()`, `Enumerable.Empty<T>()`, or `ReadOnlyCollection<T>.Empty`.
-- When in doubt, make it non-nullable and throw `ArgumentNullException` if the caller passes null. This is safer and easier to reason about.
-
-## Design Principles
-
-All code in this repository must respect the following principles. When reviewing or modifying code, check for violations before accepting a change.
-
-- **SRP** — every class has one reason to change. Publisher management, subscriber management, and change tracking are separate concerns; do not merge them into one class.
-- **OCP** — extend behaviour through new plugin implementations (`IOutbox`, `IQueuePublisher`, `IChangeSerializer`, etc.), not by modifying core classes.
-- **LSP** — plugin implementations must be fully substitutable. A custom `IOutbox` must honour the same contract (idempotency, ordering) as `InMemoryOutbox`.
-- **ISP** — keep interfaces narrow. `IQueuePublisher` and `IQueueConsumer` are separate even though `InMemoryQueue` implements both.
-- **DIP** — core classes depend on abstractions (`IOutbox`, `IQueuePublisher`, `IChangeSerializer`, …), never on concrete plugin types.
-- **KISS** — prefer the simplest solution that satisfies the requirement. Avoid speculative abstractions, configuration knobs, or indirection layers that have no current caller.
-- **DRY** — shared logic lives in one place. Serialization, compression, and deduplication are plugin responsibilities, not duplicated across publisher and subscriber.
-- **YAGNI** — do not add features, overloads, or extension points for hypothetical future requirements. Three similar lines are better than a premature abstraction.
-- **Constructor injection** — dependencies are declared in the constructor, never set via properties or internal methods after construction. Optional dependencies use nullable parameters (`ChangeSubscriber? subscriber = null`).
-- **Dead code** — unused fields, parameters, methods, and classes are removed immediately. A field that is injected but never read is a bug, not a harmless remnant.
-
-## AI Coding Agent Rules
-
-These rules are optimized for Claude Code (and similar AI coding agents) working in this repository. They prioritize safety, efficiency, and correctness.
-
-### Efficient Workflow
-
-- Don't guess, ask clarifying questions. Especially - when in doubt.
-- Read before editing. Always read the full file (or relevant section) before making changes.
-- Search before creating. Check if a type, method, or pattern already exists before writing new code.
-- Batch independent operations. When multiple files need similar changes, identify all targets first, then edit them in parallel.
-- Use existing patterns. Copy the structure, naming, and conventions from neighboring files rather than inventing new ones.
-- Understand the dependency graph before changing interfaces. A change to `IOutbox` affects every outbox implementation.
-
-### Safety First
-
-- Never commit unless the user explicitly asks. Always confirm before running `git commit`.
-- Never delete files unless the user asks or they are provably dead code (zero references across the entire solution).
-- Never hardcode secrets, connection strings, or credentials. Use configuration, environment variables, or test fixtures.
-- Never suppress warnings with `#pragma` or `<NoWarn>` unless there is a documented, unavoidable reason.
-
-### Verify Before Declaring Done
-
-- Always build after making code changes: `dotnet build RayTree.sln`
-- Always run relevant tests after changes: find the matching test project and run it.
-- Zero warnings is the standard — `TreatWarningsAsErrors=true` is global.
-- If tests fail, fix the root cause, do not modify tests to pass unless the test itself was wrong (explain why).
-- Run `dotnet format --verify-no-changes` if unsure about style compliance.
+`.editorconfig` wins over any conflicting suggestion.
 
 ## CI
 

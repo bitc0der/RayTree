@@ -105,6 +105,36 @@ Optional `appsettings.json` overrides:
 }
 ```
 
+### Isolated handler mode
+
+Give each named handler its own broker subscription, retry budget, and deduplication namespace. The consumer factory is called once per unique name at `Build()` time.
+
+```csharp
+// For testing/local dev — InMemoryBroadcastQueue fans out to every subscriber
+var broadcast = new InMemoryBroadcastQueue();
+
+var tracker = new ChangeTrackingBuilder()
+    .ForEntity<Order>(e => e
+        .UseOutbox(new InMemoryOutbox())
+        .UsePublisher(broadcast)
+        .UseSerializer(new JsonSerializerPlugin())
+        .UseCompressor(new NoOpCompressorPlugin())
+        .UseConsumerFactory(_ => broadcast.Subscribe())     // one consumer per name
+        .OnInsert("read-model", async (change, ct) =>
+        {
+            // dedup key: "{correlationId}:read-model"
+            await UpdateReadModelAsync(change.State!);
+        })
+        .OnInsert("notifier", async (change, ct) =>
+        {
+            // dedup key: "{correlationId}:notifier" — independent of read-model
+            await SendNotificationAsync(change.State!);
+        }, options: new SubscriberOptions { MaxRetries = 1, SkipOnFailure = true }))
+    .Build();
+```
+
+`ChangeTrackingHostedService` starts one consume loop per `(entity type, handler name)` pair automatically. Renaming a handler is equivalent to creating a new broker subscription (the old name's offset/messages are preserved under the original name).
+
 ### EF Core interceptor
 
 ```csharp
@@ -139,9 +169,44 @@ var subscriber = new ChangeSubscriberBuilder()
     .UseCompressor(new NoOpCompressorPlugin())
     .ForEntity<Order>(e => e
         .UseConsumer(new KafkaConsumer(consumerOptions))
-        .OnChange(changeType: null, async (change, ct) => { /* handle any */ }))
+        .OnChange(ChangeType.Insert, async (change, ct) => { /* handle insert */ }))
     .Build();
 ```
+
+## Delivery guarantees
+
+By default, `RabbitMqConsumer` and `KafkaConsumer` acknowledge each message at delivery time — before the handler runs. This is **at-most-once**: lowest latency, but a process crash between delivery and handler completion loses the message (broker has already removed it / committed past it).
+
+Opt in to **at-least-once** per consumer:
+
+```csharp
+// RabbitMQ — defer BasicAck until handler succeeds; NACK requeues on retry exhaustion
+new RabbitMqConsumer(new RabbitMqConsumerOptions
+{
+    QueueName       = "orders",
+    AckAfterHandler = true,
+});
+
+// Kafka — defer offset commit; NACK seeks back so the message is redelivered
+// in the same consumer process (not just on restart)
+new KafkaConsumer(new KafkaConsumerOptions
+{
+    Topic           = "orders",
+    GroupId         = "order-processor",
+    AckAfterHandler = true,
+}, loggerFactory);
+```
+
+| Scenario | At-most-once (default) | At-least-once (opt-in) |
+|---|---|---|
+| Crash between delivery and handler completion | Message lost | Message redelivered |
+| Handler exhausts retries with `SkipOnFailure = false` | ACKed (gone) | NACKed → requeued / seek-back |
+| Latency | Lowest | +1 broker round-trip after handler |
+| Duplicate delivery | Possible (rare) | Possible (expected — combine with `IDeduplicationStore`) |
+
+**Kafka caveat:** when `AckAfterHandler = true`, set `SubscriberOptions.MaxDegreeOfParallelism = 1` per partition — Kafka offset commits are monotonic and out-of-order commits could advance the offset past in-flight messages, undoing the guarantee.
+
+Under the hood, `IQueueConsumer` exposes optional `AcknowledgeAsync` / `NegativeAcknowledgeAsync` default-no-op methods. `ChangeSubscriber` calls them after each dispatched message; consumers that don't override them inherit the at-most-once behaviour. Broker-private correlation state (delivery tag, `ConsumeResult`) travels with the envelope via `MessageEnvelope.Metadata` and is consumed on first read so double-ACK attempts are silent no-ops rather than broker errors.
 
 ## Deduplication
 

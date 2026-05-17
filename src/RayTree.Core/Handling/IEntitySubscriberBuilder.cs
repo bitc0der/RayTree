@@ -39,8 +39,10 @@ public interface IEntitySubscriberBuilder<TEntity> where TEntity : class
     IEntitySubscriberBuilder<TEntity> OnDelete(ChangeHandlerAsync<TEntity> handler);
 
     /// <summary>
-    /// Registers a handler for the specified change type, or for all types when
-    /// <paramref name="changeType"/> is <c>null</c>.
+    /// Registers a handler for the specified change type. Every handler must bind to a
+    /// concrete <see cref="ChangeType"/>; the previous wildcard <c>null</c> form was
+    /// removed. To react to multiple change types with the same logic, call this method
+    /// (or <see cref="OnInsert"/>/<see cref="OnUpdate"/>/<see cref="OnDelete"/>) once per type.
     /// </summary>
-    IEntitySubscriberBuilder<TEntity> OnChange(ChangeType? changeType, ChangeHandlerAsync<TEntity> handler);
+    IEntitySubscriberBuilder<TEntity> OnChange(ChangeType changeType, ChangeHandlerAsync<TEntity> handler);
 }

@@ -1,4 +1,14 @@
 <Solution>
+  <Folder Name="/Solution Items/Docs/">
+    <File Path="AGENTS.md" />
+    <File Path="CHANGELOG.md" />
+    <File Path="CLAUDE.md" />
+    <File Path="COLLABORATORS.md" />
+    <File Path="CONTRIBUTING.md" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+    <File Path="SECURITY.md" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src\RayTree.Core\RayTree.Core.csproj" />
     <Project Path="src\RayTree.EntityFrameworkCore\RayTree.EntityFrameworkCore.csproj" />
@@ -38,9 +48,5 @@
     <File Path="Directory.Packages.props" />
     <File Path="NuGet.config" />
     <File Path=".github\workflows\ci.yml" />
-    <File Path="CLAUDE.md" />
-    <File Path="AGENTS.md" />
-    <File Path="CHANGELOG.md" />
-    <File Path="SECURITY.md" />
   </Folder>
 </Solution>

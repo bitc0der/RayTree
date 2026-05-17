@@ -6,6 +6,183 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.10-pre-release]
+
+### Changed (breaking)
+
+#### `ChangeType` is required on every handler registration (`RayTree.Core`)
+
+`OnChange(changeType, handler)` now takes a non-nullable `ChangeType`. The previous wildcard
+`OnChange(changeType: null, handler)` form — which fired the handler for every change type —
+has been removed across all four registration surfaces:
+
+- `IEntitySubscriberBuilder<TEntity>.OnChange`
+- `ISharedHandlerBuilder<TEntity>.OnChange`
+- `IIsolatedHandlerBuilder<TEntity>.OnChange`
+- `ChangeSubscriber.OnChange<TEntity>` and internal `RegisterIsolatedHandler<TEntity>`
+
+`HandlerRegistration.ChangeType` is now `ChangeType` (not `ChangeType?`), and the dispatch
+matcher inside `ChangeSubscriber.ProcessMessageAsync` / `ProcessIsolatedMessageAsync` is a
+strict equality check (`h.ChangeType == envelope.ChangeType`) — no implicit fall-through.
+
+**Migration:** replace each catch-all registration with one call per change type binding the
+same delegate.
+
+```csharp
+// Before (no longer compiles):
+.OnChange<Order>(changeType: null, handler)
+
+// After:
+.OnChange<Order>(ChangeType.Insert, handler)
+.OnChange<Order>(ChangeType.Update, handler)
+.OnChange<Order>(ChangeType.Delete, handler)
+```
+
+The `IOutbox.GetUnpublishedAsync(ChangeType? changeType, …)` query filter is **unaffected** —
+its nullable `changeType` parameter is a query filter (`null` = no filter), a different
+contract from handler binding.
+
+### Added
+
+#### Optional at-least-once delivery (`RayTree.Core`, `RayTree.Plugins.RabbitMQ`, `RayTree.Plugins.Kafka`)
+
+`IQueueConsumer` gains two default-no-op methods — `AcknowledgeAsync(MessageEnvelope, CancellationToken)`
+and `NegativeAcknowledgeAsync(MessageEnvelope, CancellationToken)` — that `ChangeSubscriber`
+invokes after each dispatched message: ACK on normal completion (handler success, dedup hit,
+no-handler skip, `SkipOnFailure` swallow), NACK on retry-exhaustion with `SkipOnFailure = false`.
+Existing custom `IQueueConsumer` implementations inherit the no-ops and behave unchanged
+(source-compatible, binary-compatible). Both shared-mode (`ConsumeFromConsumerAsync`) and
+isolated-mode (`ConsumeIsolatedFromConsumerAsync`) consume loops participate; the custom-reader
+overload (`ConsumeFromQueueAsync<TQueue>`) is at-most-once by design.
+
+**`MessageEnvelope.Metadata`** — lazy-allocated `IDictionary<string, object?>` for consumer-private
+broker state (delivery tags, lock tokens, receipt handles). Not part of the wire format; not
+inspected by handlers.
+
+**RabbitMQ opt-in** (`RabbitMqConsumerOptions.AckAfterHandler`, default `false`): when `true`,
+the broker ACK is deferred until handler completion. NACK requeues via `BasicNackAsync(requeue: true)`.
+Delivery tag is stashed in `MessageEnvelope.Metadata` via the internal `RabbitMqEnvelopeMetadata`
+take-on-read accessor so a double-Ack attempt is a silent no-op rather than a broker error.
+
+**Kafka opt-in** (`KafkaConsumerOptions.AckAfterHandler`, default `false`): when `true`, the
+offset commit is deferred. The subscriber posts the original `ConsumeResult` plus a
+`Commit`/`SeekBack` discriminator to an internal post-handler channel; the poll thread drains
+it at the top of each iteration (Confluent.Kafka requires `Consume`/`Commit`/`Seek` on the
+same thread). When pending work is queued, the next `Consume()` uses `TimeSpan.Zero` so commits
+don't wait a full poll cycle. NACK performs `_consumer.Seek(TopicPartitionOffset)` so the
+failed message is redelivered in the same consumer process, not just on restart. Parse-failure
+path always commits immediately to avoid poison-pilling the partition. Requires
+`SubscriberOptions.MaxDegreeOfParallelism = 1` per partition.
+
+```csharp
+// At-most-once (default — unchanged):
+new RabbitMqConsumer(new RabbitMqConsumerOptions { QueueName = "orders" });
+
+// At-least-once (opt-in):
+new RabbitMqConsumer(new RabbitMqConsumerOptions
+{
+    QueueName       = "orders",
+    AckAfterHandler = true,
+});
+```
+
+#### Handler dispatch modes — Shared and Isolated (`RayTree.Core`, `RayTree.Hosting`, `RayTree.Plugins.InMemory`)
+
+Two explicit handler-dispatch strategies are now available, selected at consumer-binding time.
+
+**`Shared` mode** (existing behaviour, now explicit and accumulating):
+
+Call `IEntityBuilder<TEntity>.UseConsumer(IQueueConsumer)` to fork into
+`ISharedHandlerBuilder<TEntity>`. Multiple calls to `OnInsert`, `OnUpdate`, `OnDelete`, or
+`OnChange` on the returned builder *accumulate* handlers; they execute sequentially in
+registration order on a single delivery of each message. Dedup key: `correlationId`.
+
+**`Isolated` mode** (new):
+
+Call `IEntityBuilder<TEntity>.UseConsumerFactory(Func<string, IQueueConsumer>)` to fork into
+`IIsolatedHandlerBuilder<TEntity>`. Each named handler receives its own broker subscription
+(factory invoked once per unique name at `Build()` time), retry budget, and dedup namespace
+(key: `$"{correlationId}:{handlerName}"`). `ChangeTrackingHostedService` starts one consume
+loop per `(entity type, handler name)` pair automatically.
+
+**Per-handler `SubscriberOptions`** (new, `IIsolatedHandlerBuilder<TEntity>`):
+
+Each named handler registration accepts an optional `SubscriberOptions? options = null`
+parameter on `OnInsert`, `OnUpdate`, `OnDelete`, and `OnChange`. The first non-null options
+supplied for a given handler name apply to that handler's consume loop (DOP, retry budget,
+skip-on-failure). Options supplied on later registrations under the same name are ignored.
+Per-handler options take precedence over entity-level and global options.
+
+```csharp
+.UseConsumerFactory(name => broadcast.Subscribe())
+.OnInsert("read-model", handler, new SubscriberOptions { MaxRetries = 5 })
+.OnInsert("notifier",   handler)   // inherits global/entity options
+```
+
+**`EntityHandlerKey`** (new, `RayTree.Core.Handling`):
+
+`public readonly record struct EntityHandlerKey(Type EntityType, string HandlerName)` — the
+typed dictionary key used by `ChangeSubscriber.IsolatedQueues`. Replaces the anonymous tuple
+`(Type, string)` that was used internally.
+
+**`InMemoryBroadcastQueue`** (new, `RayTree.Plugins.InMemory`):
+
+Fan-out in-memory queue for Isolated-mode testing and local development.
+`Subscribe()` returns a fresh `IQueueConsumer` backed by its own channel; every call to
+`PublishAsync` delivers to all subscribed channels. Disposing a subscriber removes its
+channel from the broadcast set.
+
+```csharp
+var broadcast = new InMemoryBroadcastQueue();
+
+// Pass as both the publisher target and the consumer factory:
+.UsePublisher(broadcast)
+.UseConsumerFactory(_ => broadcast.Subscribe())
+```
+
+### Breaking Changes
+
+#### `IEntityBuilder<TEntity>` — handler methods removed; `UseConsumer` return type changed
+
+The methods `OnInsert`, `OnUpdate`, `OnDelete`, and `OnChange` are **removed** from
+`IEntityBuilder<TEntity>`. Handler registration is only reachable via the post-fork builders
+returned by `UseConsumer` or `UseConsumerFactory`.
+
+The return type of `IEntityBuilder<TEntity>.UseConsumer(IQueueConsumer)` changes from
+`IEntityBuilder<TEntity>` to `ISharedHandlerBuilder<TEntity>`.
+
+**Migration:** reorder your `ForEntity` call chain so that `UseSerializer`, `UseCompressor`,
+and `UseSubscriberOptions` come *before* the `UseConsumer` call (those methods are on
+`IEntityBuilder<TEntity>`; `ISharedHandlerBuilder<TEntity>` exposes only handler-registration
+methods). Then chain handler registrations on the returned builder:
+
+```csharp
+// Before
+.ForEntity<Order>(e => e
+    .UseConsumer(consumer)
+    .UseSerializer(serializer)
+    .OnInsert(handler))
+
+// After
+.ForEntity<Order>(e => e
+    .UseSerializer(serializer)
+    .UseConsumer(consumer)
+    .OnInsert(handler))
+```
+
+#### Known limitation — Shared-mode broker ACK ordering
+
+`RabbitMqConsumer` and `KafkaConsumer` ACK / commit the broker delivery **before** the
+subscriber processes the message. In Shared mode this means broker-driven redelivery does not
+fire even when the dedup mark is reverted on handler failure. The dedup-revert retry guarantee
+is strong with `InMemoryQueue`; for Rabbit/Kafka it is best-effort only. Isolated mode is not
+affected (each named handler has its own consumer and ACK lifecycle, and the per-handler dedup
+key prevents double-processing across redeliveries). A follow-up change
+(`consumer-ack-after-handler`) will fix ACK ordering by adding an explicit ACK callback to
+`IQueueConsumer`.
+
+---
+
 ## [0.0.9-pre-release]
 
 ### Added
@@ -114,7 +291,7 @@ add this method.
 
 #### `ChangePublisher` constructor requires `RayTreeMeter`
 
-Before: `new ChangePublisher(ILoggerFactory)`  
+Before: `new ChangePublisher(ILoggerFactory)`
 After: `new ChangePublisher(ILoggerFactory, RayTreeMeter)`
 
 `RayTreeMeter` is required (non-nullable). The builder layer constructs a default
@@ -123,12 +300,12 @@ meter when the caller does not supply one; there is no internal fallback inside
 
 #### `OutboxPublisherService` constructor requires `RayTreeMeter`
 
-Before: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory)`  
+Before: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory)`
 After: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory, RayTreeMeter)`
 
 #### `ChangeSubscriber` constructor requires `RayTreeMeter`
 
-Before: `new ChangeSubscriber(ILogger<ChangeSubscriber>, IDeduplicationStore?, SubscriberOptions?)`  
+Before: `new ChangeSubscriber(ILogger<ChangeSubscriber>, IDeduplicationStore?, SubscriberOptions?)`
 After: `new ChangeSubscriber(ILogger<ChangeSubscriber>, RayTreeMeter, IDeduplicationStore?, SubscriberOptions?)`
 
 ### Tests
@@ -157,7 +334,7 @@ channel handles retries at the broker level. Builder call-sites using
 `UseRabbitMq(configure)` are unaffected — the extension method was updated in
 parallel. Direct construction is affected:
 
-Before: `new RabbitMqConsumer(options, loggerFactory)`  
+Before: `new RabbitMqConsumer(options, loggerFactory)`
 After: `new RabbitMqConsumer(options)`
 
 ### Removed
@@ -270,14 +447,14 @@ New internal infrastructure supporting the above:
 
 ### Breaking Changes
 
-- `PostgreSqlOutbox<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.  
-  Before: `new PostgreSqlOutbox<TEntity>(options)`  
-  After: `new PostgreSqlOutbox<TEntity>(options, loggerFactory)`  
+- `PostgreSqlOutbox<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.
+  Before: `new PostgreSqlOutbox<TEntity>(options)`
+  After: `new PostgreSqlOutbox<TEntity>(options, loggerFactory)`
   Builder call-sites are unaffected (the extension method absorbs the default).
 
-- `PostgreSqlRepository<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.  
-  Before: `new PostgreSqlRepository<TEntity>(options)`  
-  After: `new PostgreSqlRepository<TEntity>(options, loggerFactory)`  
+- `PostgreSqlRepository<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.
+  Before: `new PostgreSqlRepository<TEntity>(options)`
+  After: `new PostgreSqlRepository<TEntity>(options, loggerFactory)`
   Builder call-sites are unaffected.
 
 ---

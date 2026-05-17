@@ -21,4 +21,22 @@ public class MessageEnvelope
 
     /// <summary>Serialised (and optionally compressed) entity state.</summary>
     public byte[] Payload { get; set; } = Array.Empty<byte>();
+
+    private Dictionary<string, object?>? _metadata;
+
+    /// <summary>
+    /// Consumer-private metadata bag for broker-specific state (e.g., delivery tags,
+    /// lock tokens, receipt handles). Populated by the <see cref="Plugins.Consumer.IQueueConsumer"/>
+    /// implementation when the envelope is yielded and consulted by that same consumer's
+    /// <see cref="Plugins.Consumer.IQueueConsumer.AcknowledgeAsync"/> /
+    /// <see cref="Plugins.Consumer.IQueueConsumer.NegativeAcknowledgeAsync"/> overrides.
+    /// <para>
+    /// Lazily allocated — incurs no cost for consumers that don't use it. NOT part of
+    /// the wire format: never serialised by publishers, never inspected by handlers,
+    /// and must not be relied upon outside the consumer that produced the envelope.
+    /// Prefer typed extension methods over direct dictionary access at call sites.
+    /// </para>
+    /// </summary>
+    public IDictionary<string, object?> Metadata
+        => _metadata ??= new Dictionary<string, object?>(StringComparer.Ordinal);
 }

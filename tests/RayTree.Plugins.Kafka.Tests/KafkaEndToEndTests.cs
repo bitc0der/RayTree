@@ -159,16 +159,21 @@ public class KafkaEndToEndTests : IAsyncDisposable
         var received    = new List<EntityChange>();
         var allReceived = new TaskCompletionSource<bool>();
 
+        // The previous wildcard OnChange(null, ...) form was removed; register the same
+        // delegate for each ChangeType to receive all three events.
         var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, new RayTreeMeter());
+        ChangeHandlerAsync<Order> recordChange = (change, _) =>
+        {
+            lock (received) received.Add(change);
+            if (received.Count == 3) allReceived.TrySetResult(true);
+            return Task.CompletedTask;
+        };
         subscriber
             .ForEntity<Order>()
             .RegisterQueue<Order>(consumer)
-            .OnChange<Order>(changeType: null, (change, _) =>
-            {
-                lock (received) received.Add(change);
-                if (received.Count == 3) allReceived.TrySetResult(true);
-                return Task.CompletedTask;
-            });
+            .OnChange<Order>(ChangeType.Insert, recordChange)
+            .OnChange<Order>(ChangeType.Update, recordChange)
+            .OnChange<Order>(ChangeType.Delete, recordChange);
 
         using var cts   = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));

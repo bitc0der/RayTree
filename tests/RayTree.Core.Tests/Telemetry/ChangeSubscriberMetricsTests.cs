@@ -30,7 +30,7 @@ public class ChangeSubscriberMetricsTests
         using var collector = new TestMetricsCollector(meter);
 
         var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, meter);
-        subscriber.OnChange<Sample>(null, (_, _) => Task.CompletedTask);
+        subscriber.OnChange<Sample>(ChangeType.Insert, (_, _) => Task.CompletedTask);
 
         await subscriber.ProcessMessageAsync(EnvelopeFor<Sample>(ChangeType.Insert));
 
@@ -47,7 +47,7 @@ public class ChangeSubscriberMetricsTests
         using var collector = new TestMetricsCollector(meter);
 
         var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, meter);
-        subscriber.OnChange<Sample>(null, (_, _) => Task.CompletedTask);
+        subscriber.OnChange<Sample>(ChangeType.Insert, (_, _) => Task.CompletedTask);
 
         var correlationId = Guid.NewGuid();
         await subscriber.ProcessMessageAsync(EnvelopeFor<Sample>(ChangeType.Insert, correlationId));
@@ -65,7 +65,7 @@ public class ChangeSubscriberMetricsTests
         var attempts = 0;
         var options = new SubscriberOptions { MaxRetries = 3, RetryDelay = TimeSpan.FromMilliseconds(1), SkipOnFailure = false };
         var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, meter, options: options);
-        subscriber.OnChange<Sample>(null, (_, _) =>
+        subscriber.OnChange<Sample>(ChangeType.Insert, (_, _) =>
         {
             attempts++;
             if (attempts < 3) throw new InvalidOperationException("transient");
@@ -96,7 +96,7 @@ public class ChangeSubscriberMetricsTests
             SkipOnFailure = true   // swallow the throw so the test focuses on metrics
         };
         var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, meter, options: options);
-        subscriber.OnChange<Sample>(null, (_, _) => throw new InvalidOperationException("permanent"));
+        subscriber.OnChange<Sample>(ChangeType.Insert, (_, _) => throw new InvalidOperationException("permanent"));
 
         await subscriber.ProcessMessageAsync(EnvelopeFor<Sample>(ChangeType.Insert));
 
@@ -124,7 +124,7 @@ public class ChangeSubscriberMetricsTests
         using var collector = new TestMetricsCollector(meter);
 
         var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, meter);
-        subscriber.OnChange<Sample>(null, (_, _) => Task.CompletedTask);
+        subscriber.OnChange<Sample>(ChangeType.Insert, (_, _) => Task.CompletedTask);
 
         var t0 = DateTime.UtcNow.AddSeconds(-2.0);
         await subscriber.ProcessMessageAsync(EnvelopeFor<Sample>(ChangeType.Insert, timestamp: t0));

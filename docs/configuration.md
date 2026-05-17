@@ -201,8 +201,8 @@ var subscriber = new ChangeSubscriberBuilder()
         // inherits global serializer + compressor
         .OnInsert(async (change, ct) => { /* ... */ }))
     .ForEntity<Product>(e => e
-        .UseConsumer(productConsumer)
         .UseSerializer(new ProtobufSerializerPlugin())  // per-entity override
+        .UseConsumer(productConsumer)
         .OnInsert(async (change, ct) => { /* ... */ }))
     .Build();
 ```
@@ -215,8 +215,8 @@ Fine-tune retry behaviour for individual entity types while keeping global defau
 var subscriber = new ChangeSubscriberBuilder()
     .UseOptions(opt => opt.MaxRetries = 2)   // global default
     .ForEntity<Order>(e => e
-        .UseConsumer(orderConsumer)
         .UseOptions(opt => opt.MaxRetries = 5)  // Order-only override
+        .UseConsumer(orderConsumer)
         .OnInsert(async (change, ct) => { /* ... */ }))
     .ForEntity<Product>(e => e
         .UseConsumer(productConsumer)
