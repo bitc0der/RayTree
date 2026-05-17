@@ -26,6 +26,7 @@ dotnet test tests/RayTree.Core.Tests --filter "FullyQualifiedName~NoSerializer"
 dotnet test tests/RayTree.Plugins.PostgreSQL.Tests
 dotnet test tests/RayTree.Plugins.RabbitMQ.Tests
 dotnet test tests/RayTree.Plugins.Kafka.Tests
+dotnet test tests/RayTree.Plugins.Deduplication.Redis.Tests
 ```
 
 `TreatWarningsAsErrors=true` is global. Nullable warnings are always errors. All new public code must satisfy these constraints.
@@ -34,7 +35,7 @@ Centralized package versions live in `Directory.Packages.props`. Add new package
 
 ## Architecture Overview
 
-RayTree is a modular .NET 8 entity change-tracking library built on the **outbox pattern**. All change tracking flows through a single `EntityChangeTracker` that acts as the unified host for both the publisher and subscriber pipelines:
+RayTree is a modular .NET 10 entity change-tracking library built on the **outbox pattern**. All change tracking flows through a single `EntityChangeTracker` that acts as the unified host for both the publisher and subscriber pipelines:
 
 ```
 EntityChangeTracker

@@ -33,6 +33,7 @@ EntityChangeTracker.TrackInsertAsync / TrackUpdateAsync / TrackDeleteAsync
 | `RayTree.Plugins.Compressors.Gzip` | Gzip compressor |
 | `RayTree.Plugins.Compressors.Brotli` | Brotli compressor |
 | `RayTree.Plugins.Compressors.Lz4` | LZ4 compressor |
+| `RayTree.Plugins.Deduplication.Redis` | Redis-backed `IDeduplicationStore` for distributed deployments |
 
 ## Quick start
 
@@ -210,15 +211,36 @@ Under the hood, `IQueueConsumer` exposes optional `AcknowledgeAsync` / `Negative
 
 ## Deduplication
 
-Register a deduplication store to suppress duplicate deliveries:
+Register a deduplication store to suppress duplicate deliveries. The `CorrelationId` in each
+`MessageEnvelope` is used as the dedup key.
 
 ```csharp
-// In-memory (default, single process)
-// No configuration needed — InMemoryDeduplicationStore is used automatically.
+// In-memory (default) — single process, cleared on restart
+// No configuration needed: InMemoryDeduplicationStore is used automatically.
+
+// Redis — distributed, survives restarts, shared across multiple subscriber instances
+using StackExchange.Redis;
+using RayTree.Plugins.Deduplication.Redis;
+
+var multiplexer = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+
+var tracker = new ChangeTrackingBuilder()
+    .UseRedisDeduplication(multiplexer)                     // default options
+    // or with custom options:
+    .UseRedisDeduplication(multiplexer, opt =>
+    {
+        opt.KeyPrefix       = "my-service";   // namespaces keys on a shared Redis instance
+        opt.RetentionPeriod = TimeSpan.FromHours(48);
+        opt.Database        = 1;              // logical Redis DB index; -1 = default
+    })
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
 
 // Custom store
-builder.ForEntity<Order>(e => e.UseSubscriberOptions(opts => opts.MaxRetries = 3));
-// Then register your custom IDeduplicationStore implementation via UseDeduplicationStore()
+var tracker = new ChangeTrackingBuilder()
+    .UseDeduplicationStore(new MyCustomStore())
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
 ```
 
 ## Running tests
@@ -240,4 +262,5 @@ dotnet test tests/RayTree.Plugins.Compressors.Lz4.Tests
 dotnet test tests/RayTree.Plugins.PostgreSQL.Tests
 dotnet test tests/RayTree.Plugins.RabbitMQ.Tests
 dotnet test tests/RayTree.Plugins.Kafka.Tests
+dotnet test tests/RayTree.Plugins.Deduplication.Redis.Tests
 ```

@@ -1,0 +1,45 @@
+## 1. Project & Package Setup
+
+- [x] 1.1 Add `StackExchange.Redis` and `Testcontainers.Redis` to `Directory.Packages.props`
+- [x] 1.2 Create `src/RayTree.Plugins.Deduplication.Redis/RayTree.Plugins.Deduplication.Redis.csproj` referencing `RayTree.Core` and `StackExchange.Redis`
+- [x] 1.3 Create `tests/RayTree.Plugins.Deduplication.Redis.Tests/RayTree.Plugins.Deduplication.Redis.Tests.csproj` referencing the plugin project, NUnit, Moq, Testcontainers, and `Testcontainers.Redis`
+- [x] 1.4 Add both projects to `RayTree.sln`
+
+## 2. Core Implementation
+
+- [x] 2.1 Create `RedisDeduplicationOptions` class with `KeyPrefix` (default `"default"`), `RetentionPeriod` (default 24 h), and `Database` (default `-1`) properties
+- [x] 2.2 Create `RedisDeduplicationStore` implementing `IDeduplicationStore` — constructor takes `IConnectionMultiplexer` and `RedisDeduplicationOptions`
+- [x] 2.3 Implement `TryMarkProcessedAsync` using `StringSetAsync(key, "1", ttl, When.NotExists)` with key pattern `raytree:dedup:{KeyPrefix}:{correlationId}`
+- [x] 2.4 Implement `RevertProcessedAsync` using `KeyDeleteAsync(key)`
+- [x] 2.5 Implement `CleanupAsync` as a no-op (return `Task.CompletedTask`)
+- [x] 2.6 Resolve `IDatabase` from `IConnectionMultiplexer.GetDatabase(options.Database)` where `-1` calls the no-argument overload
+
+## 3. Builder Extension Methods
+
+- [x] 3.1 Create static class `RedisDeduplicationExtensions` in the `RayTree` namespace
+- [x] 3.2 Add `UseRedisDeduplication(this IChangeSubscriberBuilder, IConnectionMultiplexer)` overload
+- [x] 3.3 Add `UseRedisDeduplication(this IChangeSubscriberBuilder, IConnectionMultiplexer, Action<RedisDeduplicationOptions>)` overload
+- [x] 3.4 Add `UseRedisDeduplication(this IChangeTrackingBuilder, IConnectionMultiplexer)` overload
+- [x] 3.5 Add `UseRedisDeduplication(this IChangeTrackingBuilder, IConnectionMultiplexer, Action<RedisDeduplicationOptions>)` overload
+
+## 4. Unit Tests
+
+- [x] 4.1 Write test verifying `TryMarkProcessedAsync` calls `StringSetAsync` with `When.NotExists` and the correct TTL and key, returning `true` when mock returns `true`
+- [x] 4.2 Write test verifying `TryMarkProcessedAsync` returns `false` when mock `StringSetAsync` returns `false` (duplicate)
+- [x] 4.3 Write test verifying `RevertProcessedAsync` calls `KeyDeleteAsync` with the correctly-formatted key
+- [x] 4.4 Write test verifying `CleanupAsync` issues no Redis commands
+- [x] 4.5 Write test verifying key is formatted as `raytree:dedup:{prefix}:{correlationId}` with a custom prefix
+- [x] 4.6 Write test verifying default options produce `KeyPrefix = "default"`, `RetentionPeriod = 24h`, `Database = -1`
+- [x] 4.7 Write test verifying `Database = -1` calls `GetDatabase()` without arguments; non-negative value calls `GetDatabase(n)`
+
+## 5. Integration Tests
+
+- [x] 5.1 Create `RedisDeduplicationIntegrationTests` using Testcontainers Redis fixture; spin up container once per test class
+- [x] 5.2 Write integration test: first `TryMarkProcessedAsync` call returns `true`, second returns `false`
+- [x] 5.3 Write integration test: mark → revert → mark again returns `true`
+- [x] 5.4 Write integration test: mark with 1-second TTL, wait for expiry, mark again returns `true`
+
+## 6. Verification
+
+- [x] 6.1 Run `dotnet build RayTree.sln` (Debug) — zero warnings, zero errors
+- [x] 6.2 Run `dotnet test tests/RayTree.Plugins.Deduplication.Redis.Tests` — all tests pass (unit tests run without Docker; integration tests require Docker)

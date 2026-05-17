@@ -262,7 +262,7 @@ Call the broker extension inside the `ForEntity` callback:
 ```csharp
 builder.Services
     .AddChangeSubscriber(builder.Configuration)
-    .UseRedisDeduplication("localhost:6379")     // optional; default is in-memory
+    .UseRedisDeduplication(multiplexer)          // optional; default is in-memory
     .ForEntity<Order>(e => e
         .UseInMemoryQueue(orderQueue)
         .UseSerializer(new JsonSerializerPlugin())
@@ -291,12 +291,28 @@ Every processed `CorrelationId` is recorded so duplicate deliveries (at-least-on
 | Store | Package | When to use |
 |---|---|---|
 | `InMemoryDeduplicationStore` | built-in | Single-process, testing |
-| `RedisDeduplicationStore` | `RayTree.Subscriber` | Multiple subscriber instances |
+| `RedisDeduplicationStore` | `RayTree.Plugins.Deduplication.Redis` | Multiple subscriber instances or cross-restart dedup |
 
 ```csharp
-// Redis — call at the global builder level
+// Redis — supply an IConnectionMultiplexer from StackExchange.Redis
+using StackExchange.Redis;
+using RayTree.Plugins.Deduplication.Redis;
+
+var multiplexer = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
+
 subscriber = new ChangeSubscriberBuilder()
-    .UseRedisDeduplication("localhost:6379")
+    .UseRedisDeduplication(multiplexer)                 // default options
+    .ForEntity<Order>(e => e /* ... */)
+    .Build();
+
+// With custom options
+subscriber = new ChangeSubscriberBuilder()
+    .UseRedisDeduplication(multiplexer, opt =>
+    {
+        opt.KeyPrefix       = "my-service";  // namespace on shared Redis; default "default"
+        opt.RetentionPeriod = TimeSpan.FromHours(48);
+        opt.Database        = 1;             // logical DB index; default -1 (connection default)
+    })
     .ForEntity<Order>(e => e /* ... */)
     .Build();
 

@@ -10,6 +10,7 @@
     <File Path="SECURITY.md" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/RayTree.Plugins.Deduplication.Redis/RayTree.Plugins.Deduplication.Redis.csproj" />
     <Project Path="src\RayTree.Core\RayTree.Core.csproj" />
     <Project Path="src\RayTree.EntityFrameworkCore\RayTree.EntityFrameworkCore.csproj" />
     <Project Path="src\RayTree.Hosting\RayTree.Hosting.csproj" />
@@ -26,6 +27,7 @@
     <Project Path="src\RayTree.OpenTelemetry\RayTree.OpenTelemetry.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/RayTree.Plugins.Deduplication.Redis.Tests/RayTree.Plugins.Deduplication.Redis.Tests.csproj" />
     <Project Path="tests\RayTree.Core.Tests\RayTree.Core.Tests.csproj" />
     <Project Path="tests\RayTree.EntityFrameworkCore.Tests\RayTree.EntityFrameworkCore.Tests.csproj" />
     <Project Path="tests\RayTree.Plugins.PostgreSQL.Tests\RayTree.Plugins.PostgreSQL.Tests.csproj" />
