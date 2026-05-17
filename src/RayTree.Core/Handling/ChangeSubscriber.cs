@@ -214,7 +214,7 @@ public class ChangeSubscriber : IDisposable
         await Parallel.ForEachAsync(
             consumer.ConsumeAsync(cancellationToken),
             parallelOptions,
-            async (envelope, token) => await ProcessMessageAsync(envelope, token));
+            async (envelope, token) => await DispatchAndAcknowledgeAsync(consumer, envelope, token));
     }
 
     public async Task ConsumeFromQueueAsync<TQueue>(
@@ -222,6 +222,11 @@ public class ChangeSubscriber : IDisposable
         Func<TQueue, CancellationToken, IAsyncEnumerable<MessageEnvelope>> reader,
         CancellationToken cancellationToken = default)
     {
+        // Note: this overload does not have an IQueueConsumer to acknowledge against.
+        // Callers using a custom reader are responsible for any broker acknowledgement
+        // outside of ChangeSubscriber. This stays at-most-once by design — the typed
+        // overload ConsumeFromConsumerAsync(IQueueConsumer) is the path that participates
+        // in the optional Ack/Nack lifecycle.
         var parallelOptions = new ParallelOptions
         {
             MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism,
@@ -231,6 +236,37 @@ public class ChangeSubscriber : IDisposable
             reader(queue, cancellationToken),
             parallelOptions,
             async (envelope, token) => await ProcessMessageAsync(envelope, token));
+    }
+
+    /// <summary>
+    /// Shared-mode dispatch wrapper: invokes <see cref="ProcessMessageAsync"/> and then
+    /// calls <see cref="IQueueConsumer.AcknowledgeAsync"/> on success, or
+    /// <see cref="IQueueConsumer.NegativeAcknowledgeAsync"/> on failure. For consumers
+    /// that don't override the default no-op Ack/Nack methods this is a transparent
+    /// passthrough — the at-most-once contract is preserved.
+    /// </summary>
+    private async Task DispatchAndAcknowledgeAsync(
+        IQueueConsumer consumer, MessageEnvelope envelope, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ProcessMessageAsync(envelope, cancellationToken);
+            await consumer.AcknowledgeAsync(envelope, cancellationToken);
+        }
+        catch
+        {
+            // NACK first so the broker can requeue / leave the offset alone, then let
+            // the exception propagate. The Ack/Nack call is best-effort: a failure here
+            // is logged but does not mask the original handler exception.
+            try { await consumer.NegativeAcknowledgeAsync(envelope, cancellationToken); }
+            catch (Exception nackEx)
+            {
+                _logger.LogError(nackEx,
+                    "NegativeAcknowledgeAsync failed for {EntityType} ({CorrelationId})",
+                    envelope.EntityType, envelope.CorrelationId);
+            }
+            throw;
+        }
     }
 
     /// <summary>
@@ -256,7 +292,24 @@ public class ChangeSubscriber : IDisposable
             consumer.ConsumeAsync(cancellationToken),
             parallelOptions,
             async (envelope, token) =>
-                await ProcessIsolatedMessageAsync(envelope, entityType, handlerName, effectiveOptions, token));
+            {
+                try
+                {
+                    await ProcessIsolatedMessageAsync(envelope, entityType, handlerName, effectiveOptions, token);
+                    await consumer.AcknowledgeAsync(envelope, token);
+                }
+                catch
+                {
+                    try { await consumer.NegativeAcknowledgeAsync(envelope, token); }
+                    catch (Exception nackEx)
+                    {
+                        _logger.LogError(nackEx,
+                            "NegativeAcknowledgeAsync failed for isolated handler '{HandlerName}' on {EntityType} ({CorrelationId})",
+                            handlerName, entityType.Name, envelope.CorrelationId);
+                    }
+                    throw;
+                }
+            });
     }
 
     // -------------------------------------------------------------------------

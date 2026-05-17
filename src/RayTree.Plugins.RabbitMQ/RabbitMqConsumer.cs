@@ -77,8 +77,20 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         {
             var envelope = ParseEnvelope(ea.BasicProperties, ea.Body.ToArray());
 
-            await _buffer.Writer.WriteAsync(envelope, cancellationToken: ea.CancellationToken);
-            await _channel!.BasicAckAsync(ea.DeliveryTag, multiple: false, cancellationToken: ea.CancellationToken);
+            if (_options.AckAfterHandler)
+            {
+                // Stash the delivery tag so AcknowledgeAsync / NegativeAcknowledgeAsync
+                // can correlate the broker delivery back to the envelope the subscriber
+                // hands us. The ACK is deferred until handler completion.
+                envelope.SetDeliveryTag(ea.DeliveryTag);
+                await _buffer.Writer.WriteAsync(envelope, cancellationToken: ea.CancellationToken);
+            }
+            else
+            {
+                // At-most-once (legacy default): ACK immediately after buffering.
+                await _buffer.Writer.WriteAsync(envelope, cancellationToken: ea.CancellationToken);
+                await _channel!.BasicAckAsync(ea.DeliveryTag, multiple: false, cancellationToken: ea.CancellationToken);
+            }
         }
         catch
         {
@@ -93,6 +105,36 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
 
     public IAsyncEnumerable<MessageEnvelope> ConsumeAsync(CancellationToken cancellationToken = default)
         => _buffer.Reader.ReadAllAsync(cancellationToken);
+
+    /// <summary>
+    /// Sends <c>basic.ack</c> to the broker for the delivery associated with
+    /// <paramref name="envelope"/>. No-op when <see cref="RabbitMqConsumerOptions.AckAfterHandler"/>
+    /// is <c>false</c> (the message was already ACKed in <see cref="OnMessageReceived"/>)
+    /// or when the envelope carries no delivery-tag metadata.
+    /// </summary>
+    public async Task AcknowledgeAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
+    {
+        if (!_options.AckAfterHandler) return;
+        if (_channel is null) return;
+        if (!envelope.TryGetDeliveryTag(out var tag)) return;
+
+        await _channel.BasicAckAsync(tag, multiple: false, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends <c>basic.nack</c> with <c>requeue = true</c> for the delivery associated
+    /// with <paramref name="envelope"/>. No-op when <see cref="RabbitMqConsumerOptions.AckAfterHandler"/>
+    /// is <c>false</c> (the message was already ACKed) or when the envelope carries no
+    /// delivery-tag metadata.
+    /// </summary>
+    public async Task NegativeAcknowledgeAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
+    {
+        if (!_options.AckAfterHandler) return;
+        if (_channel is null) return;
+        if (!envelope.TryGetDeliveryTag(out var tag)) return;
+
+        await _channel.BasicNackAsync(tag, multiple: false, requeue: true, cancellationToken: cancellationToken);
+    }
 
     private static MessageEnvelope ParseEnvelope(IReadOnlyBasicProperties props, byte[] body)
     {

@@ -18,6 +18,13 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
     private Task? _pollTask;
     private volatile bool _assigned;
 
+    // When AckAfterHandler = true, the subscriber posts the original ConsumeResult here
+    // and the poll thread drains the channel each iteration and calls Commit on its own
+    // thread — librdkafka requires Consume and Commit to share a thread.
+    private readonly Channel<ConsumeResult<string, byte[]>> _commitChannel =
+        Channel.CreateUnbounded<ConsumeResult<string, byte[]>>(
+            new UnboundedChannelOptions { SingleReader = true });
+
     /// <summary>
     /// Returns <see langword="true"/> once the poll loop has made at least one successful
     /// call to <c>Consume()</c>, which indicates that the Kafka broker has acknowledged the
@@ -72,6 +79,21 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
             {
                 while (!linkedToken.IsCancellationRequested)
                 {
+                    // Drain any pending deferred commits — must happen on this thread.
+                    if (_options.AckAfterHandler)
+                    {
+                        while (_commitChannel.Reader.TryRead(out var pending))
+                        {
+                            try { _consumer!.Commit(pending); }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex,
+                                    "Deferred Kafka commit failed at offset {Offset} on topic {Topic}",
+                                    pending.Offset, _options.Topic);
+                            }
+                        }
+                    }
+
                     ConsumeResult<string, byte[]>? result;
                     try
                     {
@@ -102,12 +124,39 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "Failed to parse Kafka message envelope on topic {Topic}, skipping", _options.Topic);
+                        // Bad message: commit immediately regardless of AckAfterHandler so it
+                        // doesn't poison-pill the partition. Parse errors are not transient.
                         _consumer!.Commit(result);
                         continue;
                     }
 
-                    _consumer!.Commit(result);
+                    if (_options.AckAfterHandler)
+                    {
+                        // Defer commit — AcknowledgeAsync will hand this result back via _commitChannel.
+                        envelope.SetConsumeResult(result);
+                    }
+                    else
+                    {
+                        // At-most-once (legacy default): commit before handing off.
+                        _consumer!.Commit(result);
+                    }
                     channel.Writer.TryWrite(envelope);
+                }
+
+                // Final drain — flush any commits pending at shutdown so we don't lose
+                // confirmation of work that did complete before cancellation fired.
+                if (_options.AckAfterHandler)
+                {
+                    while (_commitChannel.Reader.TryRead(out var pending))
+                    {
+                        try { _consumer!.Commit(pending); }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex,
+                                "Final-drain Kafka commit failed at offset {Offset} on topic {Topic}",
+                                pending.Offset, _options.Topic);
+                        }
+                    }
                 }
             }
             finally
@@ -118,6 +167,36 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
         await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken))
             yield return item;
+    }
+
+    /// <summary>
+    /// Schedules the offset commit for the delivery associated with <paramref name="envelope"/>
+    /// to run on the poll thread. No-op when <see cref="KafkaConsumerOptions.AckAfterHandler"/>
+    /// is <c>false</c> (the offset was already committed inline in the poll loop) or when
+    /// the envelope carries no consume-result metadata.
+    /// </summary>
+    public Task AcknowledgeAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
+    {
+        if (!_options.AckAfterHandler) return Task.CompletedTask;
+        if (!envelope.TryGetConsumeResult(out var result) || result is null) return Task.CompletedTask;
+
+        // Post to the poll thread; the actual Commit runs there on the next iteration.
+        _commitChannel.Writer.TryWrite(result);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Negative-ack: drop the consume result without committing so the offset stays at
+    /// the previous commit and Kafka redelivers the message on the next read from this
+    /// consumer group. No-op when <see cref="KafkaConsumerOptions.AckAfterHandler"/> is
+    /// <c>false</c> (the offset already advanced inline).
+    /// </summary>
+    public Task NegativeAcknowledgeAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
+    {
+        // For Kafka, "NACK" means "don't commit". The consume result is intentionally
+        // discarded — the partition's committed offset stays put and the broker will
+        // re-deliver this message (and everything after) on the next read.
+        return Task.CompletedTask;
     }
 
     private static MessageEnvelope ParseEnvelope(Message<string, byte[]> message)
@@ -166,5 +245,6 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
         _consumer?.Close();
         _consumer?.Dispose();
         _disposeCts.Dispose();
+        _commitChannel.Writer.TryComplete();
     }
 }
