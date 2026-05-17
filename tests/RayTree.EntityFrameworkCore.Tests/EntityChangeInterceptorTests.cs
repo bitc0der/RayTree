@@ -1,10 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using Moq;
 using RayTree.Core.Models;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
 using RayTree.EntityFrameworkCore.Interceptors;
 using RayTree.EntityFrameworkCore.Extensions;
+using RayTree.Plugins.InMemory;
+using RayTree.Plugins.Serializers.Json;
 
 namespace RayTree.EntityFrameworkCore.Tests;
 
@@ -36,7 +39,11 @@ public class EntityChangeInterceptorTests
 
     private static EntityChangeTracker BuildTracker(IOutbox outbox)
         => EntityChangeTracker.Create()
-            .ForEntity<TestEntity>(e => e.UseOutbox(outbox))
+            .ForEntity<TestEntity>(e => e
+                .UseOutbox(outbox)
+                .UsePublisher(new InMemoryQueue())
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()))
             .Build();
 
     [Test]

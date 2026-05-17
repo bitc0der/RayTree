@@ -55,8 +55,16 @@ public class EndToEndTests
         var userOutbox = new InMemoryOutbox();
         var orderOutbox = new InMemoryOutbox();
         using var tracker = EntityChangeTracker.Create()
-            .ForEntity<User>(e => e.UseOutbox(userOutbox))
-            .ForEntity<Order>(e => e.UseOutbox(orderOutbox))
+            .ForEntity<User>(e => e
+                .UseOutbox(userOutbox)
+                .UsePublisher(new InMemoryQueue())
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()))
+            .ForEntity<Order>(e => e
+                .UseOutbox(orderOutbox)
+                .UsePublisher(new InMemoryQueue())
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()))
             .Build();
 
         // Act
@@ -76,6 +84,7 @@ public class EndToEndTests
         using var tracker = EntityChangeTracker.Create()
             .ForEntity<User>(e => e
                 .UseOutbox(outbox)
+                .UsePublisher(new InMemoryQueue())
                 .UseSerializer(new JsonSerializerPlugin())
                 .UseCompressor(new NoOpCompressorPlugin()))
             .Build();

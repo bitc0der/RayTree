@@ -11,17 +11,13 @@ namespace RayTree.EntityFrameworkCore.Tests;
 
 public class EndToEndInMemoryTests
 {
-    private static EntityChangeTracker BuildTracker(
-        InMemoryOutbox outbox, bool withQueue = false, bool withGzip = false)
+    private static EntityChangeTracker BuildTracker(InMemoryOutbox outbox, bool withGzip = false)
         => EntityChangeTracker.Create()
-            .ForEntity<Product>(e =>
-            {
-                e.UseOutbox(outbox)
-                 .UseSerializer(new JsonSerializerPlugin())
-                 .UseCompressor(withGzip ? new GzipCompressorPlugin() : (IChangeCompressor)new NoOpCompressorPlugin());
-                if (withQueue)
-                    e.UsePublisher(new InMemoryQueue());
-            })
+            .ForEntity<Product>(e => e
+                .UseOutbox(outbox)
+                .UsePublisher(new InMemoryQueue())
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(withGzip ? new GzipCompressorPlugin() : (IChangeCompressor)new NoOpCompressorPlugin()))
             .Build();
 
     [Test]
