@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using RayTree.Core.Distribution;
-using RayTree.Core.Telemetry;
 using RayTree.Core.Handling;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
@@ -30,22 +29,19 @@ public class KafkaEndToEndTests : IAsyncDisposable
     // -------------------------------------------------------------------------
 
     private EntityChangeTracker BuildTracker(string topic)
-    {
-        var publisher = new KafkaPublisher(new KafkaPublisherOptions
-        {
-            BootstrapServers = _kafka.GetBootstrapAddress(),
-            Topic            = topic,
-            Acks             = "all"
-        });
-
-        var changePublisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
-        changePublisher.RegisterOutbox(typeof(Order), new InMemoryOutbox());
-        changePublisher.RegisterPublisher(typeof(Order), publisher);
-        changePublisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
-        changePublisher.RegisterCompressor(typeof(Order), new NoOpCompressorPlugin());
-        changePublisher.Options.PollingInterval = TimeSpan.FromMilliseconds(100);
-        return new EntityChangeTracker(changePublisher);
-    }
+        => EntityChangeTracker.Create()
+            .UsePublisherOptions(o => o.PollingInterval = TimeSpan.FromMilliseconds(100))
+            .ForEntity<Order>(e => e
+                .UseOutbox(new InMemoryOutbox())
+                .UsePublisher(new KafkaPublisher(new KafkaPublisherOptions
+                {
+                    BootstrapServers = _kafka.GetBootstrapAddress(),
+                    Topic            = topic,
+                    Acks             = "all"
+                }))
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()))
+            .Build();
 
     private KafkaConsumer BuildConsumer(string topic, string groupId) => new(new KafkaConsumerOptions
     {
@@ -79,8 +75,9 @@ public class KafkaEndToEndTests : IAsyncDisposable
     [Test]
     public async Task TrackInsert_HandlerReceivesCorrectChange()
     {
+        // Arrange
         var topic    = $"test-insert-{Guid.NewGuid():N}";
-        var consumer = BuildConsumer(topic, $"group-{Guid.NewGuid():N}");
+        using var consumer = BuildConsumer(topic, $"group-{Guid.NewGuid():N}");
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
@@ -96,28 +93,27 @@ public class KafkaEndToEndTests : IAsyncDisposable
 
         using var cts   = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
-
         // Wait until the broker has acknowledged the subscription before publishing.
         await WaitForAssignmentAsync(consumer);
+        using var tracker = BuildTracker(topic);
 
-        var tracker = BuildTracker(topic);
-        await tracker.InitializeAsync();
+        // Act
         await tracker.TrackInsertAsync(new Order { Id = 1, Total = 49.99m });
 
+        // Assert
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(20));
         Assert.That(received.EntityId, Is.EqualTo("1"));
         Assert.That(received.ChangeType, Is.EqualTo(ChangeType.Insert));
 
         cts.Cancel();
-        tracker.Dispose();
-        consumer.Dispose();
     }
 
     [Test]
     public async Task TrackUpdate_HandlerReceivesCorrectChange()
     {
+        // Arrange
         var topic    = $"test-update-{Guid.NewGuid():N}";
-        var consumer = BuildConsumer(topic, $"group-{Guid.NewGuid():N}");
+        using var consumer = BuildConsumer(topic, $"group-{Guid.NewGuid():N}");
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
@@ -133,34 +129,32 @@ public class KafkaEndToEndTests : IAsyncDisposable
 
         using var cts   = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
-
+        // Wait until the broker has acknowledged the subscription before publishing.
         await WaitForAssignmentAsync(consumer);
+        using var tracker = BuildTracker(topic);
 
-        var tracker = BuildTracker(topic);
-        await tracker.InitializeAsync();
+        // Act
         await tracker.TrackUpdateAsync(new Order { Id = 77, Total = 300m });
 
+        // Assert
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(20));
         Assert.That(received.EntityId, Is.EqualTo("77"));
         Assert.That(received.ChangeType, Is.EqualTo(ChangeType.Update));
 
         cts.Cancel();
-        tracker.Dispose();
-        consumer.Dispose();
     }
 
     [Test]
     public async Task TrackMultiple_AllChangesDeliveredInOrder()
     {
+        // Arrange
         var topic    = $"test-batch-{Guid.NewGuid():N}";
-        var consumer = BuildConsumer(topic, $"group-{Guid.NewGuid():N}");
+        using var consumer = BuildConsumer(topic, $"group-{Guid.NewGuid():N}");
         await consumer.InitializeAsync();
 
         var received    = new List<EntityChange>();
         var allReceived = new TaskCompletionSource<bool>();
 
-        // The previous wildcard OnChange(null, ...) form was removed; register the same
-        // delegate for each ChangeType to receive all three events.
         var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, new RayTreeMeter());
         ChangeHandlerAsync<Order> recordChange = (change, _) =>
         {
@@ -177,25 +171,23 @@ public class KafkaEndToEndTests : IAsyncDisposable
 
         using var cts   = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
-
+        // Wait until the broker has acknowledged the subscription before publishing.
         await WaitForAssignmentAsync(consumer);
+        using var tracker = BuildTracker(topic);
 
-        var tracker = BuildTracker(topic);
-        await tracker.InitializeAsync();
+        // Act
         await tracker.TrackInsertAsync(new Order { Id = 1, Total = 10m });
         await tracker.TrackUpdateAsync(new Order { Id = 2, Total = 20m });
         await tracker.TrackDeleteAsync(new Order { Id = 3, Total = 30m });
 
+        // Assert
         await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(20));
         Assert.That(received, Has.Count.EqualTo(3));
-
         // Kafka preserves per-partition order; all three share the same entity type key
         Assert.That(received.Select(c => c.EntityId),
             Is.EqualTo(new[] { "1", "2", "3" }));
 
         cts.Cancel();
-        tracker.Dispose();
-        consumer.Dispose();
     }
 
     public ValueTask DisposeAsync() => _kafka.DisposeAsync();

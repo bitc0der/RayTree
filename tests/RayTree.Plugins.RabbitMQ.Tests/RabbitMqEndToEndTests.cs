@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
-using RayTree.Core.Distribution;
-using RayTree.Core.Telemetry;
 using RayTree.Core.Handling;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
@@ -28,15 +27,14 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
     // -------------------------------------------------------------------------
 
     private EntityChangeTracker BuildTracker(RabbitMqPublisher publisher)
-    {
-        var changePublisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
-        changePublisher.RegisterOutbox(typeof(Order), new InMemoryOutbox());
-        changePublisher.RegisterPublisher(typeof(Order), publisher);
-        changePublisher.RegisterSerializer(typeof(Order), new JsonSerializerPlugin());
-        changePublisher.RegisterCompressor(typeof(Order), new NoOpCompressorPlugin());
-        changePublisher.Options.PollingInterval = TimeSpan.FromMilliseconds(100);
-        return new EntityChangeTracker(changePublisher);
-    }
+        => EntityChangeTracker.Create()
+            .UsePublisherOptions(o => o.PollingInterval = TimeSpan.FromMilliseconds(100))
+            .ForEntity<Order>(e => e
+                .UseOutbox(new InMemoryOutbox())
+                .UsePublisher(publisher)
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new NoOpCompressorPlugin()))
+            .Build();
 
     private RabbitMqPublisher BuildPublisher() => new(new RabbitMqPublisherOptions
     {
@@ -69,11 +67,12 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
     [Test]
     public async Task TrackInsert_HandlerReceivesCorrectChange()
     {
+        // Arrange
         var queueName = $"test-{Guid.NewGuid():N}";
-        var publisher = BuildPublisher();
+        using var publisher = BuildPublisher();
         await publisher.InitializeAsync();
 
-        var consumer = BuildConsumer(queueName);
+        using var consumer = BuildConsumer(queueName);
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
@@ -89,29 +88,28 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
 
         using var cts = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
+        using var tracker = BuildTracker(publisher);
 
-        var tracker = BuildTracker(publisher);
-        await tracker.InitializeAsync();
+        // Act
         await tracker.TrackInsertAsync(new Order { Id = 1, Total = 49.99m });
 
+        // Assert
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
         Assert.That(received.EntityId, Is.EqualTo("1"));
         Assert.That(received.ChangeType, Is.EqualTo(ChangeType.Insert));
 
         cts.Cancel();
-        tracker.Dispose();
-        consumer.Dispose();
-        publisher.Dispose();
     }
 
     [Test]
     public async Task TrackUpdate_HandlerReceivesCorrectChange()
     {
+        // Arrange
         var queueName = $"test-{Guid.NewGuid():N}";
-        var publisher = BuildPublisher();
+        using var publisher = BuildPublisher();
         await publisher.InitializeAsync();
 
-        var consumer = BuildConsumer(queueName);
+        using var consumer = BuildConsumer(queueName);
         await consumer.InitializeAsync();
 
         var tcs = new TaskCompletionSource<EntityChange>();
@@ -127,36 +125,33 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
 
         using var cts = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
+        using var tracker = BuildTracker(publisher);
 
-        var tracker = BuildTracker(publisher);
-        await tracker.InitializeAsync();
+        // Act
         await tracker.TrackUpdateAsync(new Order { Id = 55, Total = 200m });
 
+        // Assert
         var received = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
         Assert.That(received.EntityId, Is.EqualTo("55"));
         Assert.That(received.ChangeType, Is.EqualTo(ChangeType.Update));
 
         cts.Cancel();
-        tracker.Dispose();
-        consumer.Dispose();
-        publisher.Dispose();
     }
 
     [Test]
     public async Task TrackMultiple_AllChangesDelivered()
     {
+        // Arrange
         var queueName = $"test-{Guid.NewGuid():N}";
-        var publisher = BuildPublisher();
+        using var publisher = BuildPublisher();
         await publisher.InitializeAsync();
 
-        var consumer = BuildConsumer(queueName);
+        using var consumer = BuildConsumer(queueName);
         await consumer.InitializeAsync();
 
         var received = new List<EntityChange>();
         var allReceived = new TaskCompletionSource<bool>();
 
-        // The previous wildcard OnChange(null, ...) form was removed; register the same
-        // delegate for each ChangeType to receive all three events.
         var subscriber = new ChangeSubscriber(NullLogger<ChangeSubscriber>.Instance, new RayTreeMeter());
         ChangeHandlerAsync<Order> recordChange = (change, _) =>
         {
@@ -173,22 +168,20 @@ public class RabbitMqEndToEndTests : IAsyncDisposable
 
         using var cts = new CancellationTokenSource();
         var consumeTask = Task.Run(() => subscriber.ConsumeFromConsumerAsync(consumer, cts.Token));
+        using var tracker = BuildTracker(publisher);
 
-        var tracker = BuildTracker(publisher);
-        await tracker.InitializeAsync();
+        // Act
         await tracker.TrackInsertAsync(new Order { Id = 1, Total = 10m });
         await tracker.TrackUpdateAsync(new Order { Id = 2, Total = 20m });
         await tracker.TrackDeleteAsync(new Order { Id = 3, Total = 30m });
 
+        // Assert
         await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(15));
         Assert.That(received, Has.Count.EqualTo(3));
         Assert.That(received.Select(c => c.EntityId).Order(),
             Is.EqualTo(new[] { "1", "2", "3" }));
 
         cts.Cancel();
-        tracker.Dispose();
-        consumer.Dispose();
-        publisher.Dispose();
     }
 
     public ValueTask DisposeAsync() => _rabbitMq.DisposeAsync();

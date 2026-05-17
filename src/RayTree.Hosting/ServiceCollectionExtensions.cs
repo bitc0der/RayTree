@@ -24,7 +24,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<EntityChangeTracker>(sp =>
         {
-            var builder = new ChangeTrackingBuilder(sp.GetService<ILoggerFactory>());
+            var builder = EntityChangeTracker.Create(sp.GetService<ILoggerFactory>());
             builder.UseMeter(sp.GetRequiredService<RayTreeMeter>());
             configure?.Invoke(builder);
             return builder.Build();

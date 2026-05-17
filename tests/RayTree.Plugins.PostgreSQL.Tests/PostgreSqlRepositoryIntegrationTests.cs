@@ -24,21 +24,20 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     [SetUp]
     public async Task SetUp()
     {
-        var builder = new ChangeTrackingBuilder();
-        builder.ForEntity<TestUser>(e => e
-            .UseRepository(new PostgreSqlRepository<TestUser>(new()
-            {
-                ConnectionString = _postgres.GetConnectionString(), TableName = "test_users"
-            }, NullLoggerFactory.Instance))
-            .UseOutbox(new PostgreSqlOutbox<TestUser>(new()
-            {
-                ConnectionString = _postgres.GetConnectionString(), OutboxTableName = "test_users_outbox"
-            }, NullLoggerFactory.Instance))
-            .UsePublisher(new InMemoryQueue())
-            .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())
-            .UseCompressor(new RayTree.Plugins.Compressors.Gzip.GzipCompressorPlugin()));
-
-        _tracker = builder.Build();
+        _tracker = EntityChangeTracker.Create()
+            .ForEntity<TestUser>(e => e
+                .UseRepository(new PostgreSqlRepository<TestUser>(new()
+                {
+                    ConnectionString = _postgres.GetConnectionString(), TableName = "test_users"
+                }, NullLoggerFactory.Instance))
+                .UseOutbox(new PostgreSqlOutbox<TestUser>(new()
+                {
+                    ConnectionString = _postgres.GetConnectionString(), OutboxTableName = "test_users_outbox"
+                }, NullLoggerFactory.Instance))
+                .UsePublisher(new InMemoryQueue())
+                .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())
+                .UseCompressor(new RayTree.Plugins.Compressors.Gzip.GzipCompressorPlugin()))
+            .Build();
     }
 
     public ValueTask DisposeAsync() => _postgres.DisposeAsync();
@@ -46,11 +45,14 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     [Test]
     public async Task InsertAsync_StoresEntity()
     {
+        // Arrange
         var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
         var user = new TestUser { Id = 1 };
 
+        // Act
         await repo!.InsertAsync(user);
 
+        // Assert
         var stored = await repo.GetByIdAsync([1]);
         Assert.That(stored, Is.Not.Null);
         Assert.That(stored!.Id, Is.EqualTo(1));
@@ -59,12 +61,15 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     [Test]
     public async Task UpdateAsync_UpdatesTimestamp()
     {
+        // Arrange
         var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
         var user = new TestUser { Id = 1 };
         await repo!.InsertAsync(user);
 
+        // Act
         await repo.UpdateAsync(user);
 
+        // Assert
         var stored = await repo.GetByIdAsync([1]);
         Assert.That(stored, Is.Not.Null);
     }
@@ -72,12 +77,15 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     [Test]
     public async Task DeleteAsync_RemovesEntity()
     {
+        // Arrange
         var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
         var user = new TestUser { Id = 1 };
         await repo!.InsertAsync(user);
 
+        // Act
         await repo.DeleteAsync(user);
 
+        // Assert
         var stored = await repo.GetByIdAsync([1]);
         Assert.That(stored, Is.Null);
     }
@@ -85,8 +93,13 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
     [Test]
     public async Task GetByIdAsync_WithNonExistentId_ReturnsNull()
     {
+        // Arrange
         var repo = _tracker.Publisher.GetRepository(typeof(TestUser)) as PostgreSqlRepository<TestUser>;
+
+        // Act
         var result = await repo!.GetByIdAsync([999]);
+
+        // Assert
         Assert.That(result, Is.Null);
     }
 

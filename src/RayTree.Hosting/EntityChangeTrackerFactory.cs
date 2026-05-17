@@ -6,7 +6,7 @@ public class EntityChangeTrackerFactory
 {
     public EntityChangeTracker Create(Action<IChangeTrackingBuilder>? configure = null)
     {
-        var builder = new ChangeTrackingBuilder();
+        var builder = EntityChangeTracker.Create();
         configure?.Invoke(builder);
         return builder.Build();
     }
@@ -14,7 +14,7 @@ public class EntityChangeTrackerFactory
     public async Task<EntityChangeTracker> CreateAsync(Action<IChangeTrackingBuilder>? configure = null,
         CancellationToken cancellationToken = default)
     {
-        var builder = new ChangeTrackingBuilder();
+        var builder = EntityChangeTracker.Create();
         configure?.Invoke(builder);
         return await builder.BuildAsync(cancellationToken);
     }

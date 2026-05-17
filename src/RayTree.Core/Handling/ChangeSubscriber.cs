@@ -219,27 +219,6 @@ public class ChangeSubscriber : IDisposable
             async (envelope, token) => await DispatchAndAcknowledgeAsync(consumer, envelope, token));
     }
 
-    public async Task ConsumeFromQueueAsync<TQueue>(
-        TQueue queue,
-        Func<TQueue, CancellationToken, IAsyncEnumerable<MessageEnvelope>> reader,
-        CancellationToken cancellationToken = default)
-    {
-        // Note: this overload does not have an IQueueConsumer to acknowledge against.
-        // Callers using a custom reader are responsible for any broker acknowledgement
-        // outside of ChangeSubscriber. This stays at-most-once by design — the typed
-        // overload ConsumeFromConsumerAsync(IQueueConsumer) is the path that participates
-        // in the optional Ack/Nack lifecycle.
-        var parallelOptions = new ParallelOptions
-        {
-            MaxDegreeOfParallelism = _options.MaxDegreeOfParallelism,
-            CancellationToken      = cancellationToken
-        };
-        await Parallel.ForEachAsync(
-            reader(queue, cancellationToken),
-            parallelOptions,
-            async (envelope, token) => await ProcessMessageAsync(envelope, token));
-    }
-
     /// <summary>
     /// Shared-mode dispatch wrapper: invokes <see cref="ProcessMessageAsync"/> and then
     /// calls <see cref="IQueueConsumer.AcknowledgeAsync"/> on success, or
@@ -498,7 +477,7 @@ public class ChangeSubscriber : IDisposable
         if (DateTime.UtcNow - _lastDedupCleanup < _options.DeduplicationCleanupInterval) return;
 
         // Only one concurrent caller runs cleanup; others skip rather than queue.
-        if (!_cleanupGate.Wait(0)) return;
+        if (!await _cleanupGate.WaitAsync(millisecondsTimeout: 0, cancellationToken)) return;
         try
         {
             // Double-check after acquiring so a concurrent caller that already ran doesn't repeat it.

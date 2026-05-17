@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
@@ -20,13 +21,16 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     /// <summary>The meter used by this tracker's publisher and subscriber.</summary>
     public RayTreeMeter Meter => _meter;
 
+    public static IChangeTrackingBuilder Create(ILoggerFactory? loggerFactory = null)
+        => new ChangeTrackingBuilder(loggerFactory);
+
     /// <summary>
     /// Constructs a tracker. When <paramref name="ownsMeter"/> is <c>true</c>,
     /// <see cref="Dispose"/> also disposes <paramref name="meter"/>. Builders that create
     /// the meter on the caller's behalf should pass <c>ownsMeter: true</c>; callers that
     /// inject their own meter via <c>UseMeter</c> should pass <c>false</c>.
     /// </summary>
-    public EntityChangeTracker(
+    internal EntityChangeTracker(
         ChangePublisher publisher,
         ChangeSubscriber? subscriber = null,
         RayTreeMeter? meter = null,

@@ -46,14 +46,13 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
         // Initialize outbox directly: creates table + trigger without starting background publisher services
         await _outbox.InitializeAsync();
 
-        var builder = new ChangeTrackingBuilder();
-        builder.ForEntity<TestEntity>(e => e
-            .UseOutbox(_outbox)
-            .UsePublisher(_queue)
-            .UseSerializer(new JsonSerializerPlugin())
-            .UseCompressor(new GzipCompressorPlugin()));
-
-        _tracker = builder.Build();
+        _tracker = EntityChangeTracker.Create()
+            .ForEntity<TestEntity>(e => e
+                .UseOutbox(_outbox)
+                .UsePublisher(_queue)
+                .UseSerializer(new JsonSerializerPlugin())
+                .UseCompressor(new GzipCompressorPlugin()))
+            .Build();
 
         _publisher = new NotificationBasedPublisher(_tracker.Publisher,
             new NotificationBasedPublisherOptions
@@ -90,7 +89,12 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
     [Test]
     public async Task StartAsync_SetsIsRunning_StopAsync_ClearsIt()
     {
+        // Arrange — setup in [SetUp]
+
+        // Act
         await _publisher.StartAsync();
+
+        // Assert
         Assert.That(_publisher.IsRunning, Is.True);
 
         await _publisher.StopAsync();
@@ -100,14 +104,16 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
     [Test]
     public async Task FallbackPolling_DeliversUnpublishedChange_ToQueue()
     {
+        // Arrange
         var change = CreateChange(1);
         await _outbox.WriteAsync(change);
-
         await _publisher.StartAsync();
 
+        // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var received = await _queue.Reader.ReadAsync(cts.Token);
 
+        // Assert
         Assert.That(received.EntityId, Is.EqualTo("1"));
         Assert.That(received.ChangeType, Is.EqualTo(ChangeType.Insert));
     }
@@ -115,27 +121,32 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
     [Test]
     public async Task FallbackPolling_DoesNotRedeliver_AlreadyPublishedChange()
     {
+        // Arrange
         var change = CreateChange(2);
         await _outbox.WriteAsync(change);
         await _outbox.MarkPublishedAsync(change.Id);
-
         await _publisher.StartAsync();
+
+        // Act
         await Task.Delay(700); // > 2× fallback interval
 
+        // Assert
         Assert.That(_queue.Reader.TryRead(out _), Is.False);
     }
 
     [Test]
     public async Task FallbackPolling_MarksChangePublished_AfterDelivery()
     {
+        // Arrange
         var change = CreateChange(3);
         await _outbox.WriteAsync(change);
-
         await _publisher.StartAsync();
 
+        // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await _queue.Reader.ReadAsync(cts.Token);
 
+        // Assert
         // Poll until MarkPublishedAsync completes the DB write (runs after PublishAsync in the same loop iteration)
         var deadline = DateTime.UtcNow.AddSeconds(5);
         EntityChange<TestEntity>? stored = null;
@@ -152,23 +163,27 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
     [Test]
     public async Task StopAsync_PreventsDelivery_OfSubsequentWrites()
     {
+        // Arrange
         await _publisher.StartAsync();
         await _publisher.StopAsync();
 
+        // Act
         await _outbox.WriteAsync(CreateChange(4));
         await Task.Delay(700); // > 2× fallback interval
 
+        // Assert
         Assert.That(_queue.Reader.TryRead(out _), Is.False);
     }
 
     [Test]
     public async Task FallbackPolling_DeliversBatch_OfMultipleChanges()
     {
+        // Arrange
         for (var i = 1; i <= 5; i++)
             await _outbox.WriteAsync(CreateChange(i));
-
         await _publisher.StartAsync();
 
+        // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var received = new List<MessageEnvelope>();
         for (var i = 0; i < 5; i++)
@@ -177,6 +192,7 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
             received.Add(envelope);
         }
 
+        // Assert
         Assert.That(received, Has.Count.EqualTo(5));
         Assert.That(received.Select(c => c.EntityId).Order(),
             Is.EqualTo(new[] { "1", "2", "3", "4", "5" }));
