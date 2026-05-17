@@ -2,9 +2,11 @@
   <PropertyGroup>
     <Description>Kafka queue publisher plugin for entity change distribution</Description>
     <PackageTags>kafka;change-tracking;queue</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\"/>
     <ProjectReference Include="..\RayTree.Core\RayTree.Core.csproj"/>
   </ItemGroup>
 
