@@ -114,7 +114,7 @@ builder.ForEntity<Product>(e => e
 var tracker = builder.Build(); // creates table + trigger
 
 var notificationPublisher = new NotificationBasedPublisher(
-    tracker.Publisher,
+    tracker,
     new NotificationBasedPublisherOptions
     {
         ConnectionString        = connectionString,
@@ -381,7 +381,6 @@ When using the `.UseKafka(...)` / `.UseRabbitMq(...)` extension methods inside a
 | `KafkaConsumer` | `Error` | Fatal Kafka error |
 | `KafkaConsumer` | `Warning` | Consume error; envelope parse failure |
 | `RabbitMqConsumer` | `Warning` | Message processing error (before requeue) |
-| `OutboxCleanupService` | `Information` | Cleanup run total deleted count |
 
 ## Observability — OpenTelemetry Metrics
 

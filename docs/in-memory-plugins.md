@@ -114,27 +114,22 @@ public async Task ChangeTracking_Works_InMemory()
     var queue      = new InMemoryQueue();
     var serializer = new JsonSerializerPlugin();
     var compressor = new NoOpCompressorPlugin();
+    var received   = new TaskCompletionSource<EntityChange<Product>>();
 
-    // Publisher side
     var tracker = new ChangeTrackingBuilder()
         .ForEntity<Product>(e => e
             .UseOutbox(new InMemoryOutbox())
             .UsePublisher(queue)
             .UseSerializer(serializer)
-            .UseCompressor(compressor))
+            .UseCompressor(compressor)
+            .UseConsumer(queue)
+            .OnInsert(async (change, ct) => received.TrySetResult(change)))
         .UsePublisherOptions(opt => opt.PollingInterval = TimeSpan.FromMilliseconds(50))
         .Build();
 
-    // Subscriber side — register handler on the unified tracker
-    var received = new TaskCompletionSource<EntityChange<Product>>();
-    tracker.Subscriber!.OnChange<Product>(ChangeType.Insert, (change, _) =>
-    {
-        received.TrySetResult(change);
-        return Task.CompletedTask;
-    });
-
-    // In a .NET Generic Host app, ChangeTrackingHostedService starts and stops
-    // all consumer loops automatically — no manual loop management required.
+    using var cts = new CancellationTokenSource();
+    await tracker.StartAsync(cts.Token);   // starts consumer loop
+    // In a .NET Generic Host app, ChangeTrackingHostedService calls StartAsync automatically.
 
     await tracker.TrackInsertAsync(new Product { Id = 1, Name = "Widget" });
 
@@ -142,6 +137,8 @@ public async Task ChangeTracking_Works_InMemory()
     Assert.That(change.EntityId,      Is.EqualTo("1"));
     Assert.That(change.State!.Name,   Is.EqualTo("Widget"));
 
+    cts.Cancel();
+    await tracker.StopAsync();
     tracker.Dispose();
 }
 ```

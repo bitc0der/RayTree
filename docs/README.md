@@ -417,23 +417,25 @@ Reduce this value if you see lock contention or WAL pressure during cleanup on l
 | `Debug` | No stale unpublished rows found |
 | `Error` | Rotation failed (isolated — publish loop continues) |
 
-### Manual rotation — `OutboxCleanupService`
+### Manual rotation
 
-`OutboxCleanupService` is available as a singleton in the DI container for ad-hoc or scheduled cleanup outside the normal poll cycle (e.g. a maintenance endpoint or a Hangfire job):
+Call `tracker.RunCleanupAsync(retentionPeriod, ct)` directly for ad-hoc or scheduled cleanup outside the normal poll cycle (e.g. a maintenance endpoint or a Hangfire job):
 
 ```csharp
-public class MaintenanceController(OutboxCleanupService cleanup) : ControllerBase
+public class MaintenanceController(
+    EntityChangeTracker tracker,
+    IOptions<OutboxPublisherOptions> options) : ControllerBase
 {
     [HttpPost("outbox/rotate")]
     public async Task<IActionResult> Rotate(CancellationToken ct)
     {
-        var deleted = await cleanup.RunCleanupAsync(ct);
+        var deleted = await tracker.RunCleanupAsync(options.Value.CleanupRetentionPeriod, ct);
         return Ok(new { deleted });
     }
 }
 ```
 
-`RunCleanupAsync` calls `CleanupPublishedAsync` on every registered outbox and returns the total number of rows deleted. It uses the same `CleanupRetentionPeriod` that was configured on `OutboxPublisherOptions`.
+`RunCleanupAsync` calls `CleanupPublishedAsync` on every registered outbox and returns the total number of rows deleted.
 
 ## Cleanup
 

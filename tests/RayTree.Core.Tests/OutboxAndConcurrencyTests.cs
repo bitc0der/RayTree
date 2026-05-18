@@ -13,52 +13,6 @@ using RayTree.Plugins;
 
 namespace RayTree.Core.Tests;
 
-public class OutboxCleanupServiceTests
-{
-    [Test]
-    public async Task RunCleanupAsync_CallsCleanup_OnAllOutboxes()
-    {
-        var outbox1 = new Mock<IOutbox>();
-        outbox1.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(5);
-
-        var outbox2 = new Mock<IOutbox>();
-        outbox2.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(3);
-
-        var service = new OutboxCleanupService(new[] { outbox1.Object, outbox2.Object }, NullLogger<OutboxCleanupService>.Instance, TimeSpan.FromDays(7));
-
-        var deleted = await service.RunCleanupAsync();
-
-        Assert.That(deleted, Is.EqualTo(8));
-        outbox1.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.Once);
-        outbox2.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Test]
-    public async Task RunCleanupAsync_ReturnsZero_WhenNoOutboxes()
-    {
-        var service = new OutboxCleanupService(Array.Empty<IOutbox>(), NullLogger<OutboxCleanupService>.Instance, TimeSpan.FromDays(7));
-
-        var deleted = await service.RunCleanupAsync();
-
-        Assert.That(deleted, Is.EqualTo(0));
-    }
-
-    [Test]
-    public async Task RunCleanupAsync_UsesDefaultRetention_WhenNotSpecified()
-    {
-        var outbox = new Mock<IOutbox>();
-        outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(0);
-
-        var service = new OutboxCleanupService(new[] { outbox.Object }, NullLogger<OutboxCleanupService>.Instance);
-
-        await service.RunCleanupAsync();
-
-        outbox.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.Once);
-    }
-}
 
 public class OutboxPublisherServiceTests
 {

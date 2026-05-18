@@ -126,7 +126,7 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
             if (entityType == null)
                 continue;
 
-            var outbox = _tracker.Publisher.GetOutbox(entityType);
+            var outbox = _tracker.GetOutbox(entityType);
 
             await WriteTypedAsync(outbox, change, entityType, cancellationToken);
         }

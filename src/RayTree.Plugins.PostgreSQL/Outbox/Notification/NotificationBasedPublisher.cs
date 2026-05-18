@@ -10,6 +10,7 @@ using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Telemetry;
+using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.PostgreSQL.Outbox.Notification;
 
@@ -37,15 +38,16 @@ public class NotificationBasedPublisher : IDisposable
         .GetMethod(nameof(SerializeCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
     public NotificationBasedPublisher(
-        ChangePublisher publisher,
+        EntityChangeTracker tracker,
         NotificationBasedPublisherOptions options,
         ILoggerFactory loggerFactory)
     {
-        _publisher             = publisher    ?? throw new ArgumentNullException(nameof(publisher));
+        ArgumentNullException.ThrowIfNull(tracker);
+        _publisher             = tracker.Publisher;
         _options               = options      ?? throw new ArgumentNullException(nameof(options));
         _logger                = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
                                      .CreateLogger<NotificationBasedPublisher>();
-        _meter                 = publisher.Meter;   // shared with the ChangePublisher that owns outboxes
+        _meter                 = tracker.Publisher.Meter;
         _notificationSemaphore = new SemaphoreSlim(options.MaxConcurrentNotifications,
                                                    options.MaxConcurrentNotifications);
     }

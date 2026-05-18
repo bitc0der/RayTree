@@ -54,7 +54,7 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
                 .UseCompressor(new GzipCompressorPlugin()))
             .Build();
 
-        _publisher = new NotificationBasedPublisher(_tracker.Publisher,
+        _publisher = new NotificationBasedPublisher(_tracker,
             new NotificationBasedPublisherOptions
             {
                 ConnectionString = _postgres.GetConnectionString(),

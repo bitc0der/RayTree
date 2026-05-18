@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
+using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Tracking;
@@ -15,8 +16,8 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     private bool _disposed;
     private List<Task>? _consumeTasks;
 
-    public ChangePublisher Publisher => _publisher;
-    public ChangeSubscriber? Subscriber => _subscriber;
+    internal ChangePublisher Publisher => _publisher;
+    internal ChangeSubscriber? Subscriber => _subscriber;
 
     /// <summary>The meter used by this tracker's publisher and subscriber.</summary>
     public RayTreeMeter Meter => _meter;
@@ -54,6 +55,18 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
             foreach (var (_, consumer) in _subscriber.IsolatedQueues)
                 await consumer.InitializeAsync(cancellationToken);
         }
+    }
+
+    internal IOutbox GetOutbox(Type entityType) => _publisher.GetOutbox(entityType);
+
+    public async Task<int> RunCleanupAsync(
+        TimeSpan retentionPeriod,
+        CancellationToken cancellationToken = default)
+    {
+        var total = 0;
+        foreach (var outbox in _publisher.GetOutboxes().Values)
+            total += await outbox.CleanupPublishedAsync(retentionPeriod, cancellationToken);
+        return total;
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
