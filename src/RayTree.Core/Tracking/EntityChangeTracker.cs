@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
@@ -14,7 +15,6 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     private readonly RayTreeMeter _meter;
     private readonly bool _ownsMeter;
     private bool _disposed;
-    private List<Task>? _consumeTasks;
 
     internal ChangePublisher Publisher => _publisher;
     internal ChangeSubscriber? Subscriber => _subscriber;
@@ -35,9 +35,10 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         ChangePublisher publisher,
         ChangeSubscriber? subscriber = null,
         RayTreeMeter? meter = null,
-        bool ownsMeter = false)
+        bool ownsMeter = false,
+        ILoggerFactory? loggerFactory = null)
     {
-        _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
+        _publisher  = publisher ?? throw new ArgumentNullException(nameof(publisher));
         _subscriber = subscriber;
         _meter      = meter ?? publisher.Meter;
         _ownsMeter  = ownsMeter;
@@ -48,13 +49,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         await _publisher.InitializeAsync(cancellationToken);
 
         if (_subscriber != null)
-        {
-            foreach (var (_, consumer) in _subscriber.Queues)
-                await consumer.InitializeAsync(cancellationToken);
-
-            foreach (var (_, consumer) in _subscriber.IsolatedQueues)
-                await consumer.InitializeAsync(cancellationToken);
-        }
+            await _subscriber.InitializeAsync(cancellationToken);
     }
 
     internal IOutbox GetOutbox(Type entityType) => _publisher.GetOutbox(entityType);
@@ -70,37 +65,10 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
-    {
-        if (_subscriber is null) return Task.CompletedTask;
+        => _subscriber?.StartAsync(cancellationToken) ?? Task.CompletedTask;
 
-        _consumeTasks = [];
-
-        foreach (var (_, consumer) in _subscriber.Queues)
-        {
-            var c = consumer;
-            _consumeTasks.Add(Task.Run(
-                () => _subscriber.ConsumeFromConsumerAsync(c, cancellationToken),
-                cancellationToken));
-        }
-
-        foreach (var (key, consumer) in _subscriber.IsolatedQueues)
-        {
-            var k = key;
-            var c = consumer;
-            _consumeTasks.Add(Task.Run(
-                () => _subscriber.ConsumeIsolatedFromConsumerAsync(c, k.EntityType, k.HandlerName, cancellationToken),
-                cancellationToken));
-        }
-
-        return Task.CompletedTask;
-    }
-
-    public async Task StopAsync()
-    {
-        if (_consumeTasks is null) return;
-        try { await Task.WhenAll(_consumeTasks); }
-        catch (OperationCanceledException) { }
-    }
+    public Task StopAsync()
+        => _subscriber?.StopAsync() ?? Task.CompletedTask;
 
     public async Task TrackChangeAsync<TEntity>(
         TEntity entity,

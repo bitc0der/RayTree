@@ -375,7 +375,8 @@ When using the `.UseKafka(...)` / `.UseRabbitMq(...)` extension methods inside a
 | `ChangeSubscriber` | `Warning` | Handler retry attempt |
 | `ChangeSubscriber` | `Error` | Handler dropped (SkipOnFailure) |
 | `ChangePublisher` | `Information` | Publisher service registered per entity |
-| `ChangeTrackingHostedService` | `Information` | Consumer loop start / service stop |
+| `EntityChangeTracker` | `Information` | Consumer loop start per entity type / handler (in `StartAsync`) |
+| `ChangeTrackingHostedService` | `Information` | Service stop |
 | `NotificationBasedPublisher` | `Information` | Start / stop |
 | `NotificationBasedPublisher` | `Warning` | Listen-loop error; fallback-poll error; per-change publish failure |
 | `KafkaConsumer` | `Error` | Fatal Kafka error |

@@ -47,7 +47,7 @@ public class NotificationBasedPublisher : IDisposable
         _options               = options      ?? throw new ArgumentNullException(nameof(options));
         _logger                = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
                                      .CreateLogger<NotificationBasedPublisher>();
-        _meter                 = tracker.Publisher.Meter;
+        _meter                 = _publisher.Meter;
         _notificationSemaphore = new SemaphoreSlim(options.MaxConcurrentNotifications,
                                                    options.MaxConcurrentNotifications);
     }
