@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
-using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Telemetry;
 
 namespace RayTree.Core.Tracking;
@@ -14,6 +13,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     private readonly RayTreeMeter _meter;
     private readonly bool _ownsMeter;
     private bool _disposed;
+    private List<Task>? _consumeTasks;
 
     public ChangePublisher Publisher => _publisher;
     public ChangeSubscriber? Subscriber => _subscriber;
@@ -42,7 +42,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         _ownsMeter  = ownsMeter;
     }
 
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
+    internal async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         await _publisher.InitializeAsync(cancellationToken);
 
@@ -50,14 +50,44 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         {
             foreach (var (_, consumer) in _subscriber.Queues)
                 await consumer.InitializeAsync(cancellationToken);
+
+            foreach (var (_, consumer) in _subscriber.IsolatedQueues)
+                await consumer.InitializeAsync(cancellationToken);
         }
     }
 
-    public Task ConsumeFromConsumerAsync(IQueueConsumer consumer, CancellationToken cancellationToken = default)
-        => _subscriber!.ConsumeFromConsumerAsync(consumer, cancellationToken);
+    public Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        if (_subscriber is null) return Task.CompletedTask;
 
-    public Task ProcessMessageAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
-        => _subscriber!.ProcessMessageAsync(envelope, cancellationToken);
+        _consumeTasks = [];
+
+        foreach (var (_, consumer) in _subscriber.Queues)
+        {
+            var c = consumer;
+            _consumeTasks.Add(Task.Run(
+                () => _subscriber.ConsumeFromConsumerAsync(c, cancellationToken),
+                cancellationToken));
+        }
+
+        foreach (var (key, consumer) in _subscriber.IsolatedQueues)
+        {
+            var k = key;
+            var c = consumer;
+            _consumeTasks.Add(Task.Run(
+                () => _subscriber.ConsumeIsolatedFromConsumerAsync(c, k.EntityType, k.HandlerName, cancellationToken),
+                cancellationToken));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync()
+    {
+        if (_consumeTasks is null) return;
+        try { await Task.WhenAll(_consumeTasks); }
+        catch (OperationCanceledException) { }
+    }
 
     public async Task TrackChangeAsync<TEntity>(
         TEntity entity,

@@ -87,7 +87,7 @@ public class EntityChangeTrackerMetricsTests
         // Start the consumer loop in the background; the test asserts the full pipeline
         // (track → outbox → publish → consume → deserialize → handler dispatch) runs without
         // any instrumentation-related exception when no listener is attached.
-        _ = Task.Run(() => tracker.ConsumeFromConsumerAsync(queue, consumerCts.Token), consumerCts.Token);
+        _ = Task.Run(() => tracker.Subscriber!.ConsumeFromConsumerAsync(queue, consumerCts.Token), consumerCts.Token);
 
         Assert.DoesNotThrowAsync(async () =>
         {
