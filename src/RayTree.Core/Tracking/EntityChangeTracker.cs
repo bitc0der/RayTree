@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Reflection;
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
@@ -9,6 +11,8 @@ namespace RayTree.Core.Tracking;
 
 public sealed class EntityChangeTracker : IEntityChangeTracker
 {
+    private static readonly ConcurrentDictionary<Type, PropertyInfo> IdProperties = new();
+
     private readonly ChangePublisher _publisher;
     private readonly ChangeSubscriber? _subscriber;
     private readonly RayTreeMeter _meter;
@@ -68,84 +72,38 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     public Task StopAsync()
         => _subscriber?.StopAsync() ?? Task.CompletedTask;
 
-    public async Task TrackChangeAsync<TEntity>(
+    public Task TrackChangeAsync<TEntity>(
         TEntity entity,
         ChangeType changeType,
         CancellationToken cancellationToken = default)
         where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(entity);
+        => TrackTypedAsync(entity, changeType, cancellationToken);
 
-        var change = new EntityChange<TEntity>
-        {
-            EntityType = typeof(TEntity).FullName!,
-            EntityId = GetEntityId(entity),
-            ChangeType = changeType,
-            State = entity
-        };
-
-        await TrackChangeAsync(change, cancellationToken);
-    }
-
-    public async Task<EntityChange<TEntity>> TrackInsertAsync<TEntity>(
+    public Task<EntityChange<TEntity>> TrackInsertAsync<TEntity>(
         TEntity entity,
         CancellationToken cancellationToken = default)
         where TEntity : class
-    {
-        var change = new EntityChange<TEntity>
-        {
-            EntityType = typeof(TEntity).FullName!,
-            EntityId = GetEntityId(entity),
-            ChangeType = ChangeType.Insert,
-            State = entity
-        };
+        => TrackTypedAsync(entity, ChangeType.Insert, cancellationToken);
 
-        await TrackChangeAsync(change, cancellationToken);
-
-        return change;
-    }
-
-    public async Task<EntityChange<TEntity>> TrackUpdateAsync<TEntity>(
+    public Task<EntityChange<TEntity>> TrackUpdateAsync<TEntity>(
         TEntity entity,
         CancellationToken cancellationToken = default)
         where TEntity : class
-    {
-        var change = new EntityChange<TEntity>
-        {
-            EntityType = typeof(TEntity).FullName!,
-            EntityId = GetEntityId(entity),
-            ChangeType = ChangeType.Update,
-            State = entity
-        };
+        => TrackTypedAsync(entity, ChangeType.Update, cancellationToken);
 
-        await TrackChangeAsync(change, cancellationToken);
-
-        return change;
-    }
-
-    public async Task<EntityChange<TEntity>> TrackDeleteAsync<TEntity>(
+    public Task<EntityChange<TEntity>> TrackDeleteAsync<TEntity>(
         TEntity entity,
         CancellationToken cancellationToken = default)
         where TEntity : class
-    {
-        var change = new EntityChange<TEntity>
-        {
-            EntityType = typeof(TEntity).FullName!,
-            EntityId = GetEntityId(entity),
-            ChangeType = ChangeType.Delete,
-            State = entity
-        };
-
-        await TrackChangeAsync(change, cancellationToken);
-
-        return change;
-    }
+        => TrackTypedAsync(entity, ChangeType.Delete, cancellationToken);
 
     public async Task TrackChangeAsync<TEntity>(
         EntityChange<TEntity> change,
         CancellationToken cancellationToken = default)
         where TEntity : class
     {
+        ArgumentNullException.ThrowIfNull(change);
+
         var outbox = _publisher.GetOutbox(typeof(TEntity));
         await outbox.WriteAsync(change, cancellationToken);
 
@@ -154,12 +112,34 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
             RayTreeMeter.ChangeTag(change.ChangeType));
     }
 
+    private async Task<EntityChange<TEntity>> TrackTypedAsync<TEntity>(
+        TEntity entity,
+        ChangeType changeType,
+        CancellationToken cancellationToken)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+
+        var change = new EntityChange<TEntity>
+        {
+            EntityType = typeof(TEntity).FullName!,
+            EntityId   = GetEntityId(entity),
+            ChangeType = changeType,
+            State      = entity
+        };
+
+        await TrackChangeAsync(change, cancellationToken);
+        return change;
+    }
+
     private static string GetEntityId<TEntity>(TEntity entity)
     {
-        var idProperty = typeof(TEntity).GetProperty("Id") ??
-                         throw new InvalidOperationException($"Entity {typeof(TEntity).Name} must have an Id property");
+        var idProperty = IdProperties.GetOrAdd(typeof(TEntity), static t =>
+            t.GetProperty("Id") ??
+            throw new InvalidOperationException($"Entity {t.Name} must have an Id property"));
 
-        return idProperty.GetValue(entity)?.ToString() ?? throw new InvalidOperationException("Id cannot be null");
+        return idProperty.GetValue(entity)?.ToString()
+            ?? throw new InvalidOperationException("Id cannot be null");
     }
 
     public void Dispose()

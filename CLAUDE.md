@@ -136,7 +136,7 @@ All durations are emitted in seconds (`s`) per OTel semantic conventions; bytes 
 
 See `AGENTS.md` for all coding rules, design principles, testing conventions, nullability discipline, and AI agent workflow guidelines. Key `.editorconfig` conventions (naming, braces, using order) are summarized below; AGENTS.md is the canonical source.
 
-- Private/internal fields: `_camelCase`; static: `s_PascalCase`; constants: `PascalCase`
+- Private/internal fields: `_camelCase`; static: `PascalCase`; constants: `PascalCase`
 - Expression-bodied members for single-expression members
 - `using` outside namespace; System namespaces first
 - Braces on a new line
