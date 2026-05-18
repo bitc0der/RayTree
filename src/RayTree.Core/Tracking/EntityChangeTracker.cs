@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
@@ -35,8 +34,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         ChangePublisher publisher,
         ChangeSubscriber? subscriber = null,
         RayTreeMeter? meter = null,
-        bool ownsMeter = false,
-        ILoggerFactory? loggerFactory = null)
+        bool ownsMeter = false)
     {
         _publisher  = publisher ?? throw new ArgumentNullException(nameof(publisher));
         _subscriber = subscriber;

@@ -78,7 +78,7 @@ public class IsolatedHandlerDispatchTests
         subscriber.RegisterIsolatedConsumer<Order>("read-model", consumerA);
         subscriber.RegisterIsolatedConsumer<Order>("notifier",   consumerB);
 
-        var keys = subscriber.IsolatedQueues.Keys.ToList();
+        var keys = subscriber.IsolatedQueueKeys.ToList();
         Assert.That(keys, Has.Count.EqualTo(2));
         Assert.That(keys, Contains.Item(new EntityHandlerKey(typeof(Order), "read-model")));
         Assert.That(keys, Contains.Item(new EntityHandlerKey(typeof(Order), "notifier")));
