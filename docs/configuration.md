@@ -184,10 +184,7 @@ var subscriber = new ChangeSubscriberBuilder()
         .OnUpdate(async (change, ct) => { /* ... */ })
         .OnDelete(async (change, ct) => { /* ... */ }))
     .Build();
-
-await subscriber.ConsumeFromConsumerAsync(myConsumer, cancellationToken);
 ```
-
 ### Multiple entities with global defaults
 
 Set a serializer and compressor once globally, then register each entity with only the overrides it needs:

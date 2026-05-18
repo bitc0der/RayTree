@@ -34,7 +34,7 @@ options.UseNotificationChannel("products_notify")
        .WithFallbackPolling(TimeSpan.FromSeconds(30));
 ```
 
-When `UseNotificationChannel = true`, calling `outbox.InitializeAsync()` (or `tracker.InitializeAsync()`) automatically creates the trigger function and attaches the trigger to the outbox table — no manual SQL required.
+When `UseNotificationChannel = true`, calling `Build()` / `BuildAsync()` automatically creates the trigger function and attaches the trigger to the outbox table — no manual SQL required.
 
 ### Step 2 — Create and start NotificationBasedPublisher
 
@@ -192,7 +192,7 @@ NOTIFY products_notify, '{"test": true}';
 ## Troubleshooting
 
 **Not receiving notifications**
-- Check that `UseNotificationChannel = true` was set before `InitializeAsync()` was called
+- Check that `UseNotificationChannel = true` was set before calling `Build()` / `BuildAsync()`
 - Verify the channel name matches between the outbox options and `NotificationBasedPublisherOptions.ChannelName`
 - Confirm the trigger exists with the query above
 - Check PostgreSQL logs for trigger execution errors

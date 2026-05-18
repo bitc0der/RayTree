@@ -125,22 +125,16 @@ public async Task ChangeTracking_Works_InMemory()
         .UsePublisherOptions(opt => opt.PollingInterval = TimeSpan.FromMilliseconds(50))
         .Build();
 
-    // Subscriber side
+    // Subscriber side — register handler on the unified tracker
     var received = new TaskCompletionSource<EntityChange<Product>>();
-    var subscriber = new ChangeSubscriberBuilder()
-        .UseSerializer(serializer)
-        .UseCompressor(compressor)
-        .ForEntity<Product>(e => e
-            .UseInMemoryQueue(queue)
-            .OnChange(ChangeType.Insert, (change, _) =>
-            {
-                received.TrySetResult(change);
-                return Task.CompletedTask;
-            }))
-        .Build();
+    tracker.Subscriber!.OnChange<Product>(ChangeType.Insert, (change, _) =>
+    {
+        received.TrySetResult(change);
+        return Task.CompletedTask;
+    });
 
-    using var cts     = new CancellationTokenSource();
-    var consumeTask   = Task.Run(() => subscriber.ConsumeFromConsumerAsync(queue, cts.Token));
+    // In a .NET Generic Host app, ChangeTrackingHostedService starts and stops
+    // all consumer loops automatically — no manual loop management required.
 
     await tracker.TrackInsertAsync(new Product { Id = 1, Name = "Widget" });
 
@@ -148,7 +142,6 @@ public async Task ChangeTracking_Works_InMemory()
     Assert.That(change.EntityId,      Is.EqualTo("1"));
     Assert.That(change.State!.Name,   Is.EqualTo("Widget"));
 
-    cts.Cancel();
     tracker.Dispose();
 }
 ```

@@ -4,7 +4,7 @@ RayTree automatically initializes and migrates database schemas when you call `B
 
 ## Automatic Initialization and Migration
 
-Calling `Build()` / `BuildAsync()` runs `tracker.InitializeAsync()`, which calls `InitializeAsync()` on every registered outbox and repository. Each call inspects the live database and:
+Calling `Build()` / `BuildAsync()` automatically initializes every registered outbox and repository. Each one inspects the live database and:
 
 - **Creates the table** if it does not exist (`CREATE TABLE IF NOT EXISTS` with all columns and indexes in one statement).
 - **Migrates the table** if it already exists — adds missing columns, syncs indexes, and logs warnings for anything that requires manual attention.
@@ -20,13 +20,13 @@ var tracker = await builder.BuildAsync(); // async
 
 ## Fresh Table Path
 
-When the table has never been created, `InitializeAsync` issues a single `CREATE TABLE IF NOT EXISTS` statement that includes all columns and all indexes. The `IF NOT EXISTS` guard is retained as a safety net for concurrent startup scenarios (e.g. two application instances starting at the same time).
+When the table has never been created, a single `CREATE TABLE IF NOT EXISTS` statement is issued that includes all columns and all indexes. The `IF NOT EXISTS` guard is retained as a safety net for concurrent startup scenarios (e.g. two application instances starting at the same time).
 
 ---
 
 ## Existing Table Path (Schema Migration)
 
-When the table already exists, `InitializeAsync` runs two diff passes every time the application starts.
+When the table already exists, two diff passes run automatically every time the application starts.
 
 ### Column diff
 
@@ -55,7 +55,7 @@ The desired index set is compared against the live `pg_index` catalog. Each inde
 
 ### Adding a property to an entity
 
-Add the property to your entity class. On the next startup, `InitializeAsync` detects the missing `state_*` column and adds it automatically.
+Add the property to your entity class. On the next startup, the missing `state_*` column is detected and added automatically.
 
 ```csharp
 public class Product
@@ -66,7 +66,7 @@ public class Product
 }
 ```
 
-> **NOT NULL without a default on a non-empty table** — if the new property has `[Required]` (or is a non-nullable value type) and the outbox table already contains rows, `InitializeAsync` throws `InvalidOperationException` with a message like:
+> **NOT NULL without a default on a non-empty table** — if the new property has `[Required]` (or is a non-nullable value type) and the outbox table already contains rows, an `InvalidOperationException` is thrown on startup with a message like:
 > ```
 > Cannot add column 'state_description': it is NOT NULL with no default and table
 > 'product_outbox' already has rows. Add a DEFAULT or migrate manually.
@@ -75,7 +75,7 @@ public class Product
 
 ### Removing a property from an entity
 
-Remove the property from your entity class. The corresponding `state_*` column remains in the database — `InitializeAsync` logs a `Warning` and leaves it alone. Drop it manually when you are ready:
+Remove the property from your entity class. The corresponding `state_*` column remains in the database — a `Warning` is logged on startup and it is left alone. Drop it manually when you are ready:
 
 ```sql
 ALTER TABLE product_outbox DROP COLUMN state_description;
@@ -83,7 +83,7 @@ ALTER TABLE product_outbox DROP COLUMN state_description;
 
 ### Changing a property type
 
-Change the C# type. `InitializeAsync` detects the mismatch between the live column type and the expected type and logs a `Warning`. Type changes must be applied manually:
+Change the C# type. The mismatch between the live column type and the expected type is detected on startup and a `Warning` is logged. Type changes must be applied manually:
 
 ```sql
 ALTER TABLE product_outbox ALTER COLUMN state_price TYPE NUMERIC(18,4);
