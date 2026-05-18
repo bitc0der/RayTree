@@ -125,6 +125,6 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
         meter.RegisterPendingGauge(() =>
             publisher.GetOutboxes().Select(kvp => (kvp.Key, kvp.Value)));
 
-        return new EntityChangeTracker(publisher, subscriber, meter, ownsMeter);
+        return new EntityChangeTracker(publisher, subscriber, meter, ownsMeter: ownsMeter);
     }
 }

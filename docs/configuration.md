@@ -114,7 +114,7 @@ builder.ForEntity<Product>(e => e
 var tracker = builder.Build(); // creates table + trigger
 
 var notificationPublisher = new NotificationBasedPublisher(
-    tracker.Publisher,
+    tracker,
     new NotificationBasedPublisherOptions
     {
         ConnectionString        = connectionString,
@@ -184,10 +184,7 @@ var subscriber = new ChangeSubscriberBuilder()
         .OnUpdate(async (change, ct) => { /* ... */ })
         .OnDelete(async (change, ct) => { /* ... */ }))
     .Build();
-
-await subscriber.ConsumeFromConsumerAsync(myConsumer, cancellationToken);
 ```
-
 ### Multiple entities with global defaults
 
 Set a serializer and compressor once globally, then register each entity with only the overrides it needs:
@@ -378,13 +375,13 @@ When using the `.UseKafka(...)` / `.UseRabbitMq(...)` extension methods inside a
 | `ChangeSubscriber` | `Warning` | Handler retry attempt |
 | `ChangeSubscriber` | `Error` | Handler dropped (SkipOnFailure) |
 | `ChangePublisher` | `Information` | Publisher service registered per entity |
-| `ChangeTrackingHostedService` | `Information` | Consumer loop start / service stop |
+| `EntityChangeTracker` | `Information` | Consumer loop start per entity type / handler (in `StartAsync`) |
+| `ChangeTrackingHostedService` | `Information` | Service stop |
 | `NotificationBasedPublisher` | `Information` | Start / stop |
 | `NotificationBasedPublisher` | `Warning` | Listen-loop error; fallback-poll error; per-change publish failure |
 | `KafkaConsumer` | `Error` | Fatal Kafka error |
 | `KafkaConsumer` | `Warning` | Consume error; envelope parse failure |
 | `RabbitMqConsumer` | `Warning` | Message processing error (before requeue) |
-| `OutboxCleanupService` | `Information` | Cleanup run total deleted count |
 
 ## Observability — OpenTelemetry Metrics
 

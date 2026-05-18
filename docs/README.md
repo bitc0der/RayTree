@@ -61,7 +61,7 @@ var tracker = builder.Build();
 
 ## Auto-Initialization and Schema Migration
 
-`Build()` and `BuildAsync()` automatically call `tracker.InitializeAsync()`, which:
+`Build()` and `BuildAsync()` automatically initialize the tracker, which:
 
 - **Creates** outbox and source tables if they do not exist (`CREATE TABLE IF NOT EXISTS` with all columns and indexes in one statement)
 - **Migrates** existing tables on every startup — adds missing `state_*` columns, syncs indexes (creates new, drops and recreates changed definitions), and logs `Warning` for orphan columns/indexes and type mismatches
@@ -265,15 +265,17 @@ var tracker = builder.Build();
 
 ## Subscribing to Changes
 
-`RayTree.Subscriber` receives `MessageEnvelope` messages from any `IQueueConsumer`, deserializes the entity state, and dispatches to typed handlers. Use `ChangeSubscriberBuilder` to configure global defaults and per-entity overrides. The subscriber is the mirror of the publisher — use the same serializer and compressor on both sides.
+`RayTree` receives `MessageEnvelope` messages from any `IQueueConsumer`, deserializes the entity state, and dispatches to typed handlers. Configure the subscriber alongside the publisher via the unified `ChangeTrackingBuilder`. Use the same serializer and compressor on both sides.
 
 ```csharp
 var queue = new InMemoryQueue(); // or KafkaConsumer / RabbitMqConsumer
 
-var subscriber = new ChangeSubscriberBuilder()
-    .UseSerializer(new JsonSerializerPlugin())
-    .UseCompressor(new GzipCompressorPlugin())
+var tracker = EntityChangeTracker.Create()
+    .UseSerializer<JsonSerializerPlugin>(_ => new JsonSerializerPlugin())
+    .UseCompressor<GzipCompressorPlugin>(_ => new GzipCompressorPlugin())
     .ForEntity<Product>(e => e
+        .UseOutbox(new InMemoryOutbox())
+        .UsePublisher(queue)
         .UseConsumer(queue)
         .OnInsert(async (change, ct) =>
         {
@@ -286,9 +288,11 @@ var subscriber = new ChangeSubscriberBuilder()
             Console.WriteLine($"Deleted: {change.EntityId}")))
     .Build();
 
-// Start consuming (blocks until cancellation)
-await subscriber.ConsumeFromConsumerAsync(queue, cancellationToken);
+using var cts = new CancellationTokenSource();
+await tracker.StartAsync(cts.Token); // starts consumer loops
 ```
+
+> **Tip:** In a .NET Generic Host app, `ChangeTrackingHostedService` calls `tracker.StartAsync` / `tracker.StopAsync` automatically. Use `AddChangeTracking` and the hosted service manages the full lifecycle.
 
 ### ASP.NET Core (DI)
 
@@ -413,23 +417,25 @@ Reduce this value if you see lock contention or WAL pressure during cleanup on l
 | `Debug` | No stale unpublished rows found |
 | `Error` | Rotation failed (isolated — publish loop continues) |
 
-### Manual rotation — `OutboxCleanupService`
+### Manual rotation
 
-`OutboxCleanupService` is available as a singleton in the DI container for ad-hoc or scheduled cleanup outside the normal poll cycle (e.g. a maintenance endpoint or a Hangfire job):
+Call `tracker.RunCleanupAsync(retentionPeriod, ct)` directly for ad-hoc or scheduled cleanup outside the normal poll cycle (e.g. a maintenance endpoint or a Hangfire job):
 
 ```csharp
-public class MaintenanceController(OutboxCleanupService cleanup) : ControllerBase
+public class MaintenanceController(
+    EntityChangeTracker tracker,
+    IOptions<OutboxPublisherOptions> options) : ControllerBase
 {
     [HttpPost("outbox/rotate")]
     public async Task<IActionResult> Rotate(CancellationToken ct)
     {
-        var deleted = await cleanup.RunCleanupAsync(ct);
+        var deleted = await tracker.RunCleanupAsync(options.Value.CleanupRetentionPeriod, ct);
         return Ok(new { deleted });
     }
 }
 ```
 
-`RunCleanupAsync` calls `CleanupPublishedAsync` on every registered outbox and returns the total number of rows deleted. It uses the same `CleanupRetentionPeriod` that was configured on `OutboxPublisherOptions`.
+`RunCleanupAsync` calls `CleanupPublishedAsync` on every registered outbox and returns the total number of rows deleted.
 
 ## Cleanup
 

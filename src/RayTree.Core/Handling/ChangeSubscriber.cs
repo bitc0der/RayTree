@@ -63,16 +63,53 @@ public class ChangeSubscriber : IDisposable
         _options    = options    ?? new SubscriberOptions();
     }
 
-    /// <summary>Shared-mode consumers, keyed by entity type.</summary>
-    public IReadOnlyDictionary<Type, IQueueConsumer> Queues => _queues;
+    internal IReadOnlyCollection<EntityHandlerKey> IsolatedQueueKeys => _isolatedQueues.Keys;
 
-    /// <summary>
-    /// Isolated-mode consumers, keyed by <see cref="EntityHandlerKey"/>.
-    /// Exposed for <see cref="RayTree.Hosting.ChangeTrackingHostedService"/> to start one
-    /// consume loop per entry. Task 3.6.
-    /// </summary>
-    public IReadOnlyDictionary<EntityHandlerKey, IQueueConsumer> IsolatedQueues
-        => _isolatedQueues;
+    private List<Task>? _consumeTasks;
+
+    internal async Task InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        foreach (var (_, consumer) in _queues)
+            await consumer.InitializeAsync(cancellationToken);
+
+        foreach (var (_, consumer) in _isolatedQueues)
+            await consumer.InitializeAsync(cancellationToken);
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        if (_consumeTasks is not null) return Task.CompletedTask;
+
+        _consumeTasks = [];
+
+        foreach (var (entityType, consumer) in _queues)
+        {
+            var c = consumer;
+            _logger.LogInformation("Starting consumer loop for {EntityType}", entityType.Name);
+            _consumeTasks.Add(Task.Run(
+                () => ConsumeFromConsumerAsync(c, cancellationToken),
+                cancellationToken));
+        }
+
+        foreach (var (key, consumer) in _isolatedQueues)
+        {
+            var c = consumer;
+            _logger.LogInformation("Starting isolated consumer loop for {EntityType}/{HandlerName}",
+                key.EntityType.Name, key.HandlerName);
+            _consumeTasks.Add(Task.Run(
+                () => ConsumeIsolatedFromConsumerAsync(c, key.EntityType, key.HandlerName, cancellationToken),
+                cancellationToken));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync()
+    {
+        if (_consumeTasks is null) return;
+        try { await Task.WhenAll(_consumeTasks); }
+        catch (OperationCanceledException) { }
+    }
 
     public ChangeSubscriber ForEntity<TEntity>()
     {

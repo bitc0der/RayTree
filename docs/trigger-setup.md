@@ -34,7 +34,7 @@ options.UseNotificationChannel("products_notify")
        .WithFallbackPolling(TimeSpan.FromSeconds(30));
 ```
 
-When `UseNotificationChannel = true`, calling `outbox.InitializeAsync()` (or `tracker.InitializeAsync()`) automatically creates the trigger function and attaches the trigger to the outbox table — no manual SQL required.
+When `UseNotificationChannel = true`, calling `Build()` / `BuildAsync()` automatically creates the trigger function and attaches the trigger to the outbox table — no manual SQL required.
 
 ### Step 2 — Create and start NotificationBasedPublisher
 
@@ -42,7 +42,7 @@ When `UseNotificationChannel = true`, calling `outbox.InitializeAsync()` (or `tr
 
 ```csharp
 var publisher = new NotificationBasedPublisher(
-    tracker.Publisher,
+    tracker,
     new NotificationBasedPublisherOptions
     {
         ConnectionString = connectionString,
@@ -58,7 +58,7 @@ await publisher.StopAsync();
 publisher.Dispose();
 ```
 
-`tracker.Publisher` is the `ChangePublisher` that has the outbox, queue publisher, serializer, and compressor registered for each entity type. `NotificationBasedPublisher` uses it to resolve these per-entity dependencies when a notification arrives.
+`tracker` is the `EntityChangeTracker` that has the outbox, queue publisher, serializer, and compressor registered for each entity type. `NotificationBasedPublisher` uses it to resolve these per-entity dependencies when a notification arrives.
 
 ### Step 3 — Wire into hosted service (ASP.NET Core)
 
@@ -73,7 +73,7 @@ public class NotificationPublisherHostedService : IHostedService, IDisposable
         ILoggerFactory loggerFactory)
     {
         _publisher = new NotificationBasedPublisher(
-            tracker.Publisher,
+            tracker,
             new NotificationBasedPublisherOptions
             {
                 ConnectionString = config.GetConnectionString("Default")!,
@@ -161,8 +161,8 @@ var orderOptions = new PostgreSqlOutboxOptions { ... }
     .UseNotificationChannel("orders_notify");
 
 // A publisher per channel (ILoggerFactory required as third argument)
-var productPublisher = new NotificationBasedPublisher(tracker.Publisher, new() { ChannelName = "products_notify", ... }, loggerFactory);
-var orderPublisher   = new NotificationBasedPublisher(tracker.Publisher, new() { ChannelName = "orders_notify",   ... }, loggerFactory);
+var productPublisher = new NotificationBasedPublisher(tracker, new() { ChannelName = "products_notify", ... }, loggerFactory);
+var orderPublisher   = new NotificationBasedPublisher(tracker, new() { ChannelName = "orders_notify",   ... }, loggerFactory);
 ```
 
 ## Monitoring
@@ -192,7 +192,7 @@ NOTIFY products_notify, '{"test": true}';
 ## Troubleshooting
 
 **Not receiving notifications**
-- Check that `UseNotificationChannel = true` was set before `InitializeAsync()` was called
+- Check that `UseNotificationChannel = true` was set before calling `Build()` / `BuildAsync()`
 - Verify the channel name matches between the outbox options and `NotificationBasedPublisherOptions.ChannelName`
 - Confirm the trigger exists with the query above
 - Check PostgreSQL logs for trigger execution errors

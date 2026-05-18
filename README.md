@@ -52,18 +52,17 @@ var tracker = await EntityChangeTracker.Create()
         .UseOutbox(new InMemoryOutbox())
         .UsePublisher(new RabbitMqPublisher(publisherOptions))
         .UseConsumer(new RabbitMqConsumer(consumerOptions))
-        .OnInsert(async (change, ct) =>
-        {
-            Console.WriteLine($"Order {change.EntityId} inserted");
-        }))
-    .BuildAsync(); // initializes and starts publisher loops
+        .OnInsert(async (change, ct) => Console.WriteLine($"Order {change.EntityId} inserted")))
+    .BuildAsync(); // initializes DB schema and starts publisher loops
+
+using var cts = new CancellationTokenSource();
+await tracker.StartAsync(cts.Token); // starts consumer loops
 
 // Publish a change
 await tracker.TrackInsertAsync(new Order { Id = 1, Total = 49.99m });
 
-// Consume (blocking — run on a background task)
-await tracker.ConsumeFromConsumerAsync(consumer, cancellationToken);
-
+cts.Cancel();
+await tracker.StopAsync();
 tracker.Dispose();
 ```
 

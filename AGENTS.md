@@ -66,7 +66,7 @@ See `CLAUDE.md` for deep architecture documentation, plugin contracts, and key d
 ### Naming and style
 
 - Follow `.editorconfig` — it wins over any general suggestion.
-- Private/internal fields: `_camelCase`. Static private/internal fields: `s_PascalCase`. Constants: `PascalCase`.
+- Private/internal fields: `_camelCase`. Static private/internal fields: `PascalCase`. Constants: `PascalCase`.
 - Expression-bodied members for single-expression methods, properties, and accessors.
 - `using` directives outside the namespace; System namespaces first.
 - Braces always on a new line (`csharp_new_line_before_open_brace = all`).

@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Telemetry;
@@ -36,15 +35,6 @@ public static class ServiceCollectionExtensions
             services.Configure<OutboxPublisherOptions>(configuration.GetSection("ChangeTracking:Publisher"));
             services.Configure<SubscriberOptions>(configuration.GetSection("ChangeTracking:Subscriber"));
         }
-
-        services.AddSingleton<OutboxCleanupService>(sp =>
-        {
-            var options = sp.GetService<IOptions<OutboxPublisherOptions>>()?.Value ?? new OutboxPublisherOptions();
-            var tracker = sp.GetRequiredService<EntityChangeTracker>();
-            var outboxes = tracker.Publisher.GetOutboxes().Values;
-            var logger = sp.GetRequiredService<ILogger<OutboxCleanupService>>();
-            return new OutboxCleanupService(outboxes, logger, options.CleanupRetentionPeriod);
-        });
 
         services.AddHostedService<ChangeTrackingHostedService>();
 

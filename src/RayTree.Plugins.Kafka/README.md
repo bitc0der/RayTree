@@ -157,8 +157,6 @@ var subscriber = new ChangeSubscriberBuilder()
         })
         .OnInsert(async (change, ct) => { /* project read model */ }))
     .Build();
-
-await subscriber.ConsumeFromConsumerAsync(consumer, ct);
 ```
 
 ### Threading model

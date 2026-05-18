@@ -6,6 +6,109 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.13-pre-release]
+
+### Added
+
+#### `EntityChangeTracker.StartAsync` / `StopAsync` — explicit consumer lifecycle (`RayTree.Core`)
+
+Consumer loops are no longer started or stopped by `ChangeTrackingHostedService` internals. The
+tracker exposes the full lifecycle directly:
+
+```csharp
+var tracker = EntityChangeTracker.Create()
+    .ForEntity<Order>(e => e /* publisher + subscriber config */)
+    .Build();
+
+using var cts = new CancellationTokenSource();
+await tracker.StartAsync(cts.Token);   // starts all shared and isolated consumer loops
+
+// ... app runs ...
+
+cts.Cancel();
+await tracker.StopAsync();             // awaits all loops; swallows OperationCanceledException
+tracker.Dispose();
+```
+
+In a .NET Generic Host app `ChangeTrackingHostedService` calls these automatically — no manual
+lifecycle management is needed.
+
+#### `EntityChangeTracker.RunCleanupAsync` — direct outbox cleanup (`RayTree.Core`)
+
+Iterates every registered outbox and calls `CleanupPublishedAsync`, returning the total row count.
+Use it for ad-hoc or scheduled cleanup (e.g. a maintenance endpoint):
+
+```csharp
+public class MaintenanceController(
+    EntityChangeTracker tracker,
+    IOptions<OutboxPublisherOptions> options) : ControllerBase
+{
+    [HttpPost("outbox/rotate")]
+    public async Task<IActionResult> Rotate(CancellationToken ct)
+    {
+        var deleted = await tracker.RunCleanupAsync(options.Value.CleanupRetentionPeriod, ct);
+        return Ok(new { deleted });
+    }
+}
+```
+
+### Changed (breaking)
+
+#### `EntityChangeTracker.Publisher` and `Subscriber` are now `internal` (`RayTree.Core`)
+
+These were marked "not part of the primary API" but were public. They are now `internal`. The
+tracker's public surface (`TrackXxxAsync`, `StartAsync`, `StopAsync`, `RunCleanupAsync`, `Meter`)
+covers all legitimate caller needs.
+
+First-party plugin assemblies (`RayTree.EntityFrameworkCore`, `RayTree.Plugins.PostgreSQL`) and
+their test projects access internals via `InternalsVisibleTo` entries in `RayTree.Core.csproj`.
+
+#### `EntityChangeTracker.InitializeAsync()` is now `internal` (`RayTree.Core`)
+
+`InitializeAsync` was never intended for direct calling — `Build()` / `BuildAsync()` invoke it
+automatically. Removing it from the public surface prevents accidental double-initialization.
+
+#### `NotificationBasedPublisher` constructor parameter changed (`RayTree.Plugins.PostgreSQL`)
+
+The first constructor argument changes from `ChangePublisher` to `EntityChangeTracker`:
+
+```csharp
+// Before
+var pub = new NotificationBasedPublisher(tracker.Publisher, options, loggerFactory);
+
+// After
+var pub = new NotificationBasedPublisher(tracker, options, loggerFactory);
+```
+
+### Removed
+
+#### `OutboxCleanupService` removed (`RayTree.Core`)
+
+`OutboxCleanupService` was a thin wrapper that delegated to `EntityChangeTracker.RunCleanupAsync`
+and logged the result. It is removed; call the tracker method directly:
+
+```csharp
+// Before
+var service = new OutboxCleanupService(tracker, logger, retentionPeriod);
+await service.RunCleanupAsync(ct);
+
+// After
+var deleted = await tracker.RunCleanupAsync(retentionPeriod, ct);
+```
+
+`AddChangeTracking` no longer registers `OutboxCleanupService` as a DI singleton. Inject
+`EntityChangeTracker` directly wherever cleanup is needed.
+
+### Fixed
+
+#### Isolated consumer queues not initialized on `Build()` (`RayTree.Core`)
+
+`EntityChangeTracker.InitializeAsync` only called `InitializeAsync` on shared-mode consumer
+queues (`_subscriber.Queues`). Isolated-mode consumer queues (`_subscriber.IsolatedQueues`) were
+skipped, meaning isolated consumers started unconnnected. Both collections are now initialized.
+
+---
+
 ## [0.0.12-pre-release]
 
 ### Added

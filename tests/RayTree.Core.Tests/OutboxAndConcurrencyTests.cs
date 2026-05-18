@@ -13,53 +13,6 @@ using RayTree.Plugins;
 
 namespace RayTree.Core.Tests;
 
-public class OutboxCleanupServiceTests
-{
-    [Test]
-    public async Task RunCleanupAsync_CallsCleanup_OnAllOutboxes()
-    {
-        var outbox1 = new Mock<IOutbox>();
-        outbox1.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(5);
-
-        var outbox2 = new Mock<IOutbox>();
-        outbox2.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(3);
-
-        var service = new OutboxCleanupService(new[] { outbox1.Object, outbox2.Object }, NullLogger<OutboxCleanupService>.Instance, TimeSpan.FromDays(7));
-
-        var deleted = await service.RunCleanupAsync();
-
-        Assert.That(deleted, Is.EqualTo(8));
-        outbox1.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.Once);
-        outbox2.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Test]
-    public async Task RunCleanupAsync_ReturnsZero_WhenNoOutboxes()
-    {
-        var service = new OutboxCleanupService(Array.Empty<IOutbox>(), NullLogger<OutboxCleanupService>.Instance, TimeSpan.FromDays(7));
-
-        var deleted = await service.RunCleanupAsync();
-
-        Assert.That(deleted, Is.EqualTo(0));
-    }
-
-    [Test]
-    public async Task RunCleanupAsync_UsesDefaultRetention_WhenNotSpecified()
-    {
-        var outbox = new Mock<IOutbox>();
-        outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(0);
-
-        var service = new OutboxCleanupService(new[] { outbox.Object }, NullLogger<OutboxCleanupService>.Instance);
-
-        await service.RunCleanupAsync();
-
-        outbox.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.Once);
-    }
-}
-
 public class OutboxPublisherServiceTests
 {
     [Test]
@@ -289,5 +242,64 @@ public class ConcurrentChangeDetectionTests
         await Task.WhenAll(tasks);
 
         outbox.Verify(o => o.WriteAsync(It.IsAny<EntityChange<SampleEntity>>(), It.IsAny<CancellationToken>()), Times.Exactly(100));
+    }
+}
+
+public class EntityChangeTrackerRunCleanupTests
+{
+    private class Entity1 { public int Id { get; set; } }
+    private class Entity2 { public int Id { get; set; } }
+
+    private static EntityChangeTracker BuildTracker(params (Type entityType, IOutbox outbox)[] registrations)
+    {
+        var publisher = new ChangePublisher(NullLoggerFactory.Instance, new RayTreeMeter());
+        foreach (var (entityType, outbox) in registrations)
+            publisher.RegisterOutbox(entityType, outbox);
+        return new EntityChangeTracker(publisher);
+    }
+
+    [Test]
+    public async Task RunCleanupAsync_CallsCleanupOnAllOutboxes_AndAccumulatesCount()
+    {
+        var outbox1 = new Mock<IOutbox>();
+        outbox1.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(5);
+
+        var outbox2 = new Mock<IOutbox>();
+        outbox2.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3);
+
+        var tracker = BuildTracker((typeof(Entity1), outbox1.Object), (typeof(Entity2), outbox2.Object));
+
+        var deleted = await tracker.RunCleanupAsync(TimeSpan.FromDays(7));
+
+        Assert.That(deleted, Is.EqualTo(8));
+        outbox1.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.Once);
+        outbox2.Verify(o => o.CleanupPublishedAsync(TimeSpan.FromDays(7), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Test]
+    public async Task RunCleanupAsync_ReturnsZero_WhenNoOutboxesRegistered()
+    {
+        var tracker = BuildTracker();
+
+        var deleted = await tracker.RunCleanupAsync(TimeSpan.FromDays(7));
+
+        Assert.That(deleted, Is.EqualTo(0));
+    }
+
+    [Test]
+    public async Task RunCleanupAsync_PassesRetentionPeriodToEachOutbox()
+    {
+        var retention = TimeSpan.FromDays(14);
+        var outbox = new Mock<IOutbox>();
+        outbox.Setup(o => o.CleanupPublishedAsync(It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        var tracker = BuildTracker((typeof(Entity1), outbox.Object));
+
+        await tracker.RunCleanupAsync(retention);
+
+        outbox.Verify(o => o.CleanupPublishedAsync(retention, It.IsAny<CancellationToken>()), Times.Once);
     }
 }
