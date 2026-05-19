@@ -150,6 +150,57 @@ public class RabbitMqPublisherTests
     }
 
     [Test]
+    public void RabbitMqPublisherOptions_DefaultSelector_ReflectsRoutingKeyChangedAfterConstruction()
+    {
+        var options = new RabbitMqPublisherOptions();   // RoutingKey = "change"
+        var envelope = new MessageEnvelope { EntityType = "Order", ChangeType = ChangeType.Insert };
+
+        options.RoutingKey = "events";
+
+        var key = options.RoutingKeySelector(envelope);
+
+        Assert.That(key, Is.EqualTo("events.Order.insert"));
+    }
+
+    [Test]
+    public async Task PublishAsync_PassesRoutingKeySelectorOutputToBroker()
+    {
+        string? capturedRoutingKey = null;
+        var mockChannel = new Mock<IChannel>();
+        mockChannel.Setup(c => c.IsOpen).Returns(true);
+        mockChannel
+            .Setup(c => c.BasicPublishAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<bool>(),
+                It.IsAny<BasicProperties>(),
+                It.IsAny<ReadOnlyMemory<byte>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, string, bool, BasicProperties, ReadOnlyMemory<byte>, CancellationToken>(
+                (_, rk, _, _, _, _) => capturedRoutingKey = rk)
+            .Returns(ValueTask.CompletedTask);
+
+        var options = new RabbitMqPublisherOptions
+        {
+            DeclareExchange    = false,
+            RoutingKeySelector = static envelope => $"tenant.{envelope.EntityId}"
+        };
+        var publisher = new RabbitMqPublisher(options);
+        SetChannelViaReflection(publisher, mockChannel.Object);
+
+        await publisher.PublishAsync(new MessageEnvelope
+        {
+            EntityType    = "Order",
+            EntityId      = "acme",
+            ChangeType    = ChangeType.Insert,
+            CorrelationId = Guid.NewGuid(),
+            Payload       = [1]
+        });
+
+        Assert.That(capturedRoutingKey, Is.EqualTo("tenant.acme"));
+    }
+
+    [Test]
     public async Task PublishAsync_EmptyPayload_DoesNotThrow()
     {
         var mockChannel = new Mock<IChannel>();

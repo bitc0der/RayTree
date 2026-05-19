@@ -1,3 +1,5 @@
+using Confluent.Kafka;
+using Moq;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
 
@@ -94,6 +96,47 @@ public class KafkaPublisherTests
         var key = options.KeySelector(envelope);
 
         Assert.That(key, Is.EqualTo("user-123"));
+    }
+
+    [Test]
+    public async Task PublishAsync_PassesKeySelectorOutputToProducer()
+    {
+        string? capturedKey = null;
+        var mockProducer = new Mock<IProducer<string, byte[]>>();
+        mockProducer
+            .Setup(p => p.ProduceAsync(
+                It.IsAny<string>(),
+                It.IsAny<Message<string, byte[]>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, Message<string, byte[]>, CancellationToken>(
+                (_, msg, _) => capturedKey = msg.Key)
+            .ReturnsAsync(new DeliveryResult<string, byte[]>());
+
+        var options = new KafkaPublisherOptions
+        {
+            KeySelector = static envelope => $"tenant-{envelope.EntityId}"
+        };
+        var publisher = new KafkaPublisher(options);
+        SetProducerViaReflection(publisher, mockProducer.Object);
+
+        await publisher.PublishAsync(new MessageEnvelope
+        {
+            EntityType    = "Order",
+            EntityId      = "acme",
+            ChangeType    = ChangeType.Insert,
+            CorrelationId = Guid.NewGuid(),
+            Payload       = [1]
+        });
+
+        Assert.That(capturedKey, Is.EqualTo("tenant-acme"));
+    }
+
+    private static void SetProducerViaReflection(KafkaPublisher publisher, IProducer<string, byte[]> producer)
+    {
+        var field = typeof(KafkaPublisher).GetField(
+            "_producer",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        field!.SetValue(publisher, producer);
     }
 
     [Test]
