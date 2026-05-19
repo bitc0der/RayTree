@@ -321,7 +321,7 @@ new RabbitMqPublisherOptions
 }
 ```
 
-When `RoutingKeySelector` is set it takes full control of the key; the `RoutingKey` base prefix is ignored. Call `options.ResolveRoutingKey(envelope)` directly if you need to compute the key outside the publisher (e.g. in tests or queue-binding setup).
+When `RoutingKeySelector` is set it takes full control of the key; the `RoutingKey` base prefix is ignored.
 
 ```csharp
 // InMemory (testing)

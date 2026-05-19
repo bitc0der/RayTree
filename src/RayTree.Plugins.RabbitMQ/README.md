@@ -101,7 +101,7 @@ sequenceDiagram
 
 ### Routing-key construction
 
-The routing key is determined by `RabbitMqPublisherOptions.RoutingKeySelector`. When it is `null` (the default), `ResolveRoutingKey` falls back to:
+The routing key is determined by `RabbitMqPublisherOptions.RoutingKeySelector`. The default delegate produces:
 
 ```
 {options.RoutingKey}.{envelope.EntityType}.{envelope.ChangeType, lowercase}
@@ -121,7 +121,7 @@ new RabbitMqPublisherOptions
 }
 ```
 
-When `RoutingKeySelector` is set, the `RoutingKey` base prefix is ignored entirely. Call `options.ResolveRoutingKey(envelope)` directly whenever you need to compute the key outside the publisher — for example in queue-binding setup or tests.
+When `RoutingKeySelector` is set, the `RoutingKey` base prefix is ignored entirely.
 
 ### Headers and properties
 
@@ -156,7 +156,7 @@ The serialised entity payload goes in `body` (already compressed by the time it 
 | `ExchangeName` | `"entity_changes"` | Where messages are published |
 | `ExchangeType` | `"topic"` | Any AMQP exchange type (`topic`, `direct`, `fanout`, `headers`) |
 | `RoutingKey` | `"change"` | Base prefix used by the default routing-key pattern (`{RoutingKey}.{EntityType}.{changeType}`); ignored when `RoutingKeySelector` is set |
-| `RoutingKeySelector` | `null` (use default pattern) | When non-null, overrides routing-key construction entirely — receives the full `MessageEnvelope` and returns any string. Use `ResolveRoutingKey(envelope)` to invoke whichever path is active |
+| `RoutingKeySelector` | `envelope => $"{RoutingKey}.{EntityType}.{changeType}"` | Overrides routing-key construction entirely — receives the full `MessageEnvelope` and returns any string. Replaces the default delegate by assigning a new one |
 | `DeclareExchange` | `true` | Set `false` if the exchange is pre-provisioned and your credentials lack declare rights |
 | `Durable` | `true` | Survives broker restart (only relevant when declaring) |
 

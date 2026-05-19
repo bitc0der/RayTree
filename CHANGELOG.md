@@ -23,10 +23,9 @@ new RabbitMqPublisherOptions
 }
 ```
 
-When `RoutingKeySelector` is `null` (the default), `ResolveRoutingKey` falls back to the
-previous pattern — no breaking change. Override the selector to route by tenant, aggregate root,
-or any envelope field, enabling different consumer queues to process different message subsets
-in parallel via standard AMQP topic-exchange bindings.
+The default delegate preserves the previous behaviour — no breaking change. Override the selector
+to route by tenant, aggregate root, or any envelope field, enabling different consumer queues to
+process different message subsets in parallel via standard AMQP topic-exchange bindings.
 
 #### `KafkaPublisherOptions.KeySelector` — configurable Kafka partition key (`RayTree.Plugins.Kafka`)
 

@@ -1,6 +1,5 @@
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
-using RayTree.Plugins.Kafka;
 
 namespace RayTree.Plugins.Kafka.Tests;
 

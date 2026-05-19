@@ -21,7 +21,7 @@ public class RabbitMqPublisherTests
         Assert.That(options.DeclareExchange, Is.True);
         Assert.That(options.ExchangeType, Is.EqualTo("topic"));
         Assert.That(options.Durable, Is.True);
-        Assert.That(options.RoutingKeySelector, Is.Null);
+        Assert.That(options.RoutingKeySelector, Is.Not.Null);
     }
 
     [Test]
@@ -105,7 +105,7 @@ public class RabbitMqPublisherTests
         var options = new RabbitMqPublisherOptions { RoutingKey = "events" };
         var envelope = new MessageEnvelope { EntityType = "Order", ChangeType = ChangeType.Delete };
 
-        var key = options.ResolveRoutingKey(envelope);
+        var key = options.RoutingKeySelector(envelope);
 
         Assert.That(key, Is.EqualTo("events.Order.delete"));
     }
@@ -119,7 +119,7 @@ public class RabbitMqPublisherTests
         };
         var envelope = new MessageEnvelope { EntityId = "acme:order-1", EntityType = "Order", ChangeType = ChangeType.Insert };
 
-        var key = options.ResolveRoutingKey(envelope);
+        var key = options.RoutingKeySelector(envelope);
 
         Assert.That(key, Is.EqualTo("tenant.acme"));
     }
