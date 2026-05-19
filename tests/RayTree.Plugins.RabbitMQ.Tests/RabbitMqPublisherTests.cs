@@ -21,6 +21,7 @@ public class RabbitMqPublisherTests
         Assert.That(options.DeclareExchange, Is.True);
         Assert.That(options.ExchangeType, Is.EqualTo("topic"));
         Assert.That(options.Durable, Is.True);
+        Assert.That(options.RoutingKeySelector, Is.Null);
     }
 
     [Test]
@@ -99,20 +100,28 @@ public class RabbitMqPublisherTests
     }
 
     [Test]
-    public void CreateChange_BuildsCorrectRoutingKey()
+    public void RabbitMqPublisherOptions_DefaultRoutingKey_UsesEntityTypeAndChangeType()
     {
-        var change = new EntityChange
-        {
-            EntityType = "Order",
-            EntityId = "order-456",
-            ChangeType = ChangeType.Delete,
-            Timestamp = DateTime.UtcNow,
-            CorrelationId = Guid.NewGuid()
-        };
-
         var options = new RabbitMqPublisherOptions { RoutingKey = "events" };
-        var expectedRoutingKey = $"{options.RoutingKey}.{change.EntityType}.{change.ChangeType.ToString().ToLower()}";
-        Assert.That(expectedRoutingKey, Is.EqualTo("events.Order.delete"));
+        var envelope = new MessageEnvelope { EntityType = "Order", ChangeType = ChangeType.Delete };
+
+        var key = options.ResolveRoutingKey(envelope);
+
+        Assert.That(key, Is.EqualTo("events.Order.delete"));
+    }
+
+    [Test]
+    public void RabbitMqPublisherOptions_CustomRoutingKeySelector_IsUsed()
+    {
+        var options = new RabbitMqPublisherOptions
+        {
+            RoutingKeySelector = static envelope => $"tenant.{envelope.EntityId.Split(':')[0]}"
+        };
+        var envelope = new MessageEnvelope { EntityId = "acme:order-1", EntityType = "Order", ChangeType = ChangeType.Insert };
+
+        var key = options.ResolveRoutingKey(envelope);
+
+        Assert.That(key, Is.EqualTo("tenant.acme"));
     }
 
     [Test]

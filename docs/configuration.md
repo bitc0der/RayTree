@@ -291,7 +291,39 @@ Call the broker extension inside the `ForEntity` callback:
         opt.QueueName = "orders";
     })
     .OnInsert(async (change, ct) => { /* ... */ }))
+```
 
+### RabbitMQ publisher — routing key
+
+`RabbitMqPublisherOptions.RoutingKeySelector` controls the AMQP routing key stamped on each message. On a `topic` exchange, consumers bind queues with wildcard patterns to receive only the messages they need — that is how RabbitMQ routes and parallelises processing.
+
+The default produces `{RoutingKey}.{EntityType}.{changeType}` (e.g. `change.Order.insert`):
+
+```csharp
+builder.ForEntity<Order>(e => e
+    .UsePublisher(new RabbitMqPublisher(new RabbitMqPublisherOptions
+    {
+        ExchangeName = "entity_changes",
+        RoutingKey   = "change"
+        // RoutingKeySelector is null → falls back to "change.Order.insert" / "change.Order.update" etc.
+    })));
+```
+
+Override `RoutingKeySelector` to route by any envelope field. For example, to shard by tenant so each tenant's messages land on a dedicated queue:
+
+```csharp
+new RabbitMqPublisherOptions
+{
+    ExchangeName       = "entity_changes",
+    RoutingKeySelector = envelope => $"change.{envelope.EntityId.Split(':')[0]}.{envelope.EntityType}"
+    // "tenantId:entityId" → "change.tenantId.Order"
+    // Consumer binds with "change.acme.*" to receive only ACME tenant messages
+}
+```
+
+When `RoutingKeySelector` is set it takes full control of the key; the `RoutingKey` base prefix is ignored. Call `options.ResolveRoutingKey(envelope)` directly if you need to compute the key outside the publisher (e.g. in tests or queue-binding setup).
+
+```csharp
 // InMemory (testing)
 .ForEntity<Order>(e => e
     .UseInMemoryQueue(inMemoryQueue)
