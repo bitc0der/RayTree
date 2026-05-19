@@ -101,13 +101,27 @@ sequenceDiagram
 
 ### Routing-key construction
 
-`RabbitMqPublisher` derives the routing key per message as:
+The routing key is determined by `RabbitMqPublisherOptions.RoutingKeySelector`. When it is `null` (the default), `ResolveRoutingKey` falls back to:
 
 ```
 {options.RoutingKey}.{envelope.EntityType}.{envelope.ChangeType, lowercase}
 ```
 
 For an `Order` `Insert` with `RoutingKey = "change"`, the message is published to `change.MyApp.Models.Order.insert`. Combined with a topic exchange, subscribers can bind selectively (`change.*.insert`, `change.MyApp.Models.Order.#`, etc.).
+
+Override `RoutingKeySelector` to take full control of the key:
+
+```csharp
+new RabbitMqPublisherOptions
+{
+    ExchangeName       = "entity_changes",
+    ExchangeType       = "topic",
+    // Shard by tenant — each tenant's consumer binds with "change.acme.*"
+    RoutingKeySelector = envelope => $"change.{envelope.EntityId.Split(':')[0]}.{envelope.EntityType}"
+}
+```
+
+When `RoutingKeySelector` is set, the `RoutingKey` base prefix is ignored entirely. Call `options.ResolveRoutingKey(envelope)` directly whenever you need to compute the key outside the publisher — for example in queue-binding setup or tests.
 
 ### Headers and properties
 
@@ -141,7 +155,8 @@ The serialised entity payload goes in `body` (already compressed by the time it 
 | `UserName` / `Password` | `"guest"` / `"guest"` |  |
 | `ExchangeName` | `"entity_changes"` | Where messages are published |
 | `ExchangeType` | `"topic"` | Any AMQP exchange type (`topic`, `direct`, `fanout`, `headers`) |
-| `RoutingKey` | `"change"` | Base routing key; suffixed with `.entity.changetype` per message |
+| `RoutingKey` | `"change"` | Base prefix used by the default routing-key pattern (`{RoutingKey}.{EntityType}.{changeType}`); ignored when `RoutingKeySelector` is set |
+| `RoutingKeySelector` | `null` (use default pattern) | When non-null, overrides routing-key construction entirely — receives the full `MessageEnvelope` and returns any string. Use `ResolveRoutingKey(envelope)` to invoke whichever path is active |
 | `DeclareExchange` | `true` | Set `false` if the exchange is pre-provisioned and your credentials lack declare rights |
 | `Durable` | `true` | Survives broker restart (only relevant when declaring) |
 
