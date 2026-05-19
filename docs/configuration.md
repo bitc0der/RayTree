@@ -222,6 +222,52 @@ var subscriber = new ChangeSubscriberBuilder()
     .Build();
 ```
 
+### Kafka publisher — partition key
+
+`KafkaPublisherOptions.KeySelector` controls which Kafka partition key is stamped on each outgoing message. Messages with the same key are guaranteed to land on the same partition, so they are consumed in order.
+
+The default selector uses `EntityType:EntityId`:
+
+```csharp
+builder.ForEntity<Order>(e => e
+    .UsePublisher(new KafkaPublisher(new KafkaPublisherOptions
+    {
+        BootstrapServers = "localhost:9092",
+        Topic            = "orders"
+        // KeySelector defaults to envelope => $"{envelope.EntityType}:{envelope.EntityId}"
+    })));
+```
+
+Override `KeySelector` to shard by a different field. For example, to shard by tenant so all tenant changes land on the same partition — and different tenants can be processed in parallel by separate consumer-group members:
+
+```csharp
+new KafkaPublisherOptions
+{
+    BootstrapServers = "localhost:9092",
+    Topic            = "orders",
+    KeySelector      = envelope => envelope.EntityId.Split(':')[0]  // "tenantId:entityId" → tenantId
+}
+```
+
+Or use any envelope metadata — change type, entity type, a custom field embedded in `EntityId`, etc. The selector runs on the publisher side; the consumer side is unaffected.
+
+#### Consumer-group parallelism
+
+Kafka distributes partitions across all members of a consumer group. To process different entities (or entity key ranges) in parallel, run multiple `KafkaConsumer` instances that share the same `GroupId` and point at the same topic — Kafka assigns each instance a disjoint set of partitions automatically. No RayTree configuration is needed beyond the standard `KafkaConsumerOptions`:
+
+```csharp
+// Instance A and Instance B both use GroupId = "order-processors"
+// Kafka assigns ~half the partitions to each.
+new KafkaConsumerOptions
+{
+    BootstrapServers = "localhost:9092",
+    Topic            = "orders",
+    GroupId          = "order-processors"
+}
+```
+
+With `AckAfterHandler = true`, keep `MaxDegreeOfParallelism = 1` per consumer instance (offset commits are monotonic — out-of-order commits can skip messages).
+
 ### Broker-specific queue helpers
 
 Call the broker extension inside the `ForEntity` callback:
@@ -245,7 +291,39 @@ Call the broker extension inside the `ForEntity` callback:
         opt.QueueName = "orders";
     })
     .OnInsert(async (change, ct) => { /* ... */ }))
+```
 
+### RabbitMQ publisher — routing key
+
+`RabbitMqPublisherOptions.RoutingKeySelector` controls the AMQP routing key stamped on each message. On a `topic` exchange, consumers bind queues with wildcard patterns to receive only the messages they need — that is how RabbitMQ routes and parallelises processing.
+
+The default produces `{RoutingKey}.{EntityType}.{changeType}` (e.g. `change.Order.insert`):
+
+```csharp
+builder.ForEntity<Order>(e => e
+    .UsePublisher(new RabbitMqPublisher(new RabbitMqPublisherOptions
+    {
+        ExchangeName = "entity_changes",
+        RoutingKey   = "change"
+        // RoutingKeySelector is null → falls back to "change.Order.insert" / "change.Order.update" etc.
+    })));
+```
+
+Override `RoutingKeySelector` to route by any envelope field. For example, to shard by tenant so each tenant's messages land on a dedicated queue:
+
+```csharp
+new RabbitMqPublisherOptions
+{
+    ExchangeName       = "entity_changes",
+    RoutingKeySelector = envelope => $"change.{envelope.EntityId.Split(':')[0]}.{envelope.EntityType}"
+    // "tenantId:entityId" → "change.tenantId.Order"
+    // Consumer binds with "change.acme.*" to receive only ACME tenant messages
+}
+```
+
+When `RoutingKeySelector` is set it takes full control of the key; the `RoutingKey` base prefix is ignored.
+
+```csharp
 // InMemory (testing)
 .ForEntity<Order>(e => e
     .UseInMemoryQueue(inMemoryQueue)

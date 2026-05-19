@@ -57,7 +57,7 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
 
         var message = new Message<string, byte[]>
         {
-            Key   = $"{envelope.EntityType}:{envelope.EntityId}",
+            Key   = _options.KeySelector(envelope),
             Value = envelope.Payload,
             Headers = new Headers
             {

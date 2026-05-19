@@ -64,7 +64,7 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
     public async Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
     {
         var channel = await GetChannelAsync(cancellationToken);
-        var routingKey = $"{_options.RoutingKey}.{envelope.EntityType}.{envelope.ChangeType.ToString().ToLower()}";
+        var routingKey = _options.RoutingKeySelector(envelope);
 
         var properties = new BasicProperties
         {

@@ -1,3 +1,5 @@
+using Confluent.Kafka;
+using Moq;
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
 
@@ -14,6 +16,7 @@ public class KafkaPublisherTests
         Assert.That(options.Topic, Is.EqualTo("entity_changes"));
         Assert.That(options.Acks, Is.Null);
         Assert.That(options.MessageMaxBytes, Is.Null);
+        Assert.That(options.KeySelector, Is.Not.Null);
     }
 
     [Test]
@@ -71,19 +74,69 @@ public class KafkaPublisherTests
     }
 
     [Test]
-    public void KafkaPublisher_CreateChange_BuildsCorrectMessageKey()
+    public void KafkaPublisherOptions_DefaultKeySelector_UsesEntityTypeAndId()
     {
-        var change = new EntityChange
-        {
-            EntityType = "User",
-            EntityId = "user-123",
-            ChangeType = ChangeType.Update,
-            Timestamp = DateTime.UtcNow,
-            CorrelationId = Guid.NewGuid()
-        };
+        var options = new KafkaPublisherOptions();
+        var envelope = new MessageEnvelope { EntityType = "User", EntityId = "user-123" };
 
-        var expectedKey = $"{change.EntityType}:{change.EntityId}";
-        Assert.That(expectedKey, Is.EqualTo("User:user-123"));
+        var key = options.KeySelector(envelope);
+
+        Assert.That(key, Is.EqualTo("User:user-123"));
+    }
+
+    [Test]
+    public void KafkaPublisherOptions_CustomKeySelector_IsUsed()
+    {
+        var options = new KafkaPublisherOptions
+        {
+            KeySelector = static envelope => envelope.EntityId
+        };
+        var envelope = new MessageEnvelope { EntityType = "User", EntityId = "user-123" };
+
+        var key = options.KeySelector(envelope);
+
+        Assert.That(key, Is.EqualTo("user-123"));
+    }
+
+    [Test]
+    public async Task PublishAsync_PassesKeySelectorOutputToProducer()
+    {
+        string? capturedKey = null;
+        var mockProducer = new Mock<IProducer<string, byte[]>>();
+        mockProducer
+            .Setup(p => p.ProduceAsync(
+                It.IsAny<string>(),
+                It.IsAny<Message<string, byte[]>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, Message<string, byte[]>, CancellationToken>(
+                (_, msg, _) => capturedKey = msg.Key)
+            .ReturnsAsync(new DeliveryResult<string, byte[]>());
+
+        var options = new KafkaPublisherOptions
+        {
+            KeySelector = static envelope => $"tenant-{envelope.EntityId}"
+        };
+        var publisher = new KafkaPublisher(options);
+        SetProducerViaReflection(publisher, mockProducer.Object);
+
+        await publisher.PublishAsync(new MessageEnvelope
+        {
+            EntityType    = "Order",
+            EntityId      = "acme",
+            ChangeType    = ChangeType.Insert,
+            CorrelationId = Guid.NewGuid(),
+            Payload       = [1]
+        });
+
+        Assert.That(capturedKey, Is.EqualTo("tenant-acme"));
+    }
+
+    private static void SetProducerViaReflection(KafkaPublisher publisher, IProducer<string, byte[]> producer)
+    {
+        var field = typeof(KafkaPublisher).GetField(
+            "_producer",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        field!.SetValue(publisher, producer);
     }
 
     [Test]

@@ -6,6 +6,48 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.14-pre-release]
+
+### Added
+
+#### `RabbitMqPublisherOptions.RoutingKeySelector` — configurable AMQP routing key (`RayTree.Plugins.RabbitMQ`)
+
+The AMQP routing key used to be hardcoded as `"{RoutingKey}.{EntityType}.{changeType}"`. It is
+now configurable via a delegate on `RabbitMqPublisherOptions`:
+
+```csharp
+new RabbitMqPublisherOptions
+{
+    ExchangeName       = "entity_changes",
+    RoutingKeySelector = envelope => $"change.{envelope.EntityId.Split(':')[0]}.{envelope.EntityType}"
+}
+```
+
+The default delegate preserves the previous behaviour — no breaking change. Override the selector
+to route by tenant, aggregate root, or any envelope field, enabling different consumer queues to
+process different message subsets in parallel via standard AMQP topic-exchange bindings.
+
+#### `KafkaPublisherOptions.KeySelector` — configurable Kafka partition key (`RayTree.Plugins.Kafka`)
+
+The Kafka partition key used to be hardcoded as `"{EntityType}:{EntityId}"`. It is now
+configurable via a delegate on `KafkaPublisherOptions`:
+
+```csharp
+new KafkaPublisherOptions
+{
+    BootstrapServers = "localhost:9092",
+    Topic            = "orders",
+    KeySelector      = envelope => envelope.EntityId   // shard by entity ID only
+}
+```
+
+The default delegate preserves the previous behaviour (`EntityType:EntityId`), so existing
+deployments are unaffected. Override the selector to shard by tenant, aggregate root, or any
+value derivable from the `MessageEnvelope` — enabling consumer-group parallelism where different
+key ranges are processed independently while ordering within each key is still guaranteed.
+
+---
+
 ## [0.0.13-pre-release]
 
 ### Added

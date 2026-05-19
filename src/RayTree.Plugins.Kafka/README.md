@@ -104,7 +104,7 @@ sequenceDiagram
 
 | Field | Value |
 |---|---|
-| `Key` | `$"{envelope.EntityType}:{envelope.EntityId}"` — co-locates all changes for a given entity on the same partition (preserves per-entity ordering) |
+| `Key` | Result of `KafkaPublisherOptions.KeySelector(envelope)` — defaults to `$"{EntityType}:{EntityId}"`, co-locating all changes for a given entity on the same partition and preserving per-entity ordering |
 | `Value` | `envelope.Payload` (already serialised + compressed) |
 | `Headers["entity_type"]` | UTF-8 string |
 | `Headers["entity_id"]` | UTF-8 string |
@@ -130,6 +130,20 @@ sequenceDiagram
 | `Topic` | `"entity_changes"` | Destination topic for all entity types (use multiple `KafkaPublisher` instances for per-topic isolation) |
 | `Acks` | `null` (librdkafka default) | `"all"` / `"1"` / `"0"` |
 | `MessageMaxBytes` | `null` | Override producer-side message size limit |
+| `KeySelector` | `envelope => $"{EntityType}:{EntityId}"` | Selects the Kafka partition key per message. Messages with the same key land on the same partition — override to shard by tenant, aggregate root, or any envelope field |
+
+#### Custom partition key example
+
+```csharp
+new KafkaPublisherOptions
+{
+    BootstrapServers = "broker:9092",
+    Topic            = "entity_changes",
+    // Shard by tenant so all changes for a tenant land on the same partition.
+    // Consumer-group members each own a disjoint set of partitions → parallel per-tenant processing.
+    KeySelector = envelope => envelope.EntityId.Split(':')[0]   // "tenantId:entityId" → tenantId
+}
+```
 
 ---
 
@@ -352,7 +366,7 @@ The original `ConsumeResult` is broker-private state — `ChangeSubscriber` shou
 
 - **`PollTimeoutMs`**: the trade-off is between idle CPU usage and (a) shutdown latency (`Dispose()` waits up to `2 × PollTimeoutMs + 200 ms`) and (b) deferred-commit latency on idle topics. The default 1000 ms is a good production starting point.
 - **`IsAssigned`**: public property that becomes `true` after the first successful `Consume()` call. Useful in tests as an alternative to `Task.Delay` before publishing — poll it instead of sleeping.
-- **Topic partitioning**: with `Key = "{EntityType}:{EntityId}"`, all changes for a given entity land on the same partition. This preserves per-entity ordering, which combined with DOP = 1 per partition gives you ordered at-least-once delivery.
+- **Topic partitioning**: the default `KeySelector` produces `"{EntityType}:{EntityId}"`, co-locating all changes for a given entity on the same partition. Combined with DOP = 1 per partition this gives ordered at-least-once delivery. Override `KeySelector` (e.g. to a tenant ID) to spread load across partitions while preserving per-key ordering within each partition.
 
 ---
 
