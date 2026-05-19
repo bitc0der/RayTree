@@ -222,6 +222,52 @@ var subscriber = new ChangeSubscriberBuilder()
     .Build();
 ```
 
+### Kafka publisher — partition key
+
+`KafkaPublisherOptions.KeySelector` controls which Kafka partition key is stamped on each outgoing message. Messages with the same key are guaranteed to land on the same partition, so they are consumed in order.
+
+The default selector uses `EntityType:EntityId`:
+
+```csharp
+builder.ForEntity<Order>(e => e
+    .UsePublisher(new KafkaPublisher(new KafkaPublisherOptions
+    {
+        BootstrapServers = "localhost:9092",
+        Topic            = "orders"
+        // KeySelector defaults to envelope => $"{envelope.EntityType}:{envelope.EntityId}"
+    })));
+```
+
+Override `KeySelector` to shard by a different field. For example, to shard by tenant so all tenant changes land on the same partition — and different tenants can be processed in parallel by separate consumer-group members:
+
+```csharp
+new KafkaPublisherOptions
+{
+    BootstrapServers = "localhost:9092",
+    Topic            = "orders",
+    KeySelector      = envelope => envelope.EntityId.Split(':')[0]  // "tenantId:entityId" → tenantId
+}
+```
+
+Or use any envelope metadata — change type, entity type, a custom field embedded in `EntityId`, etc. The selector runs on the publisher side; the consumer side is unaffected.
+
+#### Consumer-group parallelism
+
+Kafka distributes partitions across all members of a consumer group. To process different entities (or entity key ranges) in parallel, run multiple `KafkaConsumer` instances that share the same `GroupId` and point at the same topic — Kafka assigns each instance a disjoint set of partitions automatically. No RayTree configuration is needed beyond the standard `KafkaConsumerOptions`:
+
+```csharp
+// Instance A and Instance B both use GroupId = "order-processors"
+// Kafka assigns ~half the partitions to each.
+new KafkaConsumerOptions
+{
+    BootstrapServers = "localhost:9092",
+    Topic            = "orders",
+    GroupId          = "order-processors"
+}
+```
+
+With `AckAfterHandler = true`, keep `MaxDegreeOfParallelism = 1` per consumer instance (offset commits are monotonic — out-of-order commits can skip messages).
+
 ### Broker-specific queue helpers
 
 Call the broker extension inside the `ForEntity` callback:

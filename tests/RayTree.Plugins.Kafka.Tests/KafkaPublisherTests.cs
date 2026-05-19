@@ -1,5 +1,6 @@
 using RayTree.Core.Models;
 using RayTree.Core.Tracking;
+using RayTree.Plugins.Kafka;
 
 namespace RayTree.Plugins.Kafka.Tests;
 
@@ -14,6 +15,7 @@ public class KafkaPublisherTests
         Assert.That(options.Topic, Is.EqualTo("entity_changes"));
         Assert.That(options.Acks, Is.Null);
         Assert.That(options.MessageMaxBytes, Is.Null);
+        Assert.That(options.KeySelector, Is.Not.Null);
     }
 
     [Test]
@@ -71,19 +73,28 @@ public class KafkaPublisherTests
     }
 
     [Test]
-    public void KafkaPublisher_CreateChange_BuildsCorrectMessageKey()
+    public void KafkaPublisherOptions_DefaultKeySelector_UsesEntityTypeAndId()
     {
-        var change = new EntityChange
-        {
-            EntityType = "User",
-            EntityId = "user-123",
-            ChangeType = ChangeType.Update,
-            Timestamp = DateTime.UtcNow,
-            CorrelationId = Guid.NewGuid()
-        };
+        var options = new KafkaPublisherOptions();
+        var envelope = new MessageEnvelope { EntityType = "User", EntityId = "user-123" };
 
-        var expectedKey = $"{change.EntityType}:{change.EntityId}";
-        Assert.That(expectedKey, Is.EqualTo("User:user-123"));
+        var key = options.KeySelector(envelope);
+
+        Assert.That(key, Is.EqualTo("User:user-123"));
+    }
+
+    [Test]
+    public void KafkaPublisherOptions_CustomKeySelector_IsUsed()
+    {
+        var options = new KafkaPublisherOptions
+        {
+            KeySelector = static envelope => envelope.EntityId
+        };
+        var envelope = new MessageEnvelope { EntityType = "User", EntityId = "user-123" };
+
+        var key = options.KeySelector(envelope);
+
+        Assert.That(key, Is.EqualTo("user-123"));
     }
 
     [Test]
