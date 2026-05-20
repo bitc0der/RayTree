@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18.1-alpine3.22
     environment:
       POSTGRES_DB: raytree_example
       POSTGRES_USER: postgres
@@ -16,7 +16,7 @@ services:
       retries: 10
 
   rabbitmq:
-    image: rabbitmq:4-management-alpine
+    image: rabbitmq:4.2.4-management-alpine
     ports:
       - "5672:5672"
       - "15672:15672"
