@@ -1,0 +1,22 @@
+<Project>
+  <!--
+    Import the repo-root Directory.Build.props to inherit framework settings (TargetFramework,
+    Nullable, ImplicitUsings, LangVersion, TreatWarningsAsErrors). Then override the packaging
+    metadata that does not apply to the example console apps.
+  -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <VersionPrefix></VersionPrefix>
+    <VersionSuffix></VersionSuffix>
+    <Authors></Authors>
+    <Copyright></Copyright>
+    <PackageLicenseExpression></PackageLicenseExpression>
+    <RepositoryUrl></RepositoryUrl>
+    <RepositoryType></RepositoryType>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <IncludeSymbols>false</IncludeSymbols>
+    <SymbolPackageFormat></SymbolPackageFormat>
+  </PropertyGroup>
+</Project>

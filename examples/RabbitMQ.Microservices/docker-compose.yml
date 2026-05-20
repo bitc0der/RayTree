@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: raytree_example
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d raytree_example"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  order-service:
+    build:
+      # Build context is the repo root so ProjectReference paths to ../../../src/RayTree.* resolve.
+      context: ../..
+      dockerfile: examples/RabbitMQ.Microservices/OrderService/Dockerfile
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      POSTGRES_CONNECTION: "Host=postgres;Port=5432;Database=raytree_example;Username=postgres;Password=postgres"
+      DOTNET_ENVIRONMENT: Development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+
+  notification-service:
+    build:
+      context: ../..
+      dockerfile: examples/RabbitMQ.Microservices/NotificationService/Dockerfile
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      DOTNET_ENVIRONMENT: Development
+    depends_on:
+      rabbitmq:
+        condition: service_started
+
+volumes:
+  postgres-data:
