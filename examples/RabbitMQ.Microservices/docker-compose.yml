@@ -39,7 +39,7 @@ services:
       postgres:
         condition: service_healthy
       rabbitmq:
-        condition: service_started
+        condition: service_healthy
 
   notification-service:
     build:
