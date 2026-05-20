@@ -51,11 +51,47 @@ The `NotificationService` uses `UseConsumer(consumer)` (shared mode) with `OnIns
 
 ### D5: Routing key pattern
 
-`OrderService` uses the default `RabbitMqPublisherOptions.RoutingKey = "change"`, producing keys like `change.Order.insert`. `NotificationService` binds with `change.Order.*` to receive all change types. This demonstrates the wildcard routing pattern without requiring a custom `RoutingKeySelector`.
+`OrderService` relies on the default `RabbitMqPublisherOptions.RoutingKey` value (`"change"`) — no override needed — which produces keys like `change.Order.insert`. `NotificationService` binds with `change.Order.*` to receive all change types. This demonstrates the wildcard routing pattern without requiring a custom `RoutingKeySelector`.
 
 ### D6: Exchange topology
 
-A single `topic` exchange named `raytree.changes` is declared by both services (declare-or-verify, idempotent). `OrderService` declares it on startup; `NotificationService` also declares it and binds its queue. RabbitMQ's passive/active declare semantics make the order of startup irrelevant.
+A single `topic` exchange named `raytree.changes` is declared by both services (declare-or-verify, idempotent). `OrderService` declares it on startup; `NotificationService` also declares it and binds its queue. RabbitMQ's passive/active declare semantics make the order of startup irrelevant. The `NotificationService` queue is named `notification-service.orders`, declared `durable: true, exclusive: false, autoDelete: false` so it survives restarts and can be horizontally scaled (multiple consumer replicas competing for the same queue).
+
+### D7: `RayTree.Hosting` over raw builder
+
+Both services use `Host.CreateApplicationBuilder(args)` + `services.AddChangeTracking(configuration, configure)` from `RayTree.Hosting`, not the raw `ChangeTrackingBuilder`. This is the documented "primary registration path" in CLAUDE.md — it gives the example graceful shutdown via `IHostApplicationLifetime`, structured logging out of the box, and `IConfiguration` binding for `ChangeTracking:Publisher` / `ChangeTracking:Subscriber` sections without bespoke env-var parsing. The `ChangeTrackingHostedService` handles `StartAsync`/`StopAsync` automatically.
+
+**Alternative considered**: raw `ChangeTrackingBuilder` + manual `Console.CancelKeyPress` wiring. Rejected — the example should showcase the recommended path, not the lower-level one.
+
+### D8: Repository / outbox atomicity is a known simplification
+
+`PostgreSqlRepository<Order>` and `PostgreSqlOutbox<Order>` each manage their own `NpgsqlConnection`. The library does not (yet) expose a shared-transaction API across them, so calling `repository.InsertAsync(order)` and then `tracker.TrackInsertAsync(order)` is two separate transactions. A crash between them can leave the orders table and outbox out of sync — the very problem the outbox pattern usually solves.
+
+For this example, we accept the limitation and document it prominently in the README: "**This example is not transactionally safe between the entity table and the outbox.** Real production systems should use `RayTree.EntityFrameworkCore` (where the `EntityChangeInterceptor` writes both inside `SaveChangesAsync`'s transaction) or wrap both writes in a custom shared-connection transaction."
+
+**Alternative considered**: include EF Core in this example to get true atomicity. Rejected — the EF wiring is a substantive additional surface and deserves a dedicated example; this one is about RabbitMQ-driven microservices. Adding EF would dilute the focus.
+
+**Alternative considered**: order the calls so `TrackInsertAsync` runs first (outbox-only) and persistence happens only on subsequent retry. Rejected — that inverts the standard outbox pattern and would teach a confusing model.
+
+### D9: Shared class library for the `Order` entity
+
+A `Shared/Shared.csproj` class library project holds `Order.cs` and is referenced by both `OrderService` and `NotificationService`. This is cleaner than `<Compile Include="..\Shared\Order.cs" />` linked files: IDE refactors propagate correctly, the type identity is unambiguous, and the solution view groups related files naturally.
+
+### D10: Inherit central package management
+
+The example projects sit under the repo root and so transitively pick up `Directory.Packages.props` and `Directory.Build.props` from the parent directory. Each `.csproj` references packages without a `Version=` attribute, matching the rest of the codebase. No example-local override files are needed.
+
+### D11: MessagePack serializer + Gzip compressor
+
+The payload pipeline uses `RayTree.Plugins.Serializers.MessagePack` (`.UseMessagePackSerializer()`) and `RayTree.Plugins.Compressors.Gzip` (`.UseGzipCompressor()`). MessagePack is a compact, schema-less binary format — payloads are roughly 30–50 % smaller than equivalent JSON before compression, with no codegen step or schema file required. The plugin uses `MessagePackSerializer.Typeless` with the contractless resolver, so the `Order` POCO needs no MessagePack-specific attributes (`[MessagePackObject]` / `[Key]`) — the existing `[Key] Id` from `System.ComponentModel.DataAnnotations` is unaffected because MessagePack's resolver does not consume that attribute.
+
+Gzip compression sits on top, further shrinking payloads on the wire and in the outbox `payload` column. Both services must register the same serializer/compressor pair — RayTree does not negotiate format on a per-message basis. The `MessageEnvelope.Payload` byte array on the broker is therefore `gzip(messagepack(EntityChange<Order>))`.
+
+**Alternative considered**: JSON + no compression. Rejected — JSON works but doesn't demonstrate the binary path, and an example is the natural place to showcase the more production-realistic choice. Gzip in particular illustrates the streaming compression contract (`IChangeCompressor`).
+
+**Alternative considered**: Protobuf serializer. Rejected — Protobuf requires `.proto` files and codegen, adding scaffolding noise that distracts from the messaging story.
+
+**Alternative considered**: Brotli or LZ4 compression. Rejected — Gzip is the most broadly recognised format and ships in every .NET runtime; the example aims for clarity over peak compression ratio.
 
 ## Risks / Trade-offs
 
@@ -64,3 +100,5 @@ A single `topic` exchange named `raytree.changes` is declared by both services (
 - **Hard-coded localhost connection strings** → Works for `docker compose up`; real deployments need env-var overrides. README notes this and shows the `RABBITMQ_HOST` / `POSTGRES_CONNECTION` environment variable pattern.
 - **No retry / reconnect logic** → RabbitMQ or PostgreSQL connection failures will crash the example services. Acceptable for demonstration purposes; production guidance belongs in docs, not this example.
 - **Docker Compose startup ordering** → `OrderService` must not attempt a DB connection before PostgreSQL is ready. Mitigated by a `healthcheck` on the `postgres` service and `condition: service_healthy` in `order-service`'s `depends_on`.
+- **Non-atomic repository + outbox writes** → See D8. Documented explicitly in the README. The example demonstrates the *messaging* pattern; production transactional safety requires EF Core integration or custom transaction wrapping.
+- **Default outbox `PollingInterval` of 5 s is sluggish for a demo** → Mitigated by setting `PollingInterval = TimeSpan.FromMilliseconds(500)` in `OrderService` so events appear within roughly half a second. README mentions NOTIFY/LISTEN (`UseNotificationChannel = true`) as the production fast-path.
