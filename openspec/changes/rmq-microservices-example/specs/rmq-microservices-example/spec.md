@@ -11,9 +11,13 @@ The example SHALL be a standalone .NET solution at `examples/RabbitMQ.Microservi
 - **WHEN** the example projects are opened in an IDE
 - **THEN** `OrderService` and `NotificationService` reference RayTree assemblies via `<ProjectReference>` pointing to the `src/` directory, and both reference the `Shared` project for the `Order` entity
 
-#### Scenario: Central package management is inherited
+#### Scenario: Central package management is inherited via local props files
 - **WHEN** a developer inspects the example `.csproj` files
-- **THEN** package references carry no `Version=` attribute and resolve via the parent `Directory.Packages.props`
+- **THEN** package references carry no `Version=` attribute and resolve via `examples/RabbitMQ.Microservices/Directory.Packages.props`, which itself `<Import>`s the repo-root `Directory.Packages.props` and only appends example-only packages (e.g. `Microsoft.Extensions.Hosting`)
+
+#### Scenario: Local Directory.Build.props isolates packaging metadata
+- **WHEN** a developer inspects `examples/RabbitMQ.Microservices/Directory.Build.props`
+- **THEN** it imports the repo-root `Directory.Build.props` and overrides packaging metadata (`<IsPackable>false</IsPackable>`, no `<VersionPrefix>` / author / license inheritance for the console apps), leaving the root file untouched
 
 ### Requirement: Order entity definition
 Both services SHALL share a common `Order` entity class with at least `Id` (Guid, explicitly annotated `[Key]`), `CustomerName` (string), `TotalAmount` (decimal), and `Status` (string) properties. The class SHALL carry `[Table("orders")]` so the `PostgreSqlRepository<Order>` source table is the plural form. The entity SHALL live in a `Shared` class library project referenced by both services.

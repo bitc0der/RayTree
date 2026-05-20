@@ -6,7 +6,9 @@
 - [ ] 1.4 Add `OrderService/OrderService.csproj` console-app project referencing `Shared`, `RayTree.Core`, `RayTree.Hosting`, `RayTree.Plugins.PostgreSQL`, `RayTree.Plugins.RabbitMQ`, `RayTree.Plugins.Serializers.MessagePack`, `RayTree.Plugins.Compressors.Gzip`
 - [ ] 1.5 Add `NotificationService/NotificationService.csproj` console-app project referencing `Shared`, `RayTree.Core`, `RayTree.Hosting`, `RayTree.Plugins.RabbitMQ`, `RayTree.Plugins.Serializers.MessagePack`, `RayTree.Plugins.Compressors.Gzip`
 - [ ] 1.6 Add all three projects to the solution file
-- [ ] 1.7 Verify no `Version=` attributes appear on any `<PackageReference>` so the parent `Directory.Packages.props` governs versions
+- [ ] 1.7 Create `examples/RabbitMQ.Microservices/Directory.Build.props` that `<Import>`s the repo-root `Directory.Build.props` and overrides `<IsPackable>false</IsPackable>` plus blanks out packaging metadata that doesn't apply to console apps
+- [ ] 1.8 Create `examples/RabbitMQ.Microservices/Directory.Packages.props` that `<Import>`s the repo-root `Directory.Packages.props` and appends `<PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.8" />` (and any other example-only packages)
+- [ ] 1.9 Verify no `Version=` attributes appear on any `<PackageReference>` so central package management governs versions
 
 ## 2. Shared Entity
 

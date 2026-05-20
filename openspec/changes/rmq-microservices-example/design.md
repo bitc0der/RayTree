@@ -77,9 +77,22 @@ For this example, we accept the limitation and document it prominently in the RE
 
 A `Shared/Shared.csproj` class library project holds `Order.cs` and is referenced by both `OrderService` and `NotificationService`. This is cleaner than `<Compile Include="..\Shared\Order.cs" />` linked files: IDE refactors propagate correctly, the type identity is unambiguous, and the solution view groups related files naturally.
 
-### D10: Inherit central package management
+### D10: Local Directory.Build.props and Directory.Packages.props that inherit the root
 
-The example projects sit under the repo root and so transitively pick up `Directory.Packages.props` and `Directory.Build.props` from the parent directory. Each `.csproj` references packages without a `Version=` attribute, matching the rest of the codebase. No example-local override files are needed.
+The root `Directory.Build.props` carries packaging metadata (`<VersionPrefix>`, `<Authors>`, `<PackageLicenseExpression>`, etc.) intended for the *library* projects. The example console apps must not inherit that metadata blindly — they aren't packed, and pulling in `<IncludeSymbols>true</IncludeSymbols>` etc. would be wrong.
+
+The root `Directory.Packages.props` also lacks `Microsoft.Extensions.Hosting` (only `Microsoft.Extensions.Hosting.Abstractions` is centrally pinned). The example needs the full Hosting package for `Host.CreateApplicationBuilder`. **The root `Directory.Packages.props` MUST NOT be modified** — the library's published API surface should not change just to support an example.
+
+Solution: place local `examples/RabbitMQ.Microservices/Directory.Build.props` and `examples/RabbitMQ.Microservices/Directory.Packages.props` that each explicitly `<Import>` the parent file via `$([MSBuild]::GetPathOfFileAbove('<filename>', '$(MSBuildThisFileDirectory)../'))`, then add example-only overrides:
+
+- The local `Directory.Build.props` imports the parent, then resets `<IsPackable>false</IsPackable>` and clears package metadata that does not apply to console apps.
+- The local `Directory.Packages.props` imports the parent and appends `<PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.8" />` (and any other example-only packages).
+
+This keeps central package management active, the example self-contained, and the library's global config untouched.
+
+**Alternative considered**: opt the example out of central package management by setting `<ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>` and hard-coding versions on every `PackageReference`. Rejected — it diverges from the codebase convention and creates two version-bookkeeping surfaces.
+
+**Alternative considered**: add `Microsoft.Extensions.Hosting` to the root `Directory.Packages.props`. Rejected — the example must not pollute the library's central package manifest with packages no library project consumes.
 
 ### D11: MessagePack serializer + Gzip compressor
 
