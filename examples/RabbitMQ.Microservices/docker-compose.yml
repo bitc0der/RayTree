@@ -50,6 +50,8 @@ services:
       DOTNET_ENVIRONMENT: Development
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      order-service:
         condition: service_started
 
 volumes:
