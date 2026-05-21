@@ -38,10 +38,10 @@
 
 ## 5. Docker Compose
 
-- [x] 5.1 Create `docker-compose.yml` with `postgres:17-alpine` service on port 5432, env vars `POSTGRES_DB=raytree_example`, `POSTGRES_USER=postgres`, `POSTGRES_PASSWORD=postgres`, and `healthcheck` running `pg_isready -U postgres -d raytree_example` every 5 s
-- [x] 5.2 Add `rabbitmq:4-management-alpine` service exposing ports 5672 and 15672
-- [x] 5.3 Add `order-service` with env `RABBITMQ_HOST=rabbitmq`, `POSTGRES_CONNECTION=Host=postgres;Port=5432;Database=raytree_example;Username=postgres;Password=postgres`, and `depends_on: {postgres: {condition: service_healthy}, rabbitmq: {condition: service_started}}`
-- [x] 5.4 Add `notification-service` with env `RABBITMQ_HOST=rabbitmq` and `depends_on: {rabbitmq: {condition: service_started}}`
+- [x] 5.1 Create `docker-compose.yml` with `postgres:18.1-alpine3.22` service on port 5432, env vars `POSTGRES_DB=raytree_example`, `POSTGRES_USER=postgres`, `POSTGRES_PASSWORD=postgres`, and `healthcheck` running `pg_isready -U postgres -d raytree_example` every 5 s
+- [x] 5.2 Add `rabbitmq:4.2.4-management-alpine` service exposing ports 5672 and 15672 with `rabbitmq-diagnostics ping` healthcheck
+- [x] 5.3 Add `order-service` with env `RABBITMQ_HOST=rabbitmq`, `POSTGRES_CONNECTION=Host=postgres;Port=5432;Database=raytree_example;Username=postgres;Password=postgres`, and `depends_on: {postgres: {condition: service_healthy}, rabbitmq: {condition: service_healthy}}` — both healthchecks must pass before .NET starts connecting
+- [x] 5.4 Add `notification-service` with env `RABBITMQ_HOST=rabbitmq` and `depends_on: {rabbitmq: {condition: service_healthy}, order-service: {condition: service_started}}` — the order-service dependency exists because the consumer only binds (doesn't declare) the `raytree.changes` exchange, so the publisher must create it first
 - [x] 5.5 Define a named volume for PostgreSQL data so restarts preserve the outbox state
 
 ## 6. Dockerfiles

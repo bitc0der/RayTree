@@ -85,7 +85,7 @@ The `[Key]` annotation is used here for explicitness — the library's `EntityCo
 - **THEN** the corresponding `MessageEnvelope` is observable in RabbitMQ within ~1 s under steady-state polling
 
 ### Requirement: Docker Compose local run
-A `docker-compose.yml` at the example root SHALL define services for PostgreSQL, RabbitMQ (with management plugin), `order-service`, and `notification-service`. Running `docker compose up` SHALL start all four services without manual configuration steps. The `order-service` SHALL declare a `depends_on` health-check dependency on the `postgres` service so it does not start before the database is ready.
+A `docker-compose.yml` at the example root SHALL define services for PostgreSQL, RabbitMQ (with management plugin), `order-service`, and `notification-service`. Running `docker compose up` SHALL start all four services without manual configuration steps. The `order-service` SHALL declare `depends_on` health-check dependencies on both `postgres` and `rabbitmq` so it does not start before either backing service is ready. The `notification-service` SHALL declare a health-check dependency on `rabbitmq` and a started-state dependency on `order-service` (because the consumer only binds to — but does not declare — the `raytree.changes` exchange, so the publisher in `order-service` must create it first).
 
 #### Scenario: Services start with docker compose up
 - **WHEN** a developer runs `docker compose up` from `examples/RabbitMQ.Microservices/`
