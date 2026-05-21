@@ -59,24 +59,19 @@ internal static class TopologyProbe
         ILogger? logger,
         CancellationToken cancellationToken)
     {
+        if (interval <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(interval), interval, "Topology wait interval must be positive.");
+        if (timeout is { } t && t <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "Topology wait timeout must be positive when set.");
+
         var stopwatch = Stopwatch.StartNew();
         var missCount = 0;
-        OperationInterruptedException? lastNotFound = null;
 
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (timeout is { } limit && stopwatch.Elapsed >= limit)
-            {
-                logger?.LogError(
-                    "RabbitMQ topology wait for {EntityKind} '{EntityName}' timed out after {Elapsed} (limit {Limit}).",
-                    entityKind, entityName, stopwatch.Elapsed, limit);
-                if (lastNotFound is not null) throw lastNotFound;
-                throw new TimeoutException(
-                    $"RabbitMQ topology wait for {entityKind} '{entityName}' timed out after {stopwatch.Elapsed} (limit {limit}).");
-            }
-
+            OperationInterruptedException notFound;
             IChannel? channel = null;
             try
             {
@@ -93,7 +88,7 @@ internal static class TopologyProbe
             }
             catch (OperationInterruptedException ex) when (ex.ShutdownReason?.ReplyCode == NotFoundReplyCode)
             {
-                lastNotFound = ex;
+                notFound = ex;
                 missCount++;
 
                 if (missCount == 1)
@@ -116,6 +111,15 @@ internal static class TopologyProbe
                     try { await channel.CloseAsync(CancellationToken.None); } catch { /* channel may already be closed by NOT_FOUND */ }
                     channel.Dispose();
                 }
+            }
+
+            // Timeout check after the failed attempt — `notFound` is guaranteed non-null here.
+            if (timeout is { } limit && stopwatch.Elapsed >= limit)
+            {
+                logger?.LogError(
+                    "RabbitMQ topology wait for {EntityKind} '{EntityName}' timed out after {Elapsed} (limit {Limit}).",
+                    entityKind, entityName, stopwatch.Elapsed, limit);
+                throw notFound;
             }
 
             await Task.Delay(interval, cancellationToken);

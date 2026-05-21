@@ -56,6 +56,10 @@ public class RabbitMqPublisherOptions
     /// (default), the loop continues indefinitely until the topology appears or the
     /// <see cref="CancellationToken"/> passed to <c>InitializeAsync</c> is cancelled. Operators who
     /// want a hard deadline independent of the host's cancellation should set this explicitly.
+    /// <para>
+    /// The timeout is evaluated <em>after</em> each failed attempt, so the observed wait may
+    /// exceed this value by up to one <see cref="TopologyWaitInterval"/>. Must be positive when set.
+    /// </para>
     /// </summary>
     public TimeSpan? TopologyWaitTimeout { get; set; }
 

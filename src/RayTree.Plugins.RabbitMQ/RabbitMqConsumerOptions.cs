@@ -67,6 +67,10 @@ public class RabbitMqConsumerOptions
     /// Optional ceiling on the total time the topology wait loop may consume. When <c>null</c>
     /// (default), the loop continues indefinitely until the topology appears or the
     /// <see cref="CancellationToken"/> passed to <c>InitializeAsync</c> is cancelled.
+    /// <para>
+    /// The timeout is evaluated <em>after</em> each failed attempt, so the observed wait may
+    /// exceed this value by up to one <see cref="TopologyWaitInterval"/>. Must be positive when set.
+    /// </para>
     /// </summary>
     public TimeSpan? TopologyWaitTimeout { get; set; }
 }

@@ -90,7 +90,8 @@ public class TopologyWaitTests : IAsyncDisposable
     }
 
     // ---------------------------------------------------------------------
-    // 5.3 Consumer waits for an externally-owned queue (no exchange binding).
+    // 5.3 Consumer waits for an externally-owned queue (no exchange binding)
+    //     and a message published to that queue flows through end-to-end.
     // ---------------------------------------------------------------------
     [Test]
     public async Task Consumer_waits_then_succeeds_when_queue_appears_late()
@@ -113,8 +114,34 @@ public class TopologyWaitTests : IAsyncDisposable
 
         await consumer.InitializeAsync();
         await declareTask;
-        // If InitializeAsync returned, the queue probe succeeded.
-        Assert.Pass();
+
+        // Publish a message directly to the queue (default exchange + queueName routing key)
+        // on a separate connection, then drain it from the consumer's IAsyncEnumerable to verify
+        // the consumer is actually wired up — not just that InitializeAsync returned.
+        var factory = CreateFactory();
+        await using (var conn = await factory.CreateConnectionAsync())
+        await using (var ch = await conn.CreateChannelAsync())
+        {
+            var props = new BasicProperties
+            {
+                MessageId = Guid.NewGuid().ToString(),
+                Headers = new Dictionary<string, object?>
+                {
+                    ["entity_type"] = "Order",
+                    ["entity_id"] = "1",
+                    ["change_type"] = "Insert",
+                    ["version"] = 0
+                }
+            };
+            await ch.BasicPublishAsync(exchange: "", routingKey: queueName,
+                mandatory: false, basicProperties: props, body: new byte[] { 1 });
+        }
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await using var enumerator = consumer.ConsumeAsync(cts.Token).GetAsyncEnumerator(cts.Token);
+        Assert.That(await enumerator.MoveNextAsync(), Is.True, "expected a message to arrive within 10s");
+        Assert.That(enumerator.Current.EntityType, Is.EqualTo("Order"));
+        Assert.That(enumerator.Current.EntityId, Is.EqualTo("1"));
     }
 
     // ---------------------------------------------------------------------
@@ -192,6 +219,15 @@ public class TopologyWaitTests : IAsyncDisposable
 
     // ---------------------------------------------------------------------
     // 5.7 Non-NOT_FOUND errors do not retry.
+    //
+    // Note: the broker's PRECONDITION_FAILED is injected via the active-declare path because
+    // RabbitMQ's passive declare can only return NOT_FOUND for missing topology (argument
+    // mismatches are impossible — passive declare takes no arguments). The TopologyProbe's
+    // exception filter (`ReplyCode == 404`) is identical for both paths, so any
+    // OperationInterruptedException with a non-404 reply code propagates without retry. The
+    // probe path's "no retry on non-404" is independently covered by
+    // Cancellation_during_wait_throws_OperationCanceledException (an OperationCanceledException
+    // is a non-NOT_FOUND throwable that exits the loop on the first occurrence).
     // ---------------------------------------------------------------------
     [Test]
     public async Task NonNotFound_error_does_not_retry()

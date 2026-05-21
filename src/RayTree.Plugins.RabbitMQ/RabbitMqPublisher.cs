@@ -48,28 +48,36 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 
             _connection = await factory.CreateConnectionAsync(cancellationToken: cancellationToken);
 
-            if (_options is { WaitForTopology: true, DeclareExchange: false })
+            try
             {
-                await TopologyProbe.WaitForExchangeAsync(
-                    _connection,
-                    _options.ExchangeName,
-                    _options.TopologyWaitInterval,
-                    _options.TopologyWaitTimeout,
-                    _logger,
-                    cancellationToken);
+                if (_options is { WaitForTopology: true, DeclareExchange: false })
+                {
+                    await TopologyProbe.WaitForExchangeAsync(
+                        _connection,
+                        _options.ExchangeName,
+                        _options.TopologyWaitInterval,
+                        _options.TopologyWaitTimeout,
+                        _logger,
+                        cancellationToken);
+                }
+
+                _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
+
+                if (_options.DeclareExchange)
+                    await _channel.ExchangeDeclareAsync(
+                        exchange: _options.ExchangeName,
+                        type: _options.ExchangeType,
+                        durable: _options.Durable,
+                        cancellationToken: cancellationToken
+                    );
+
+                return _channel;
             }
-
-            _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
-
-            if (_options.DeclareExchange)
-                await _channel.ExchangeDeclareAsync(
-                    exchange: _options.ExchangeName,
-                    type: _options.ExchangeType,
-                    durable: _options.Durable,
-                    cancellationToken: cancellationToken
-                );
-
-            return _channel;
+            catch
+            {
+                await CleanupAfterFailedInitAsync();
+                throw;
+            }
         }
         finally
         {
@@ -104,6 +112,23 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
             body: envelope.Payload,
             cancellationToken: cancellationToken
         );
+    }
+
+    private async Task CleanupAfterFailedInitAsync()
+    {
+        if (_channel is not null)
+        {
+            try { await _channel.CloseAsync(CancellationToken.None); } catch { /* may already be closed */ }
+            _channel.Dispose();
+            _channel = null;
+        }
+
+        if (_connection is not null)
+        {
+            try { await _connection.CloseAsync(CancellationToken.None); } catch { /* may already be closed */ }
+            _connection.Dispose();
+            _connection = null;
+        }
     }
 
     public void Dispose()

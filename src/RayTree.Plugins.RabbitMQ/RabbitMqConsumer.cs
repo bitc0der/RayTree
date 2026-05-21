@@ -34,68 +34,93 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
 
         _connection = await factory.CreateConnectionAsync(cancellationToken);
 
-        // No logger is passed to the probe: RabbitMqConsumer intentionally has no logger
-        // (documented exception to the logging-placement rule in CLAUDE.md).
-        if (_options is { WaitForTopology: true, DeclareQueue: false })
+        try
         {
-            await TopologyProbe.WaitForQueueAsync(
-                _connection,
-                _options.QueueName,
-                _options.TopologyWaitInterval,
-                _options.TopologyWaitTimeout,
-                logger: null,
-                cancellationToken);
-        }
-
-        _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
-
-        if (_options.DeclareQueue)
-            await _channel.QueueDeclareAsync(
-                queue: _options.QueueName,
-                durable: _options.Durable,
-                exclusive: false,
-                autoDelete: false,
-                arguments: null,
-                cancellationToken: cancellationToken
-            );
-
-        if (!string.IsNullOrEmpty(_options.ExchangeName))
-        {
-            if (_options.WaitForTopology)
+            // No logger is passed to the probe: RabbitMqConsumer intentionally has no logger
+            // (documented exception to the logging-placement rule in CLAUDE.md).
+            if (_options is { WaitForTopology: true, DeclareQueue: false })
             {
-                await TopologyProbe.WaitForExchangeAsync(
+                await TopologyProbe.WaitForQueueAsync(
                     _connection,
-                    _options.ExchangeName,
+                    _options.QueueName,
                     _options.TopologyWaitInterval,
                     _options.TopologyWaitTimeout,
                     logger: null,
                     cancellationToken);
             }
 
-            await _channel.QueueBindAsync(
+            _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
+
+            if (_options.DeclareQueue)
+                await _channel.QueueDeclareAsync(
+                    queue: _options.QueueName,
+                    durable: _options.Durable,
+                    exclusive: false,
+                    autoDelete: false,
+                    arguments: null,
+                    cancellationToken: cancellationToken
+                );
+
+            if (!string.IsNullOrEmpty(_options.ExchangeName))
+            {
+                if (_options.WaitForTopology)
+                {
+                    await TopologyProbe.WaitForExchangeAsync(
+                        _connection,
+                        _options.ExchangeName,
+                        _options.TopologyWaitInterval,
+                        _options.TopologyWaitTimeout,
+                        logger: null,
+                        cancellationToken);
+                }
+
+                await _channel.QueueBindAsync(
+                    queue: _options.QueueName,
+                    exchange: _options.ExchangeName,
+                    routingKey: _options.BindingKey,
+                    cancellationToken: cancellationToken
+                );
+            }
+
+            await _channel.BasicQosAsync(
+                prefetchSize: 0,
+                prefetchCount: _options.PrefetchCount,
+                global: false,
+                cancellationToken: cancellationToken
+            );
+
+            var consumer = new AsyncEventingBasicConsumer(_channel);
+            consumer.ReceivedAsync += OnMessageReceived;
+
+            await _channel.BasicConsumeAsync(
                 queue: _options.QueueName,
-                exchange: _options.ExchangeName,
-                routingKey: _options.BindingKey,
+                autoAck: false,
+                consumer: consumer,
                 cancellationToken: cancellationToken
             );
         }
+        catch
+        {
+            await CleanupAfterFailedInitAsync();
+            throw;
+        }
+    }
 
-        await _channel.BasicQosAsync(
-            prefetchSize: 0,
-            prefetchCount: _options.PrefetchCount,
-            global: false,
-            cancellationToken: cancellationToken
-        );
+    private async Task CleanupAfterFailedInitAsync()
+    {
+        if (_channel is not null)
+        {
+            try { await _channel.CloseAsync(CancellationToken.None); } catch { /* may already be closed */ }
+            _channel.Dispose();
+            _channel = null;
+        }
 
-        var consumer = new AsyncEventingBasicConsumer(_channel);
-        consumer.ReceivedAsync += OnMessageReceived;
-
-        await _channel.BasicConsumeAsync(
-            queue: _options.QueueName,
-            autoAck: false,
-            consumer: consumer,
-            cancellationToken: cancellationToken
-        );
+        if (_connection is not null)
+        {
+            try { await _connection.CloseAsync(CancellationToken.None); } catch { /* may already be closed */ }
+            _connection.Dispose();
+            _connection = null;
+        }
     }
 
     private async Task OnMessageReceived(object sender, BasicDeliverEventArgs ea)
