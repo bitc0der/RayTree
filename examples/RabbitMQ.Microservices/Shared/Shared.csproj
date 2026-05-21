@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>RabbitMqMicroservices.Shared</RootNamespace>
+    <AssemblyName>RabbitMqMicroservices.Shared</AssemblyName>
+  </PropertyGroup>
+</Project>
