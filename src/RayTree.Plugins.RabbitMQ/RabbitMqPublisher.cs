@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Publisher;
@@ -7,14 +9,16 @@ namespace RayTree.Plugins.RabbitMQ;
 public class RabbitMqPublisher : IQueuePublisher, IDisposable
 {
     private readonly RabbitMqPublisherOptions _options;
+    private readonly ILogger<RabbitMqPublisher> _logger;
     private IConnection? _connection;
     private IChannel? _channel;
 
     private readonly SemaphoreSlim _semaphore = new(initialCount: 1, maxCount: 1);
 
-    public RabbitMqPublisher(RabbitMqPublisherOptions options)
+    public RabbitMqPublisher(RabbitMqPublisherOptions options, ILoggerFactory? loggerFactory = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RabbitMqPublisher>();
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -43,6 +47,18 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
             };
 
             _connection = await factory.CreateConnectionAsync(cancellationToken: cancellationToken);
+
+            if (_options is { WaitForTopology: true, DeclareExchange: false })
+            {
+                await TopologyProbe.WaitForExchangeAsync(
+                    _connection,
+                    _options.ExchangeName,
+                    _options.TopologyWaitInterval,
+                    _options.TopologyWaitTimeout,
+                    _logger,
+                    cancellationToken);
+            }
+
             _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
 
             if (_options.DeclareExchange)

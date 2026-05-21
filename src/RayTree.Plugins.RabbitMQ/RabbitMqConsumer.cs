@@ -33,6 +33,20 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         };
 
         _connection = await factory.CreateConnectionAsync(cancellationToken);
+
+        // No logger is passed to the probe: RabbitMqConsumer intentionally has no logger
+        // (documented exception to the logging-placement rule in CLAUDE.md).
+        if (_options is { WaitForTopology: true, DeclareQueue: false })
+        {
+            await TopologyProbe.WaitForQueueAsync(
+                _connection,
+                _options.QueueName,
+                _options.TopologyWaitInterval,
+                _options.TopologyWaitTimeout,
+                logger: null,
+                cancellationToken);
+        }
+
         _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
 
         if (_options.DeclareQueue)
@@ -46,12 +60,25 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
             );
 
         if (!string.IsNullOrEmpty(_options.ExchangeName))
+        {
+            if (_options.WaitForTopology)
+            {
+                await TopologyProbe.WaitForExchangeAsync(
+                    _connection,
+                    _options.ExchangeName,
+                    _options.TopologyWaitInterval,
+                    _options.TopologyWaitTimeout,
+                    logger: null,
+                    cancellationToken);
+            }
+
             await _channel.QueueBindAsync(
                 queue: _options.QueueName,
                 exchange: _options.ExchangeName,
                 routingKey: _options.BindingKey,
                 cancellationToken: cancellationToken
             );
+        }
 
         await _channel.BasicQosAsync(
             prefetchSize: 0,
