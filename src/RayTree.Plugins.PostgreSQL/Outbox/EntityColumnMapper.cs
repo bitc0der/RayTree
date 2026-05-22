@@ -35,8 +35,13 @@ public static class EntityColumnMapper
         return result;
     }
 
+    public const string OutboxTableSuffix = "_outbox";
+
     public static string GetTableName(Type entityType)
         => entityType.GetCustomAttribute<TableAttribute>()?.Name ?? ToSnakeCase(entityType.Name);
+
+    public static string GetOutboxTableName(Type entityType)
+        => GetTableName(entityType) + OutboxTableSuffix;
 
     public static IReadOnlyList<PropertyInfo> GetKeyProperties(Type entityType)
     {

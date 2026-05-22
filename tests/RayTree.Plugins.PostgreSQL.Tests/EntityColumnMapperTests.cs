@@ -92,6 +92,13 @@ public class EntityColumnMapperTests
         => Assert.That(EntityColumnMapper.GetTableName(typeof(TestEntity)), Is.EqualTo("test_entity"));
 
     [Test]
+    public void GetOutboxTableName_AppendsOutboxSuffix()
+    {
+        Assert.That(EntityColumnMapper.GetOutboxTableName(typeof(AnnotatedEntity)), Is.EqualTo("annotated_entity_outbox"));
+        Assert.That(EntityColumnMapper.GetOutboxTableName(typeof(TestEntity)), Is.EqualTo("test_entity_outbox"));
+    }
+
+    [Test]
     public void ToPostgresType_IntArray_ReturnsIntegerArray()
         => Assert.That(EntityColumnMapper.ToPostgresType(typeof(int[])), Is.EqualTo("INTEGER[]"));
 
