@@ -28,11 +28,11 @@ public class PostgreSqlRepositoryIntegrationTests : IAsyncDisposable
             .ForEntity<TestUser>(e => e
                 .UseRepository(new PostgreSqlRepository<TestUser>(new()
                 {
-                    ConnectionString = _postgres.GetConnectionString(), TableName = "test_users"
+                    ConnectionString = _postgres.GetConnectionString()
                 }, NullLoggerFactory.Instance))
                 .UseOutbox(new PostgreSqlOutbox<TestUser>(new()
                 {
-                    ConnectionString = _postgres.GetConnectionString(), OutboxTableName = "test_users_outbox"
+                    ConnectionString = _postgres.GetConnectionString()
                 }, NullLoggerFactory.Instance))
                 .UsePublisher(new InMemoryQueue())
                 .UseSerializer(new RayTree.Plugins.Serializers.Json.JsonSerializerPlugin())

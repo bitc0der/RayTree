@@ -24,7 +24,7 @@ public static class PostgreSqlRepositoryExtensions
 
         return builder.UseOutbox<IOutbox>(_ => new PostgreSqlOutbox<TEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = options.ConnectionString, OutboxTableName = options.TableName + "_outbox"
+            ConnectionString = options.ConnectionString
         }, factory));
     }
 }

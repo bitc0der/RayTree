@@ -21,7 +21,7 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
     private PostgreSqlOutbox<TestEntity> _outbox = null!;
     private NotificationBasedPublisher _publisher = null!;
 
-    private const string OutboxTable = "notification_test_outbox";
+    private const string OutboxTable = "test_entity_outbox";
     private const string ChannelName = "notification_test_channel";
 
     [OneTimeSetUp]
@@ -38,7 +38,6 @@ public class NotificationBasedPublisherTests : IAsyncDisposable
         _outbox = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable,
             UseNotificationChannel = true,
             NotificationChannel = ChannelName
         }, NullLoggerFactory.Instance);

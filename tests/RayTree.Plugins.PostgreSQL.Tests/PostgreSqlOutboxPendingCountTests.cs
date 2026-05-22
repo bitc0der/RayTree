@@ -10,7 +10,7 @@ namespace RayTree.Plugins.PostgreSQL.Tests;
 [NonParallelizable]
 public class PostgreSqlOutboxPendingCountTests : IAsyncDisposable
 {
-    private const string TableName = "pending_count_outbox";
+    private const string TableName = "test_entity_outbox";
     private readonly IContainer _postgres = PostgresContainerFactory.Create();
     private PostgreSqlOutbox<TestEntity> _outbox = null!;
 
@@ -22,8 +22,7 @@ public class PostgreSqlOutboxPendingCountTests : IAsyncDisposable
     {
         _outbox = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName  = TableName
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await _outbox.InitializeAsync();
     }

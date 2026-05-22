@@ -16,7 +16,7 @@ builder
         .UseOutbox(new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
         {
             ConnectionString = connectionString
-            // OutboxTableName defaults to "product_outbox"
+            // Outbox table is derived from typeof(Product) as "product_outbox"
         }))
         .UsePublisher(new InMemoryQueue())
         .UseSerializer(new JsonSerializerPlugin())
@@ -25,7 +25,7 @@ builder
         .UseOutbox(new PostgreSqlOutbox<Order>(new PostgreSqlOutboxOptions
         {
             ConnectionString = connectionString
-            // OutboxTableName defaults to "order_outbox"
+            // Outbox table is derived from typeof(Order) as "order_outbox"
         }))
         .UsePublisher(new InMemoryQueue())
         .UseSerializer(new ProtobufSerializerPlugin())

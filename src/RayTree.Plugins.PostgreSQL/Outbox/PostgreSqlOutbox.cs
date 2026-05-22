@@ -13,6 +13,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
     where TEntity : class
 {
     private readonly PostgreSqlOutboxOptions _options;
+    private readonly string _outboxTableName;
     private readonly IReadOnlyList<EntityColumnMapper.PropertyColumn> _propertyColumns;
     private readonly string _insertSql;
     private readonly string _selectColumns;
@@ -23,11 +24,8 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<PostgreSqlOutbox<TEntity>>();
-
-        if (string.IsNullOrWhiteSpace(options.OutboxTableName))
-            options.OutboxTableName = EntityColumnMapper.GetTableName(typeof(TEntity)) + "_outbox";
-
         _options = options;
+        _outboxTableName = EntityColumnMapper.GetOutboxTableName(typeof(TEntity));
         _propertyColumns = EntityColumnMapper.GetColumns(typeof(TEntity));
         _insertSql = BuildInsertSql();
         _selectColumns = BuildSelectColumns();
@@ -42,7 +40,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
             ? ", " + string.Join(", ", _propertyColumns.Select(c => "@" + c.ColumnName))
             : "";
         return $"""
-                INSERT INTO {_options.OutboxTableName}
+                INSERT INTO {_outboxTableName}
                     (entity_id, change_type, timestamp, version, correlation_id, entity_type{extraCols})
                 VALUES
                     (@EntityId, @ChangeType, @Timestamp, @Version, @CorrelationId, @EntityType{extraParams})
@@ -60,11 +58,11 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        var outboxSchema = OutboxTableSchema.Create(typeof(TEntity).Name, _options.OutboxTableName);
+        var outboxSchema = OutboxTableSchema.Create(typeof(TEntity).Name, _outboxTableName);
         foreach (var col in _propertyColumns)
             outboxSchema.AddEntityPropertyColumn(col.Property.Name, col.ColumnName, col.ColumnType, col.IsNullable);
 
-        if (!await SchemaInspector.TableExistsAsync(_options.ConnectionString, _options.OutboxTableName, cancellationToken))
+        if (!await SchemaInspector.TableExistsAsync(_options.ConnectionString, _outboxTableName, cancellationToken))
         {
             var outboxDdl = OutboxSchemaGenerator.GenerateCreateTable(outboxSchema, includeIndexes: true);
             await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, outboxDdl, cancellationToken);
@@ -77,22 +75,22 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
                 .Select(i => new IndexMigrationSpec(i.Name, IsUnique: false, i.Columns, i.Where))
                 .ToList();
             await IndexMigrator.ApplyDiffAsync(
-                _options.ConnectionString, _options.OutboxTableName, desiredIndexes, _logger, cancellationToken);
+                _options.ConnectionString, _outboxTableName, desiredIndexes, _logger, cancellationToken);
         }
 
         if (_options.UseNotificationChannel && !string.IsNullOrEmpty(_options.NotificationChannel))
         {
-            var functionName = $"notify_{_options.OutboxTableName}_change";
+            var functionName = $"notify_{_outboxTableName}_change";
             var triggerFunctionDdl = NotificationBasedPublisher.GenerateNotifyTriggerFunction(
                 functionName, _options.NotificationChannel);
             await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, triggerFunctionDdl, cancellationToken);
 
-            var triggerName = $"{_options.OutboxTableName}_notify_trigger";
-            var dropTriggerDdl = NotificationBasedPublisher.GenerateDropTrigger(triggerName, _options.OutboxTableName);
+            var triggerName = $"{_outboxTableName}_notify_trigger";
+            var dropTriggerDdl = NotificationBasedPublisher.GenerateDropTrigger(triggerName, _outboxTableName);
             await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, dropTriggerDdl, cancellationToken);
 
             var triggerDdl =
-                NotificationBasedPublisher.GenerateNotifyTrigger(triggerName, _options.OutboxTableName, functionName);
+                NotificationBasedPublisher.GenerateNotifyTrigger(triggerName, _outboxTableName, functionName);
             await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, triggerDdl, cancellationToken);
         }
     }
@@ -104,10 +102,10 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
             .ToList();
         return SchemaMigrator.ApplyDiffAsync(
             _options.ConnectionString,
-            _options.OutboxTableName,
+            _outboxTableName,
             desired,
             col => OutboxSchemaGenerator.GenerateAddColumn(
-                _options.OutboxTableName,
+                _outboxTableName,
                 new OutboxColumn { Name = col.Name, Type = col.Type, IsNullable = col.IsNullable }),
             static name => name.StartsWith("state_", StringComparison.OrdinalIgnoreCase),
             _logger,
@@ -158,7 +156,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
         await using var cmd = new NpgsqlCommand($"""
                                                  SELECT {_selectColumns}
-                                                 FROM {_options.OutboxTableName}
+                                                 FROM {_outboxTableName}
                                                  WHERE published = FALSE
                                                  ORDER BY timestamp
                                                  LIMIT @BatchSize
@@ -188,7 +186,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
         var sql = $"""
                    SELECT {_selectColumns}
-                   FROM {_options.OutboxTableName}
+                   FROM {_outboxTableName}
                    WHERE published = FALSE AND entity_type = @EntityType
                    """;
 
@@ -215,7 +213,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
     public Task MarkPublishedAsync(long id, CancellationToken cancellationToken = default)
         => ExecuteNonQueryAsync($"""
-                                 UPDATE {_options.OutboxTableName}
+                                 UPDATE {_outboxTableName}
                                  SET published = TRUE
                                  WHERE id = @Id
                                  """, new NpgsqlParameter("Id", id), cancellationToken);
@@ -225,7 +223,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         await using var conn = new NpgsqlConnection(_options.ConnectionString);
         await conn.OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($"""
-                                                 UPDATE {_options.OutboxTableName}
+                                                 UPDATE {_outboxTableName}
                                                  SET published = TRUE
                                                  WHERE id = @Id AND published = FALSE
                                                  """, conn);
@@ -235,7 +233,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
     public Task RevertClaimAsync(long id, CancellationToken cancellationToken = default)
         => ExecuteNonQueryAsync($"""
-                                 UPDATE {_options.OutboxTableName}
+                                 UPDATE {_outboxTableName}
                                  SET published = FALSE
                                  WHERE id = @Id
                                  """, new NpgsqlParameter("Id", id), cancellationToken);
@@ -257,9 +255,9 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         await conn.OpenAsync(cancellationToken);
 
         await using var cmd = new NpgsqlCommand($"""
-                                                 DELETE FROM {_options.OutboxTableName}
+                                                 DELETE FROM {_outboxTableName}
                                                  WHERE id IN (
-                                                     SELECT id FROM {_options.OutboxTableName}
+                                                     SELECT id FROM {_outboxTableName}
                                                      WHERE {publishedFilter} AND timestamp < @Cutoff
                                                      ORDER BY id
                                                      LIMIT @BatchSize
@@ -288,7 +286,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         await conn.OpenAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($"""
                                                  SELECT count(*)
-                                                 FROM {_options.OutboxTableName}
+                                                 FROM {_outboxTableName}
                                                  WHERE published = FALSE
                                                  """, conn);
         var result = await cmd.ExecuteScalarAsync(cancellationToken);
@@ -306,7 +304,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
         await using var cmd = new NpgsqlCommand($"""
                                                  SELECT {_selectColumns}
-                                                 FROM {_options.OutboxTableName}
+                                                 FROM {_outboxTableName}
                                                  WHERE id = @Id
                                                  """, conn) { Parameters = { new("Id", id) } };
 

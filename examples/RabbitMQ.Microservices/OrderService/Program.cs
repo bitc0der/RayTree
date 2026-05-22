@@ -37,7 +37,6 @@ var orderRepository = new PostgreSqlRepository<Order>(
     new PostgreSqlRepositoryOptions
     {
         ConnectionString = pgConnection,
-        TableName = "orders",
     },
     pluginLoggerFactory);
 
@@ -60,7 +59,6 @@ builder.Services.AddChangeTracking(builder.Configuration, cfg =>
                 new PostgreSqlOutboxOptions
                 {
                     ConnectionString = pgConnection,
-                    OutboxTableName = "order_outbox",
                 },
                 pluginLoggerFactory))
             .UsePublisher(new RabbitMqPublisher(new RabbitMqPublisherOptions

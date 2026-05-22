@@ -31,8 +31,7 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
     {
         _outbox = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName  = "test_entity_outbox"
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await _outbox.InitializeAsync();
     }
@@ -139,7 +138,6 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
         var outboxWithSmallBatch = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName  = "test_entity_outbox",
             CleanupBatchSize = 2
         }, NullLoggerFactory.Instance);
 
@@ -297,8 +295,7 @@ public class PostgreSqlOutboxArrayIntegrationTests : IAsyncDisposable
     {
         _outbox = new PostgreSqlOutbox<ArrayEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName  = "array_entity_outbox"
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await _outbox.InitializeAsync();
     }

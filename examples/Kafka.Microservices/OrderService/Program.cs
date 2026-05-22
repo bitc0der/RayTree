@@ -35,7 +35,6 @@ var orderRepository = new PostgreSqlRepository<Order>(
     new PostgreSqlRepositoryOptions
     {
         ConnectionString = pgConnection,
-        TableName = "orders",
     },
     pluginLoggerFactory);
 
@@ -58,7 +57,6 @@ builder.Services.AddChangeTracking(builder.Configuration, cfg =>
                 new PostgreSqlOutboxOptions
                 {
                     ConnectionString = pgConnection,
-                    OutboxTableName = "order_outbox",
                 },
                 pluginLoggerFactory))
             // Default KeySelector is "{EntityType}:{EntityId}" — all changes for the same Order land on

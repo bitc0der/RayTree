@@ -12,6 +12,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     where TEntity : class
 {
     private readonly PostgreSqlRepositoryOptions _options;
+    private readonly string _tableName;
     private readonly IReadOnlyList<EntityColumnMapper.PropertyColumn> _keyColumns;
     private readonly string _insertSql;
     private readonly string _whereClause;
@@ -23,10 +24,8 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(loggerFactory);
         _logger = loggerFactory.CreateLogger<PostgreSqlRepository<TEntity>>();
-        if (string.IsNullOrWhiteSpace(options.TableName))
-            options.TableName = EntityColumnMapper.GetTableName(typeof(TEntity));
-
         _options = options;
+        _tableName = EntityColumnMapper.GetTableName(typeof(TEntity));
 
         var keyProperties = EntityColumnMapper.GetKeyProperties(typeof(TEntity));
         var allEntityColumns = EntityColumnMapper.GetColumns(typeof(TEntity));
@@ -42,7 +41,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     {
         var cols = string.Join(", ", _keyColumns.Select(c => c.ColumnName));
         var parms = string.Join(", ", Enumerable.Range(0, _keyColumns.Count).Select(i => $"@K{i}"));
-        return $"INSERT INTO {_options.TableName} ({cols}) VALUES ({parms})";
+        return $"INSERT INTO {_tableName} ({cols}) VALUES ({parms})";
     }
 
     private string BuildWhereClause()
@@ -56,9 +55,9 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         var keySourceColumns = _keyColumns
             .Select(c => new SourceTableColumn { Name = c.ColumnName, Type = c.ColumnType, IsNullable = false })
             .ToList();
-        var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, keySourceColumns, _options.TableName);
+        var sourceSchema = SourceTableDdlGenerator.CreateDefault(typeof(TEntity).Name, keySourceColumns, _tableName);
 
-        if (!await SchemaInspector.TableExistsAsync(_options.ConnectionString, _options.TableName, cancellationToken))
+        if (!await SchemaInspector.TableExistsAsync(_options.ConnectionString, _tableName, cancellationToken))
         {
             var tableDdl = SourceTableDdlGenerator.GenerateCreateTable(sourceSchema, ifNotExists: true,
                 includeIndexes: true);
@@ -68,7 +67,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
 
         // Existing table: diff against desired columns, add any that are missing.
         var existing = await SchemaInspector.GetColumnsAsync(
-            _options.ConnectionString, _options.TableName, cancellationToken);
+            _options.ConnectionString, _tableName, cancellationToken);
 
         bool? tableHasRows = null;
         foreach (var col in _keyColumns)
@@ -76,18 +75,18 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             if (existing.ContainsKey(col.ColumnName))
                 continue;
 
-            tableHasRows ??= await SchemaInspector.TableHasRowsAsync(_options.ConnectionString, _options.TableName, cancellationToken);
+            tableHasRows ??= await SchemaInspector.TableHasRowsAsync(_options.ConnectionString, _tableName, cancellationToken);
             if (tableHasRows.Value)
                 throw new InvalidOperationException(
                     $"Cannot add column '{col.ColumnName}': it is NOT NULL with no default and table " +
-                    $"'{_options.TableName}' already has rows. Add a DEFAULT or migrate manually.");
+                    $"'{_tableName}' already has rows. Add a DEFAULT or migrate manually.");
 
             var addColDdl = SourceTableDdlGenerator.GenerateAddColumn(
-                _options.TableName,
+                _tableName,
                 new SourceTableColumn { Name = col.ColumnName, Type = col.ColumnType, IsNullable = false });
             await SchemaInspector.ExecuteDdlAsync(_options.ConnectionString, addColDdl, cancellationToken);
             _logger.LogInformation("Added column {Column} ({Type}) to {Table}",
-                col.ColumnName, col.ColumnType, _options.TableName);
+                col.ColumnName, col.ColumnType, _tableName);
         }
 
         var desiredByName = _keyColumns.ToDictionary(c => c.ColumnName, StringComparer.OrdinalIgnoreCase);
@@ -96,7 +95,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             if (s_InfraColumns.Contains(name) || desiredByName.ContainsKey(name)) continue;
             _logger.LogWarning(
                 "Column '{Column}' exists in '{Table}' but has no matching entity property — consider dropping it manually",
-                name, _options.TableName);
+                name, _tableName);
         }
         foreach (var col in _keyColumns)
         {
@@ -104,7 +103,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
                 !string.Equals(ec.NormalizedType, col.ColumnType, StringComparison.OrdinalIgnoreCase))
                 _logger.LogWarning(
                     "Column '{Column}' in '{Table}' has type '{Actual}' but entity expects '{Expected}' — type changes must be migrated manually",
-                    col.ColumnName, _options.TableName, ec.NormalizedType, col.ColumnType);
+                    col.ColumnName, _tableName, ec.NormalizedType, col.ColumnType);
         }
 
         // All desired columns are now present — sync indexes.
@@ -112,7 +111,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
             .Select(i => new IndexMigrationSpec(i.Name, i.IsUnique, i.Columns, i.Where))
             .ToList();
         await IndexMigrator.ApplyDiffAsync(
-            _options.ConnectionString, _options.TableName, desiredIndexes, _logger, cancellationToken);
+            _options.ConnectionString, _tableName, desiredIndexes, _logger, cancellationToken);
     }
 
     public async Task InsertAsync(TEntity entity, CancellationToken cancellationToken = default)
@@ -135,7 +134,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         await conn.OpenAsync(cancellationToken);
 
         await using var cmd = new NpgsqlCommand(
-            $"UPDATE {_options.TableName} SET updated_at = NOW() WHERE {_whereClause}", conn);
+            $"UPDATE {_tableName} SET updated_at = NOW() WHERE {_whereClause}", conn);
         AddKeyParameters(cmd, entity);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -148,7 +147,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         await conn.OpenAsync(cancellationToken);
 
         await using var cmd = new NpgsqlCommand(
-            $"DELETE FROM {_options.TableName} WHERE {_whereClause}", conn);
+            $"DELETE FROM {_tableName} WHERE {_whereClause}", conn);
         AddKeyParameters(cmd, entity);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -166,7 +165,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         await conn.OpenAsync(cancellationToken);
 
         await using var cmd = new NpgsqlCommand(
-            $"SELECT * FROM {_options.TableName} WHERE {_whereClause}", conn);
+            $"SELECT * FROM {_tableName} WHERE {_whereClause}", conn);
         for (var i = 0; i < keyValues.Length; i++)
             cmd.Parameters.AddWithValue($"K{i}", keyValues[i] ?? DBNull.Value);
 

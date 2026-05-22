@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -11,27 +12,29 @@ using RayTree.Plugins.PostgreSQL.Schema;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
 
-// Entity with only Id — used to create the table before the "expanded" version is applied
+// All four entities share the same physical outbox table via [Table] so the
+// schema-evolution tests can register different shapes against one storage target.
+[Table("schema_evolution")]
 public class SlimEntity
 {
     public int Id { get; set; }
 }
 
-// Entity with an extra nullable property — represents a schema evolution of SlimEntity
+[Table("schema_evolution")]
 public class ExpandedEntity
 {
     public int Id { get; set; }
     public string? Description { get; set; }
 }
 
-// Entity with a [Required] (NOT NULL) property and no default
+[Table("schema_evolution")]
 public class RequiredFieldEntity
 {
     public int Id { get; set; }
     [Required] public string RequiredField { get; set; } = string.Empty;
 }
 
-// Entity whose Id type differs from ExpandedEntity (for type-mismatch test)
+[Table("schema_evolution")]
 public class TypeChangedEntity
 {
     public long Id { get; set; }        // was int in ExpandedEntity
@@ -70,7 +73,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
     public ValueTask DisposeAsync() => _postgres.DisposeAsync();
 
-    private const string OutboxTable = "schema_evolution_outbox_test";
+    private const string OutboxTable = "schema_evolution_outbox";
 
     private async Task DropTableIfExists()
     {
@@ -100,8 +103,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var slimOutbox = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await slimOutbox.InitializeAsync();
 
@@ -115,8 +117,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var expandedOutbox = new PostgreSqlOutbox<ExpandedEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await expandedOutbox.InitializeAsync();
 
@@ -130,14 +131,13 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var slim = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
 
         var expanded = new PostgreSqlOutbox<ExpandedEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await expanded.InitializeAsync();
 
@@ -161,7 +161,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var expanded = new PostgreSqlOutbox<ExpandedEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await expanded.InitializeAsync();
 
@@ -170,8 +170,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
         // Re-initialise with slim entity — Description becomes orphan
         var slim = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, factory);
         await slim.InitializeAsync();
 
@@ -191,7 +190,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var expanded = new PostgreSqlOutbox<ExpandedEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await expanded.InitializeAsync();
 
@@ -200,8 +199,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
         // Re-initialise with TypeChangedEntity — state_id is BIGINT vs INTEGER
         var typeChanged = new PostgreSqlOutbox<TypeChangedEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, factory);
         await typeChanged.InitializeAsync();
 
@@ -219,7 +217,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var slim = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
 
@@ -233,8 +231,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var requiredOutbox = new PostgreSqlOutbox<RequiredFieldEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
 
         var ex = Assert.ThrowsAsync<InvalidOperationException>(
@@ -252,14 +249,13 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var slim = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
 
         var requiredOutbox = new PostgreSqlOutbox<RequiredFieldEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
 
         Assert.DoesNotThrowAsync(async () => await requiredOutbox.InitializeAsync());
@@ -275,7 +271,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var outbox = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await outbox.InitializeAsync();
 
@@ -300,7 +296,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var outbox = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await outbox.InitializeAsync();
 
@@ -328,7 +324,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
 
         var outbox = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await outbox.InitializeAsync();
 
@@ -339,7 +335,7 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
         var factory = new CapturingLoggerFactory();
         var outbox2 = new PostgreSqlOutbox<SlimEntity>(new PostgreSqlOutboxOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), OutboxTableName = OutboxTable
+            ConnectionString = _postgres.GetConnectionString()
         }, factory);
         await outbox2.InitializeAsync();
 
@@ -363,18 +359,22 @@ public class SchemaEvolutionOutboxTests : IAsyncDisposable
     }
 }
 
-// Source-table entities
+// Source-table entities — all share one physical table via [Table] so schema-evolution
+// tests can register different shapes against one storage target.
+[Table("schema_evolution_source")]
 public class SlimSourceEntity
 {
     [Key] public int OrderId { get; set; }
 }
 
+[Table("schema_evolution_source")]
 public class ExpandedSourceEntity
 {
     [Key] public int OrderId { get; set; }
     [Key] public int LineId { get; set; }
 }
 
+[Table("schema_evolution_source")]
 public class RequiredSourceEntity
 {
     [Key] public int OrderId { get; set; }
@@ -391,7 +391,7 @@ public class SchemaEvolutionRepositoryTests : IAsyncDisposable
 
     public ValueTask DisposeAsync() => _postgres.DisposeAsync();
 
-    private const string SourceTable = "schema_evolution_source_test";
+    private const string SourceTable = "schema_evolution_source";
 
     private async Task DropTableIfExists()
     {
@@ -421,14 +421,13 @@ public class SchemaEvolutionRepositoryTests : IAsyncDisposable
 
         var slim = new PostgreSqlRepository<SlimSourceEntity>(new PostgreSqlRepositoryOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
 
         var expanded = new PostgreSqlRepository<ExpandedSourceEntity>(new PostgreSqlRepositoryOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            TableName = SourceTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await expanded.InitializeAsync();
 
@@ -442,7 +441,7 @@ public class SchemaEvolutionRepositoryTests : IAsyncDisposable
 
         var slim = new PostgreSqlRepository<SlimSourceEntity>(new PostgreSqlRepositoryOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
 
@@ -450,8 +449,7 @@ public class SchemaEvolutionRepositoryTests : IAsyncDisposable
 
         var expanded = new PostgreSqlRepository<RequiredSourceEntity>(new PostgreSqlRepositoryOptions
         {
-            ConnectionString = _postgres.GetConnectionString(),
-            TableName = SourceTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
 
         var ex = Assert.ThrowsAsync<InvalidOperationException>(
@@ -470,7 +468,7 @@ public class SchemaEvolutionRepositoryTests : IAsyncDisposable
 
         var slim = new PostgreSqlRepository<SlimSourceEntity>(new PostgreSqlRepositoryOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
 
@@ -497,13 +495,13 @@ public class SchemaEvolutionRepositoryTests : IAsyncDisposable
 
         var slim = new PostgreSqlRepository<SlimSourceEntity>(new PostgreSqlRepositoryOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
 
         var expanded = new PostgreSqlRepository<ExpandedSourceEntity>(new PostgreSqlRepositoryOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await expanded.InitializeAsync();
 
@@ -523,7 +521,7 @@ public class SchemaEvolutionRepositoryTests : IAsyncDisposable
 
         var slim = new PostgreSqlRepository<SlimSourceEntity>(new PostgreSqlRepositoryOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
+            ConnectionString = _postgres.GetConnectionString()
         }, NullLoggerFactory.Instance);
         await slim.InitializeAsync();
 
@@ -534,7 +532,7 @@ public class SchemaEvolutionRepositoryTests : IAsyncDisposable
         var factory = new CapturingLoggerFactory();
         var slim2 = new PostgreSqlRepository<SlimSourceEntity>(new PostgreSqlRepositoryOptions
         {
-            ConnectionString = _postgres.GetConnectionString(), TableName = SourceTable
+            ConnectionString = _postgres.GetConnectionString()
         }, factory);
         await slim2.InitializeAsync();
 

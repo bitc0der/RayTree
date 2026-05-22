@@ -99,7 +99,7 @@ In the RabbitMQ management UI (`http://localhost:15672`):
 
 In PostgreSQL (`localhost:5432`, database `raytree_example`):
 - `orders` — the entity table; one row per live order.
-- `order_outbox` — the staging table; `published = true` rows have been sent to RabbitMQ and will be cleaned up by the outbox rotation loop.
+- `orders_outbox` — the staging table; `published = true` rows have been sent to RabbitMQ and will be cleaned up by the outbox rotation loop.
 
 ---
 
@@ -136,7 +136,7 @@ examples/RabbitMQ.Microservices/
 OrderSimulator
   → IRepository<Order>.InsertAsync / UpdateAsync / DeleteAsync   (PostgreSQL: orders table)
   → EntityChangeTracker.TrackInsertAsync / TrackUpdateAsync / TrackDeleteAsync
-      → PostgreSqlOutbox<Order>                                   (PostgreSQL: order_outbox table)
+      → PostgreSqlOutbox<Order>                                   (PostgreSQL: orders_outbox table)
           ↑ polled every 500 ms by OutboxPublisherService
               → MessagePack serialize → Gzip compress → MessageEnvelope
                   → RabbitMqPublisher  →  exchange: raytree.changes  (routing key: change.Order.<type>)
@@ -155,7 +155,7 @@ OrderSimulator
 
 **The example is not transactionally safe between the entity table and the outbox.**
 
-`OrderSimulator` calls `repository.InsertAsync(order)` and then `tracker.TrackInsertAsync(order)` — two separate database round-trips. A crash between them can leave `orders` and `order_outbox` inconsistent.
+`OrderSimulator` calls `repository.InsertAsync(order)` and then `tracker.TrackInsertAsync(order)` — two separate database round-trips. A crash between them can leave `orders` and `orders_outbox` inconsistent.
 
 **Production path:** use `RayTree.EntityFrameworkCore` and `EntityChangeInterceptor`, which hooks into `SaveChangesAsync` and calls `TrackXxxAsync` inside the same EF Core transaction, making both writes atomic. See `src/RayTree.EntityFrameworkCore` for the implementation.
 
@@ -171,9 +171,8 @@ The default 500 ms poll interval adds latency. Enable the PostgreSQL `NOTIFY`/`L
 .UseOutbox(new PostgreSqlOutbox<Order>(new PostgreSqlOutboxOptions
 {
     ConnectionString = pgConnection,
-    OutboxTableName = "order_outbox",
     UseNotificationChannel = true,
-    NotificationChannel = "order_outbox_notify",
+    NotificationChannel = "orders_outbox_notify",
 }, pluginLoggerFactory))
 ```
 

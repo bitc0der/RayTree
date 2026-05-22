@@ -112,7 +112,7 @@ examples/Kafka.Microservices/
 OrderSimulator
   → IRepository<Order>.InsertAsync / UpdateAsync / DeleteAsync   (PostgreSQL: orders table)
   → EntityChangeTracker.TrackInsertAsync / TrackUpdateAsync / TrackDeleteAsync
-      → PostgreSqlOutbox<Order>                                   (PostgreSQL: order_outbox table)
+      → PostgreSqlOutbox<Order>                                   (PostgreSQL: orders_outbox table)
           ↑ polled every 500 ms by OutboxPublisherService
               → MessagePack serialize → Gzip compress → MessageEnvelope
                   → KafkaPublisher  →  topic: raytree.order_changes  (partition key: Order:<id>)
@@ -137,7 +137,7 @@ The `OrderSimulator` calls the repository and the outbox as two **separate, non-
 
 ```csharp
 await _repository.InsertAsync(order, ct);   // 1. Write to PostgreSQL orders table
-await _tracker.TrackInsertAsync(order, ct); // 2. Write to PostgreSQL order_outbox table
+await _tracker.TrackInsertAsync(order, ct); // 2. Write to PostgreSQL orders_outbox table
 ```
 
 A process crash between steps 1 and 2 leaves the entity in the `orders` table without a corresponding outbox record — the change is never published to Kafka.
@@ -156,9 +156,8 @@ The default 500 ms poll interval is readable but adds latency. Enable the Postgr
 .UseOutbox(new PostgreSqlOutbox<Order>(new PostgreSqlOutboxOptions
 {
     ConnectionString = pgConnection,
-    OutboxTableName = "order_outbox",
     UseNotificationChannel = true,   // trigger fires pg_notify on INSERT into outbox
-    NotificationChannel = "order_outbox_notify",
+    NotificationChannel = "orders_outbox_notify",
 }, pluginLoggerFactory))
 ```
 

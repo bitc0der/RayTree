@@ -79,10 +79,9 @@ using RayTree.Plugins.Serializers.Json;
 builder.Services.AddChangeTracking(builder.Configuration, b => b
     .UseSerializer<JsonSerializerPlugin>(_ => new JsonSerializerPlugin())
     .UseCompressor<NoOpCompressorPlugin>(_ => new NoOpCompressorPlugin())
-    .UsePostgreSqlOutbox(entityType => new PostgreSqlOutboxOptions
+    .UsePostgreSqlOutbox(_ => new PostgreSqlOutboxOptions
     {
-        ConnectionString = connectionString,
-        OutboxTableName = $"{entityType.Name.ToLower()}_outbox"
+        ConnectionString = connectionString
     })
     .ForEntity<Order>(e => e
         .UsePublisher(new RabbitMqPublisher(publisherOptions))

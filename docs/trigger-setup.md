@@ -15,11 +15,10 @@ RayTree supports PostgreSQL `NOTIFY/LISTEN` for near-instant outbox change detec
 Set `UseNotificationChannel = true` (and optionally the channel name) when creating the outbox:
 
 ```csharp
-// Directly
+// Directly — outbox table name is derived from the entity DTO ([Table] attribute or snake_case convention)
 var outbox = new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
 {
     ConnectionString = connectionString,
-    OutboxTableName = "products_outbox",
     UseNotificationChannel = true,
     NotificationChannel = "products_notify"   // defaults to "entity_changes"
 });
@@ -27,8 +26,7 @@ var outbox = new PostgreSqlOutbox<Product>(new PostgreSqlOutboxOptions
 // Or using the extension methods
 var options = new PostgreSqlOutboxOptions
 {
-    ConnectionString = connectionString,
-    OutboxTableName = "products_outbox"
+    ConnectionString = connectionString
 };
 options.UseNotificationChannel("products_notify")
        .WithFallbackPolling(TimeSpan.FromSeconds(30));

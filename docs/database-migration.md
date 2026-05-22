@@ -186,14 +186,15 @@ Nullable types and reference types (including arrays) produce nullable columns. 
 
 ---
 
-## Default Table Names
+## Table Names
 
-If `OutboxTableName` or `TableName` is not specified, names are derived from the entity type:
+Table names are derived from the entity type — apply `[Table("name")]` to override the default, or rely on the snake_case convention for the type name:
 
-| Entity type   | Outbox table        | Source table  |
-|---------------|---------------------|---------------|
-| `Product`     | `product_outbox`    | `product`     |
-| `OrderLine`   | `order_line_outbox` | `order_line`  |
+| Entity type                       | Outbox table        | Source table  |
+|-----------------------------------|---------------------|---------------|
+| `Product`                         | `product_outbox`    | `product`     |
+| `OrderLine`                       | `order_line_outbox` | `order_line`  |
+| `[Table("orders")] class Order`   | `orders_outbox`     | `orders`      |
 
 ---
 

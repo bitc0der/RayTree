@@ -25,7 +25,7 @@ builder.ForEntity<Product>(e => e
     .UsePostgreSqlOutbox(new PostgreSqlOutboxOptions
     {
         ConnectionString = connectionString
-        // OutboxTableName defaults to "product_outbox"
+        // Outbox table is derived from typeof(Product) as "product_outbox"
     })
     .UsePublisher(new InMemoryQueue())
     .UseSerializer(new JsonSerializerPlugin())
@@ -99,7 +99,7 @@ public class Order
 // Source table: "orders"         (was "order"        without the attribute)
 ```
 
-The explicit `OutboxTableName` / `TableName` options still take precedence if set.
+Table names are derived exclusively from the entity type — there is no options-bag override.
 
 ### Column name — `[Column]`
 
