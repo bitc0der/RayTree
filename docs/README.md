@@ -1,6 +1,6 @@
 # RayTree - Entity Change Tracking System
 
-A modular .NET 8.0 entity change tracking system with outbox pattern support, queue distribution, per-entity plugin configuration, and `System.IO.Pipelines` for zero-allocation serialization/compression.
+A modular .NET 10 entity change tracking system with outbox pattern support, queue distribution, per-entity plugin configuration, and `System.IO.Pipelines` for zero-allocation serialization/compression.
 
 ## Features
 
@@ -13,6 +13,7 @@ A modular .NET 8.0 entity change tracking system with outbox pattern support, qu
 - **Auto-Initialization** - Automatic database schema initialization on `Build()` / `BuildAsync()`
 - **Structured Logging** - `Microsoft.Extensions.Logging` throughout; pass `ILoggerFactory` to `EntityChangeTracker.Create()` or let `AddChangeTracking` wire it from DI automatically
 - **OpenTelemetry Metrics** - `System.Diagnostics.Metrics` instruments on a `"RayTree"` meter for outbox writes, publish/subscribe latency, payload size, queue depth, and retry shape. Zero OTel SDK dependency unless the optional `RayTree.OpenTelemetry` package is referenced. See [OpenTelemetry Metrics Guide](opentelemetry-metrics.md).
+- **RabbitMQ Topology Wait** - Opt-in startup retry for `RabbitMqPublisher` and `RabbitMqConsumer` when the exchange or queue is owned by another service. Probes with AMQP passive declares and retries on `NOT_FOUND` until the topology appears, the cancellation token fires, or a configurable timeout elapses.
 
 ## Quick Start
 
@@ -436,6 +437,60 @@ public class MaintenanceController(
 ```
 
 `RunCleanupAsync` calls `CleanupPublishedAsync` on every registered outbox and returns the total number of rows deleted.
+
+## RabbitMQ Topology Wait
+
+In microservice deployments one service typically owns and declares the RabbitMQ exchange or
+queue while other services connect to it as consumers or publishers. If the owning service has
+not yet started when `InitializeAsync` is called the broker returns `NOT_FOUND` (404) and the
+connecting service crashes.
+
+Enable the opt-in topology wait loop by setting `WaitForTopology = true` on
+`RabbitMqPublisherOptions` or `RabbitMqConsumerOptions`. The client then probes with AMQP
+passive declares and retries at `TopologyWaitInterval` intervals until the topology appears, the
+`CancellationToken` passed to `InitializeAsync` is cancelled, or `TopologyWaitTimeout`
+(optional) elapses.
+
+| Option | Default | Description |
+|---|---|---|
+| `WaitForTopology` | `false` | Enable the wait loop. |
+| `TopologyWaitInterval` | `5 s` | Delay between probe attempts. |
+| `TopologyWaitTimeout` | `null` | Hard deadline; `null` means no ceiling. |
+
+Only `NOT_FOUND` (404) retries. Other errors (`PRECONDITION_FAILED`, connection failures, etc.)
+propagate immediately.
+
+### Publisher example
+
+```csharp
+builder.ForEntity<Order>(e => e
+    .UsePublisher(new RabbitMqPublisher(new RabbitMqPublisherOptions
+    {
+        ExchangeName         = "entity_changes",
+        DeclareExchange      = false,           // owned by another service
+        WaitForTopology      = true,
+        TopologyWaitInterval = TimeSpan.FromSeconds(2),
+        TopologyWaitTimeout  = TimeSpan.FromMinutes(5)
+    })));
+```
+
+### Consumer example
+
+```csharp
+// Queue owned externally; consumer waits for queue AND binding exchange
+var consumer = new RabbitMqConsumer(new RabbitMqConsumerOptions
+{
+    QueueName            = "order-events",
+    ExchangeName         = "entity_changes",
+    DeclareQueue         = false,
+    WaitForTopology      = true,
+    TopologyWaitInterval = TimeSpan.FromSeconds(2)
+    // TopologyWaitTimeout = null → retry until cancellation
+});
+```
+
+See the [Configuration Guide](configuration.md#rabbitmq-topology-wait) for the full option
+reference and for consumer-factory / Generic Host patterns.
 
 ## Cleanup
 
