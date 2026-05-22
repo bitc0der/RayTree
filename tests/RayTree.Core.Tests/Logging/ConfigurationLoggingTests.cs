@@ -234,7 +234,7 @@ public class ConfigurationLoggingTests
                 .ForEntity<SampleEntity>(e =>
                 {
                     e.UseOutbox(new InMemoryOutbox());
-                    e.UsePublisher(new FailingPublisher());
+                    e.UsePublisher(new InitFailingPublisher());
                     e.UseSerializer(new JsonSerializerPlugin());
                     e.UseCompressor(new NoOpCompressorPlugin());
                 })
@@ -249,7 +249,7 @@ public class ConfigurationLoggingTests
         Assert.That(aborted, Is.Not.Null);
     }
 
-    private sealed class FailingPublisher : RayTree.Core.Plugins.Publisher.IQueuePublisher
+    private sealed class InitFailingPublisher : RayTree.Core.Plugins.Publisher.IQueuePublisher
     {
         public Task InitializeAsync(CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("Simulated init failure");

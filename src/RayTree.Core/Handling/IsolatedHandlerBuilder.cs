@@ -49,7 +49,7 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
         if (log.IsEnabled(LogLevel.Debug))
             log.LogDebug(
                 "ChangeTracking: entity override applied EntityType={EntityType} Override={Override} Plugin={Plugin}",
-                EntityTypeName, $"On{changeType}:{handlerName}", handler.Method.DeclaringType?.Name ?? "<delegate>");
+                EntityTypeName, $"On{changeType}:{handlerName}", HandlerDescriptor.Describe(handler));
         return this;
     }
 

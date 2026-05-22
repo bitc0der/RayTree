@@ -28,7 +28,7 @@ internal sealed class SharedHandlerBuilder<TEntity> : ISharedHandlerBuilder<TEnt
         if (_log.IsEnabled(LogLevel.Debug))
             _log.LogDebug(
                 "ChangeTracking: entity override applied EntityType={EntityType} Override={Override} Plugin={Plugin}",
-                EntityTypeName, slot, handler.Method.DeclaringType?.Name ?? "<delegate>");
+                EntityTypeName, slot, HandlerDescriptor.Describe(handler));
     }
 
     /// <inheritdoc/>

@@ -21,8 +21,6 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
     private readonly ILogger<ChangeTrackingBuilder> _log;
     private RayTreeMeter? _meter;
 
-    // Captured plugin-type metadata for the build-summary log. Populated lazily as the
-    // caller chains Use* registrations; read once in BuildInternal.
     private string? _globalOutboxType;
     private string? _globalPublisherType;
     private string? _globalSerializerType;
