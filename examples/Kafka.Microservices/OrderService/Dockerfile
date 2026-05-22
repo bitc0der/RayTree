@@ -20,6 +20,8 @@ COPY src/RayTree.Plugins.PostgreSQL/RayTree.Plugins.PostgreSQL.csproj           
 COPY src/RayTree.Plugins.Kafka/RayTree.Plugins.Kafka.csproj                                      src/RayTree.Plugins.Kafka/
 COPY src/RayTree.Plugins.Serializers.MessagePack/RayTree.Plugins.Serializers.MessagePack.csproj  src/RayTree.Plugins.Serializers.MessagePack/
 COPY src/RayTree.Plugins.Compressors.Gzip/RayTree.Plugins.Compressors.Gzip.csproj                src/RayTree.Plugins.Compressors.Gzip/
+COPY examples/Kafka.Microservices/Directory.Build.props     examples/Kafka.Microservices/
+COPY examples/Kafka.Microservices/Directory.Packages.props  examples/Kafka.Microservices/
 COPY examples/Kafka.Microservices/Shared/Shared.csproj                                           examples/Kafka.Microservices/Shared/
 COPY examples/Kafka.Microservices/OrderService/OrderService.csproj                               examples/Kafka.Microservices/OrderService/
 RUN dotnet restore examples/Kafka.Microservices/OrderService/OrderService.csproj
