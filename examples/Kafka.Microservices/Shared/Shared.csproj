@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>KafkaMicroservices.Shared</RootNamespace>
+    <AssemblyName>KafkaMicroservices.Shared</AssemblyName>
+  </PropertyGroup>
+</Project>

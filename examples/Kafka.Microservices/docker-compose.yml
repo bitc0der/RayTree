@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:18.3-alpine
+    environment:
+      POSTGRES_DB: raytree_example
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d raytree_example"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    # Pinned (not :latest) so the example stays reproducible as upstream Kafka releases land.
+    image: apache/kafka:3.9.0
+    ports:
+      - "9092:9092"
+    environment:
+      # --- KRaft single-node configuration (no Zookeeper) ---
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      # --- Topic / cluster defaults ---
+      # 3 partitions on auto-created topics so the EntityType:EntityId partition key has somewhere
+      # to spread to. With 1 partition every message lands on partition 0 and the routing story is
+      # vacuous.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      # TCP-level probe: lightest reliable signal that the broker is accepting client connections.
+      # `kafka-topics.sh` would wait for cluster metadata to converge — too slow for cold KRaft start.
+      test: ["CMD-SHELL", "nc -z localhost 9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  order-service:
+    build:
+      # Build context is the repo root so ProjectReference paths to ../../../src/RayTree.* resolve.
+      context: ../..
+      dockerfile: examples/Kafka.Microservices/OrderService/Dockerfile
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      POSTGRES_CONNECTION: "Host=postgres;Port=5432;Database=raytree_example;Username=postgres;Password=postgres"
+      DOTNET_ENVIRONMENT: Development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  notification-service:
+    build:
+      context: ../..
+      dockerfile: examples/Kafka.Microservices/NotificationService/Dockerfile
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DOTNET_ENVIRONMENT: Development
+    # NO dependency on order-service — Kafka auto-creates the topic on Subscribe and FromEarliest=true
+    # makes the consumer replay from offset 0 once order-service later publishes.
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
