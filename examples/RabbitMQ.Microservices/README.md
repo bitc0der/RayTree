@@ -15,16 +15,22 @@ PostgreSqlRepository<Order>   →           queue: notification-service.orders
         └──────────────────────────────────────────┘
 ```
 
-`OrderService` continuously inserts/updates/deletes `Order` rows. Each change is written to a PostgreSQL outbox table and picked up by the publisher loop, serialized with MessagePack, compressed with Gzip, and published to RabbitMQ. `NotificationService` subscribes to the topic exchange, decompresses + deserializes, and dispatches to per-`ChangeType` handlers that simply log to stdout.
+`OrderService` continuously inserts/updates/deletes `Order` rows. Each change is written to a PostgreSQL outbox table and picked up by the publisher loop, serialized with MessagePack, compressed with Gzip, and published to RabbitMQ. `NotificationService` subscribes to the topic exchange, decompresses + deserializes, and dispatches to per-`ChangeType` handlers that log to the console via `ILogger`.
 
-This example is intentionally **not** part of the main `RayTree.slnx` solution. Open `examples/RabbitMQ.Microservices/RabbitMQ.Microservices.slnx` directly.
+> **Note:** this example is intentionally **not** part of `RayTree.slnx`. To open it in an IDE, open `examples/RabbitMQ.Microservices/RabbitMQ.Microservices.slnx` directly.
+
+---
 
 ## Prerequisites
 
-- Docker / Docker Compose
-- .NET 10 SDK (only required if you want to build / debug outside Docker)
+| Tool | Version |
+|---|---|
+| Docker (with Compose v2) | 24+ |
+| .NET SDK | 10.0+ (local dev only — not needed for `docker compose up`) |
 
-## Run
+---
+
+## Running with Docker Compose
 
 From `examples/RabbitMQ.Microservices/`:
 
@@ -32,77 +38,204 @@ From `examples/RabbitMQ.Microservices/`:
 docker compose up --build
 ```
 
-Expected console output (interleaved between the two services):
+Both services start after RabbitMQ passes its healthcheck (`rabbitmq-diagnostics ping`). `OrderService` additionally waits for PostgreSQL. `NotificationService` does not depend on `OrderService` — it probes the exchange via `WaitForTopology = true` and begins consuming as soon as `OrderService` declares it.
+
+**Expected console output** (interleaved, simplified — log lines include level and category):
 
 ```
-order-service-1         | Inserted order 5a1c... for Alice totalling $342.18
-notification-service-1  | [NOTIFY] NEW order 5a1c... — customer=Alice total=$342.18 status=Pending
-order-service-1         | Updated order 5a1c... → status=Shipped total=$348.92
-notification-service-1  | [NOTIFY] UPDATED order 5a1c... — status=Shipped total=$348.92
-order-service-1         | Deleted order 5a1c...
-notification-service-1  | [NOTIFY] DELETED order 5a1c...
+order-service-1         | info: Inserted order 5a1c... for Alice totalling $342.18
+order-service-1         | info: Inserted order 7b2d... for Bob totalling $87.00
+notification-service-1  | info: [NOTIFY] NEW order 5a1c... — customer=Alice total=$342.18 status=Pending
+notification-service-1  | info: [NOTIFY] NEW order 7b2d... — customer=Bob total=$87.00 status=Pending
+order-service-1         | info: Updated order 5a1c... → status=Shipped total=$348.92
+notification-service-1  | info: [NOTIFY] UPDATED order 5a1c... — status=Shipped total=$348.92
+order-service-1         | info: Deleted order 7b2d...
+notification-service-1  | info: [NOTIFY] DELETED order 7b2d...
 ```
 
-Stop with `Ctrl+C` then `docker compose down` to remove containers.
+To stop cleanly:
 
-## What to look at
+```bash
+docker compose down
+```
 
-| Surface | URL / location |
+Both named volumes (`postgres-data`, `rabbitmq-data`) are preserved on restart. To wipe them:
+
+```bash
+docker compose down -v
+```
+
+---
+
+## Connection Details (for Local Dev)
+
+| Service | Address |
 |---|---|
-| RabbitMQ management UI | `http://localhost:15672` (login `guest` / `guest`) |
-| PostgreSQL | `localhost:5432`, db `raytree_example`, user/pass `postgres`/`postgres` |
-| Outbox table | `order_outbox` — see published vs unpublished rows |
-| Entity table | `orders` — keys-only journal (the outbox payload carries the full state) |
+| RabbitMQ broker | `localhost:5672` |
+| RabbitMQ management UI | `http://localhost:15672` — login `guest` / `guest` |
+| PostgreSQL | `localhost:5432` — database `raytree_example`, user `postgres`, password `postgres` |
 
-In RabbitMQ's management UI you can:
+Override with environment variables when running outside Compose:
+
+```bash
+# OrderService (requires a running PostgreSQL and RabbitMQ)
+RABBITMQ_HOST=localhost \
+POSTGRES_CONNECTION="Host=localhost;Port=5432;Database=raytree_example;Username=postgres;Password=postgres" \
+dotnet run --project OrderService
+
+# NotificationService (requires a running RabbitMQ; no PostgreSQL dependency)
+RABBITMQ_HOST=localhost \
+dotnet run --project NotificationService
+```
+
+---
+
+## What to Look at
+
+In the RabbitMQ management UI (`http://localhost:15672`):
 - Inspect the `raytree.changes` topic exchange and the `notification-service.orders` queue.
-- Watch live message rates.
-- Browse a single payload to see the compressed MessagePack bytes.
+- Watch live message rates on the queue's **Message rates** chart.
+- Browse a single payload under **Get messages** to see the compressed MessagePack bytes (the body is binary, not readable text).
 
-## Project structure
+In PostgreSQL (`localhost:5432`, database `raytree_example`):
+- `orders` — the entity table; one row per live order.
+- `order_outbox` — the staging table; `published = true` rows have been sent to RabbitMQ and will be cleaned up by the outbox rotation loop.
+
+---
+
+## Project Structure
 
 ```
 examples/RabbitMQ.Microservices/
-├── Directory.Build.props        # Imports root props, disables packaging for console apps
-├── Directory.Packages.props     # Imports root props, adds Microsoft.Extensions.Hosting
-├── RabbitMQ.Microservices.slnx  # Standalone solution — NOT in RayTree.slnx
-├── docker-compose.yml
-├── README.md
+├── RabbitMQ.Microservices.slnx   # Standalone solution — open this in your IDE
+├── Directory.Build.props          # Inherits from repo root; sets IsPackable=false
+├── Directory.Packages.props       # Inherits from repo root; adds Microsoft.Extensions.Hosting
+├── docker-compose.yml             # Postgres + RabbitMQ + OrderService + NotificationService
+│
 ├── Shared/
 │   ├── Shared.csproj
-│   └── Order.cs                 # POCO with [Table("orders")] + [Key] Id (no MessagePack attrs)
+│   └── Order.cs                   # Shared entity — [Table("orders")], [Key] Guid Id, ...
+│
 ├── OrderService/
 │   ├── OrderService.csproj
-│   ├── Dockerfile
-│   ├── Program.cs               # Host.CreateApplicationBuilder + AddChangeTracking
-│   └── OrderSimulator.cs        # BackgroundService that drives the demo
+│   ├── Program.cs                 # AddChangeTracking: outbox → RabbitMqPublisher
+│   ├── OrderSimulator.cs          # BackgroundService: inserts/updates/deletes in a loop
+│   └── Dockerfile                 # Multi-stage; build context = repo root
+│
 └── NotificationService/
     ├── NotificationService.csproj
-    ├── Dockerfile
-    └── Program.cs               # Shared-handler consumer with OnInsert/OnUpdate/OnDelete
+    ├── Program.cs                 # AddChangeTracking: RabbitMqConsumer → OnInsert/Update/Delete
+    └── Dockerfile                 # Multi-stage; build context = repo root
 ```
 
-## Configuration
+---
 
-Both services read connection info from environment variables:
+## How It Works
 
-| Variable | Default (localhost) | Compose value |
-|---|---|---|
-| `POSTGRES_CONNECTION` | `Host=localhost;Port=5432;Database=raytree_example;Username=postgres;Password=postgres` | `Host=postgres;…` |
-| `RABBITMQ_HOST` | `localhost` | `rabbitmq` |
+```
+OrderSimulator
+  → IRepository<Order>.InsertAsync / UpdateAsync / DeleteAsync   (PostgreSQL: orders table)
+  → EntityChangeTracker.TrackInsertAsync / TrackUpdateAsync / TrackDeleteAsync
+      → PostgreSqlOutbox<Order>                                   (PostgreSQL: order_outbox table)
+          ↑ polled every 500 ms by OutboxPublisherService
+              → MessagePack serialize → Gzip compress → MessageEnvelope
+                  → RabbitMqPublisher  →  exchange: raytree.changes  (routing key: change.Order.<type>)
+                      → RabbitMqConsumer (NotificationService)
+                          → Gzip decompress → MessagePack deserialize
+                              → OnInsert / OnUpdate / OnDelete handlers → ILogger
+```
 
-## Known limitations
+### Startup sequencing — `WaitForTopology`
+
+`NotificationService` does **not** have a `depends_on: order-service` in `docker-compose.yml`. Instead, `RabbitMqConsumerOptions.WaitForTopology = true` makes the consumer probe the exchange (`raytree.changes`) via AMQP passive declares and retry every 5 seconds until `OrderService` declares it. This correctly decouples startup order at the application level rather than relying on Compose container ordering, and it mirrors how the services would behave in a Kubernetes or ECS deployment where container scheduling is non-deterministic.
+
+---
+
+## Known Limitations
 
 **The example is not transactionally safe between the entity table and the outbox.**
 
-`OrderSimulator` calls `repository.InsertAsync(order)` and then `tracker.TrackInsertAsync(order)` — two separate database round-trips. A crash between them can leave `orders` and `order_outbox` inconsistent. The outbox pattern usually relies on a single transaction wrapping both writes; that's exactly what `RayTree.EntityFrameworkCore` (specifically the `EntityChangeInterceptor`) does inside `SaveChangesAsync`. Production code targeting transactional safety should use that integration, **not** this example's pattern.
+`OrderSimulator` calls `repository.InsertAsync(order)` and then `tracker.TrackInsertAsync(order)` — two separate database round-trips. A crash between them can leave `orders` and `order_outbox` inconsistent.
 
-This example deliberately omits EF Core to keep the focus on RabbitMQ wiring, but the limitation is real — please don't copy `OrderSimulator` into a service that needs durable consistency.
+**Production path:** use `RayTree.EntityFrameworkCore` and `EntityChangeInterceptor`, which hooks into `SaveChangesAsync` and calls `TrackXxxAsync` inside the same EF Core transaction, making both writes atomic. See `src/RayTree.EntityFrameworkCore` for the implementation.
 
-## Going further
+---
 
-- **NOTIFY/LISTEN fast-path** — set `PostgreSqlOutboxOptions.UseNotificationChannel = true` to get sub-100 ms publish latency instead of polling. A DB trigger fires `pg_notify` on every outbox INSERT; the publisher subscribes and claims rows atomically.
-- **At-least-once delivery** — set `RabbitMqConsumerOptions.AckAfterHandler = true` so the broker ACK is deferred until all handlers complete. Combined with the deduplication store, this yields effectively-once semantics.
-- **Isolated-handler dispatch** — replace `e.UseConsumer(...)` with `e.UseConsumerFactory(name => new RabbitMqConsumer(...))` to give each named handler its own broker subscription, retry budget, and dedup namespace.
-- **Distributed deduplication** — swap the default in-memory dedup store for `RedisDeduplicationStore` so processed `correlationId`s survive restarts and are visible across replicas.
-- **OpenTelemetry** — add `RayTree.OpenTelemetry` and call `meterProvider.AddRayTreeMetrics()` to export the 18 RayTree instruments (outbox lag, publish duration, handler attempts, etc.) to your OTel collector.
+## Going Further
+
+### NOTIFY/LISTEN fast-path
+
+The default 500 ms poll interval adds latency. Enable the PostgreSQL `NOTIFY`/`LISTEN` fast path to publish within milliseconds of the outbox write:
+
+```csharp
+.UseOutbox(new PostgreSqlOutbox<Order>(new PostgreSqlOutboxOptions
+{
+    ConnectionString = pgConnection,
+    OutboxTableName = "order_outbox",
+    UseNotificationChannel = true,
+    NotificationChannel = "order_outbox_notify",
+}, pluginLoggerFactory))
+```
+
+The poll loop becomes a safety net; the notification channel drives normal delivery.
+
+### At-least-once delivery
+
+The example uses at-most-once delivery (the default): the broker ACK is sent immediately when the message is received, before any handler runs. To switch to at-least-once:
+
+```csharp
+.UseConsumer(new RabbitMqConsumer(new RabbitMqConsumerOptions
+{
+    ...
+    AckAfterHandler = true,   // ACK deferred until all handlers succeed
+}))
+```
+
+On handler retry-exhaustion the consumer issues `BasicNack(requeue: true)`, returning the message to the queue for redelivery.
+
+### Topology wait (topology owned by another service)
+
+In the example, `OrderService` declares the exchange (`DeclareExchange = true`) and `NotificationService` waits for it (`WaitForTopology = true`). If your topology is owned by a third service (e.g. a dedicated infrastructure bootstrap), apply `WaitForTopology` on the publisher side too:
+
+```csharp
+.UsePublisher(new RabbitMqPublisher(new RabbitMqPublisherOptions
+{
+    ExchangeName     = "raytree.changes",
+    DeclareExchange  = false,          // owned externally
+    WaitForTopology  = true,
+    TopologyWaitTimeout = TimeSpan.FromMinutes(5),
+}))
+```
+
+### Isolated-handler dispatch (one subscription per handler)
+
+The example uses **shared-handler** mode: a single `RabbitMqConsumer` delivers each message to all handlers in sequence. For independent downstream systems each needing their own queue, use `UseConsumerFactory`:
+
+```csharp
+.UseConsumerFactory(handlerName => new RabbitMqConsumer(new RabbitMqConsumerOptions
+{
+    HostName = rmqHost,
+    QueueName = $"notification-service.orders.{handlerName}",
+    ExchangeName = "raytree.changes",
+    BindingKey = "change.Order.*",
+    DeclareQueue = true,
+    Durable = true,
+}))
+.OnInsert("email-handler", SendEmailAsync)
+.OnUpdate("audit-handler", WriteAuditLogAsync)
+```
+
+Each named handler gets its own queue and consumer — offsets and retry budgets are isolated.
+
+### Distributed deduplication
+
+The default in-memory deduplication store does not survive restarts. For durable, cross-replica dedup swap in Redis:
+
+```csharp
+builder.Services.AddChangeTracking(builder.Configuration, cfg =>
+    cfg.UseDeduplicationStore(new RedisDeduplicationStore("localhost:6379")));
+```
+
+### OpenTelemetry
+
+Add `RayTree.OpenTelemetry` and call `meterProvider.AddRayTreeMetrics()` to export the 18 RayTree instruments (outbox lag, publish duration, handler attempts, payload size, queue depth) to your OTel collector.

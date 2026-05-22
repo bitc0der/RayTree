@@ -492,6 +492,23 @@ var consumer = new RabbitMqConsumer(new RabbitMqConsumerOptions
 See the [Configuration Guide](configuration.md#rabbitmq-topology-wait) for the full option
 reference and for consumer-factory / Generic Host patterns.
 
+## Examples
+
+The `examples/` directory contains two complete runnable microservice demos showing the full outbox-to-broker pipeline end to end. Both are standalone solutions (not part of `RayTree.slnx`) and start with a single `docker compose up --build`:
+
+| Example | Broker | Key concepts demonstrated |
+|---|---|---|
+| [`examples/RabbitMQ.Microservices/`](../examples/RabbitMQ.Microservices/README.md) | RabbitMQ 4 (topic exchange) | Outbox → publish → consume, `WaitForTopology`, at-most-once vs at-least-once, management UI |
+| [`examples/Kafka.Microservices/`](../examples/Kafka.Microservices/README.md) | Apache Kafka 3.9 (KRaft, no Zookeeper) | Partition-key ordering, `FromEarliest` consumer replay, consumer-group scaling, 3-partition routing |
+
+Both examples share the same structure:
+- `OrderService` — `PostgreSqlRepository<Order>` + `PostgreSqlOutbox<Order>` + broker publisher + `OrderSimulator` background service
+- `NotificationService` — broker consumer + `OnInsert`/`OnUpdate`/`OnDelete` handlers logging via `ILogger`
+- Multi-stage Dockerfiles with csproj-first layer caching (NuGet packages cached across source-only edits)
+- `postgres:18.3-alpine` with the postgres 18 volume layout (`/var/lib/postgresql`)
+
+---
+
 ## Cleanup
 
 `EntityChangeTracker` implements `IDisposable`. Disposing it stops all publisher services:

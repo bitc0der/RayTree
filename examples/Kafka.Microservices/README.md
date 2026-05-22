@@ -49,7 +49,7 @@ To stop cleanly:
 docker compose down
 ```
 
-PostgreSQL data is preserved in the named volume `postgres-data`. To wipe it:
+Both named volumes (`postgres-data`, `kafka-data`) are preserved on restart. To wipe them:
 
 ```bash
 docker compose down -v
@@ -86,7 +86,7 @@ examples/Kafka.Microservices/
 ├── Kafka.Microservices.slnx          # Standalone solution — open this in your IDE
 ├── Directory.Build.props             # Inherits from repo root; sets IsPackable=false
 ├── Directory.Packages.props          # Inherits from repo root; adds Microsoft.Extensions.Hosting
-├── docker-compose.yml                # Postgres + Kafka + OrderService + NotificationService
+├── docker-compose.yml                # Postgres + Kafka (KRaft) + OrderService + NotificationService
 │
 ├── Shared/
 │   ├── Shared.csproj
@@ -118,7 +118,7 @@ OrderSimulator
                   → KafkaPublisher  →  topic: raytree.order_changes  (partition key: Order:<id>)
                       → KafkaConsumer (NotificationService)
                           → Gzip decompress → MessagePack deserialize
-                              → OnInsert / OnUpdate / OnDelete handlers → Console.WriteLine
+                              → OnInsert / OnUpdate / OnDelete handlers → ILogger
 ```
 
 ### Why an outbox?
