@@ -1,0 +1,13 @@
+<Project>
+  <!--
+    Import the repo-root Directory.Packages.props to inherit centrally-pinned versions
+    (Microsoft.Extensions.*, Npgsql, Confluent.Kafka, MessagePack, etc.), then append
+    example-only packages that the library projects do not consume.
+  -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Packages.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <ItemGroup>
+    <!-- Generic Host is needed for Host.CreateApplicationBuilder in the console apps. -->
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
+  </ItemGroup>
+</Project>

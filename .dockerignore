@@ -1,0 +1,24 @@
+# Exclude build artefacts so they are not sent to the Docker daemon as part of the build context.
+# Without this file, local bin/ and obj/ directories (which include large native Confluent.Kafka
+# and Npgsql binaries) inflate the context to several GB and make every build slow.
+
+# .NET build output
+**/bin/
+**/obj/
+
+# IDE and editor directories
+.vs/
+.idea/
+.vscode/
+
+# Git metadata
+.git/
+
+# Local user overrides
+*.user
+*.suo
+*.DotSettings.user
+
+# OS noise
+.DS_Store
+Thumbs.db

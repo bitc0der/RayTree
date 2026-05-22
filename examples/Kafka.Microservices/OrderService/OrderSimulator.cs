@@ -1,10 +1,10 @@
+using KafkaMicroservices.Shared;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using RabbitMqMicroservices.Shared;
 using RayTree.Core.Plugins.Repository;
 using RayTree.Core.Tracking;
 
-namespace RabbitMqMicroservices.OrderService;
+namespace KafkaMicroservices.OrderService;
 
 /// <summary>
 /// Drives the example by periodically creating, updating, and deleting <see cref="Order"/>

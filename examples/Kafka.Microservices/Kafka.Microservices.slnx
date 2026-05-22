@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="Shared/Shared.csproj" />
+    <Project Path="OrderService/OrderService.csproj" />
+    <Project Path="NotificationService/NotificationService.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="docker-compose.yml" />
+    <File Path="README.md" />
+  </Folder>
+</Solution>
