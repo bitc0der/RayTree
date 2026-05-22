@@ -6,6 +6,81 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.15-pre-release]
+
+### Added
+
+#### Topology wait — opt-in startup retry for externally-owned RabbitMQ topology (`RayTree.Plugins.RabbitMQ`)
+
+In microservice deployments the exchange or queue that a publisher or consumer depends on is
+often owned and declared by a separate service. If both services start simultaneously the
+consumer-side service may call `InitializeAsync` before the topology exists, causing an
+`OperationInterruptedException` with `NOT_FOUND` (404) and an immediate crash-loop.
+
+Three new options on both `RabbitMqPublisherOptions` and `RabbitMqConsumerOptions` enable an
+opt-in wait loop that probes with AMQP passive declares and retries until the topology appears:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `WaitForTopology` | `bool` | `false` | Enable the topology wait loop. |
+| `TopologyWaitInterval` | `TimeSpan` | `5 s` | Delay between passive-declare attempts. |
+| `TopologyWaitTimeout` | `TimeSpan?` | `null` | Optional hard deadline; `null` means wait indefinitely. |
+
+**Publisher behaviour** (when `WaitForTopology = true` and `DeclareExchange = false`): probes
+the configured `ExchangeName` with `ExchangeDeclarePassiveAsync` before opening the working
+channel. Retries on `NOT_FOUND`; propagates all other errors immediately.
+
+**Consumer behaviour** (when `WaitForTopology = true`):
+- When `DeclareQueue = false`: probes `QueueName` with `QueueDeclarePassiveAsync`.
+- When `ExchangeName` is non-empty: probes the exchange with `ExchangeDeclarePassiveAsync`
+  before calling `QueueBindAsync`.
+
+Both probes use the same `TopologyWaitInterval` and `TopologyWaitTimeout`.
+
+**Non-retried errors**: only `NOT_FOUND` (404) triggers retry. `PRECONDITION_FAILED`,
+`ACCESS_REFUSED`, connection failures, and `OperationCanceledException` propagate immediately.
+
+**Fresh channel per attempt**: RabbitMQ closes the channel on every channel-level error, so
+each probe opens a new channel from the existing connection. The working channel is created only
+after all probes succeed.
+
+**Logging** (publisher only — `RabbitMqConsumer` has no logger by design):
+
+| Level | When |
+|---|---|
+| `Information` | First `NOT_FOUND` for an exchange or queue |
+| `Debug` | Subsequent misses |
+| `Information` | Recovery (topology became available) |
+| `Error` | Timeout exhaustion before rethrowing |
+
+```csharp
+// Publisher waits for an exchange owned by another service
+new RabbitMqPublisherOptions
+{
+    ExchangeName          = "entity_changes",
+    DeclareExchange       = false,          // not our exchange to declare
+    WaitForTopology       = true,
+    TopologyWaitInterval  = TimeSpan.FromSeconds(2),
+    TopologyWaitTimeout   = TimeSpan.FromMinutes(5)  // give up after 5 min
+}
+
+// Consumer waits for a queue and its binding exchange
+new RabbitMqConsumerOptions
+{
+    QueueName             = "order-events",
+    ExchangeName          = "entity_changes",
+    DeclareQueue          = false,          // queue owned externally
+    WaitForTopology       = true,
+    TopologyWaitInterval  = TimeSpan.FromSeconds(2)
+    // TopologyWaitTimeout = null → retry indefinitely until token is cancelled
+}
+```
+
+The default (`WaitForTopology = false`) is unchanged — a missing exchange or queue surfaces the
+underlying `OperationInterruptedException` on the first AMQP operation, exactly as before.
+
+---
+
 ## [0.0.14-pre-release]
 
 ### Added

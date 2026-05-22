@@ -323,6 +323,64 @@ new RabbitMqPublisherOptions
 
 When `RoutingKeySelector` is set it takes full control of the key; the `RoutingKey` base prefix is ignored.
 
+### RabbitMQ topology wait
+
+In microservice deployments one service owns and declares the exchange or queue while other
+services consume it. If the owning service has not yet started when `InitializeAsync` is called,
+the broker returns `NOT_FOUND` and the client crashes. The opt-in topology wait loop retries with
+AMQP passive declares until the topology appears.
+
+Three options control the wait on both `RabbitMqPublisherOptions` and `RabbitMqConsumerOptions`:
+
+| Option | Default | Description |
+|---|---|---|
+| `WaitForTopology` | `false` | Enable the wait loop. |
+| `TopologyWaitInterval` | `5 s` | Delay between passive-declare attempts. |
+| `TopologyWaitTimeout` | `null` (unlimited) | Hard deadline; `null` means retry until cancellation. |
+
+**When does the publisher probe?** When `WaitForTopology = true` **and** `DeclareExchange = false`.
+The publisher probes `ExchangeName` with `ExchangeDeclarePassiveAsync` before connecting.
+
+**When does the consumer probe?**
+
+- When `WaitForTopology = true` and `DeclareQueue = false` — probes `QueueName` with `QueueDeclarePassiveAsync`.
+- When `WaitForTopology = true` and `ExchangeName` is non-empty — also probes the exchange with `ExchangeDeclarePassiveAsync` before `QueueBindAsync`.
+
+Only `NOT_FOUND` (404) retries. All other errors (`PRECONDITION_FAILED`, `ACCESS_REFUSED`,
+connection failures) propagate immediately.
+
+```csharp
+// Publisher — waits for an exchange declared by another service
+builder.ForEntity<Order>(e => e
+    .UsePublisher(new RabbitMqPublisher(new RabbitMqPublisherOptions
+    {
+        HostName              = "rabbitmq",
+        ExchangeName          = "entity_changes",
+        DeclareExchange       = false,        // owned by topology-service
+        WaitForTopology       = true,
+        TopologyWaitInterval  = TimeSpan.FromSeconds(2),
+        TopologyWaitTimeout   = TimeSpan.FromMinutes(5)
+    })));
+
+// Consumer — waits for a queue and binding exchange
+builder.ForEntity<Order>(e => e
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseConsumer(new RabbitMqConsumer(new RabbitMqConsumerOptions
+    {
+        HostName              = "rabbitmq",
+        QueueName             = "order-events",
+        ExchangeName          = "entity_changes",
+        DeclareQueue          = false,        // queue owned externally
+        WaitForTopology       = true,
+        TopologyWaitInterval  = TimeSpan.FromSeconds(2)
+        // TopologyWaitTimeout = null → retry until CancellationToken is cancelled
+    }))
+    .OnInsert(async (change, ct) => { /* ... */ }));
+```
+
+The default (`WaitForTopology = false`) is unchanged — a missing exchange or queue surfaces the
+underlying `OperationInterruptedException` immediately.
+
 ```csharp
 // InMemory (testing)
 .ForEntity<Order>(e => e

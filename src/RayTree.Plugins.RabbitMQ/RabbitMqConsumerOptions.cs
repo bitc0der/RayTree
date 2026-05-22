@@ -38,4 +38,39 @@ public class RabbitMqConsumerOptions
     /// <see cref="RayTree.Core.Models.MessageEnvelope.Metadata"/> so any concurrency level is safe.
     /// </summary>
     public bool AckAfterHandler { get; set; }
+
+    /// <summary>
+    /// When <c>true</c>, <c>InitializeAsync</c> waits for externally-owned RabbitMQ topology to
+    /// appear instead of failing on <c>NOT_FOUND</c>. Specifically:
+    /// <list type="bullet">
+    ///   <item>If <see cref="DeclareQueue"/> is <c>false</c>, the consumer probes
+    ///   <see cref="QueueName"/> with a passive declare and retries on <c>NOT_FOUND</c>.</item>
+    ///   <item>If <see cref="ExchangeName"/> is non-empty, the consumer probes the exchange
+    ///   with a passive declare before <c>QueueBind</c> and retries on <c>NOT_FOUND</c>.</item>
+    /// </list>
+    /// Defaults to <c>false</c> — missing topology surfaces the underlying
+    /// <c>OperationInterruptedException</c> on the first failed AMQP operation as before.
+    /// <para>
+    /// Only <c>NOT_FOUND</c> (404) errors trigger retry. Other channel- and connection-level
+    /// errors propagate immediately so genuine misconfiguration still fails fast.
+    /// </para>
+    /// </summary>
+    public bool WaitForTopology { get; set; }
+
+    /// <summary>
+    /// Delay between passive-declare attempts when <see cref="WaitForTopology"/> is <c>true</c>.
+    /// Defaults to 5 seconds.
+    /// </summary>
+    public TimeSpan TopologyWaitInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Optional ceiling on the total time the topology wait loop may consume. When <c>null</c>
+    /// (default), the loop continues indefinitely until the topology appears or the
+    /// <see cref="CancellationToken"/> passed to <c>InitializeAsync</c> is cancelled.
+    /// <para>
+    /// The timeout is evaluated <em>after</em> each failed attempt, so the observed wait may
+    /// exceed this value by up to one <see cref="TopologyWaitInterval"/>. Must be positive when set.
+    /// </para>
+    /// </summary>
+    public TimeSpan? TopologyWaitTimeout { get; set; }
 }

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Tracking;
 
@@ -7,14 +8,15 @@ public static class RabbitMqBuilderExtensions
 {
     public static IChangeTrackingBuilder UseRabbitMq(
         this IChangeTrackingBuilder builder,
-        Action<RabbitMqPublisherOptions> configure)
+        Action<RabbitMqPublisherOptions> configure,
+        ILoggerFactory? loggerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
         var options = new RabbitMqPublisherOptions();
         configure(options);
-        return builder.UsePublisher<IQueuePublisher>(_ => new RabbitMqPublisher(options));
+        return builder.UsePublisher<IQueuePublisher>(_ => new RabbitMqPublisher(options, loggerFactory));
     }
 
     public static RabbitMqPublisherOptions WithExchange(

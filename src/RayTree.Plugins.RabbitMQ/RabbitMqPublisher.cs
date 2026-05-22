@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Publisher;
@@ -7,14 +9,16 @@ namespace RayTree.Plugins.RabbitMQ;
 public class RabbitMqPublisher : IQueuePublisher, IDisposable
 {
     private readonly RabbitMqPublisherOptions _options;
+    private readonly ILogger<RabbitMqPublisher> _logger;
     private IConnection? _connection;
     private IChannel? _channel;
 
     private readonly SemaphoreSlim _semaphore = new(initialCount: 1, maxCount: 1);
 
-    public RabbitMqPublisher(RabbitMqPublisherOptions options)
+    public RabbitMqPublisher(RabbitMqPublisherOptions options, ILoggerFactory? loggerFactory = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RabbitMqPublisher>();
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -43,17 +47,37 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
             };
 
             _connection = await factory.CreateConnectionAsync(cancellationToken: cancellationToken);
-            _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
 
-            if (_options.DeclareExchange)
-                await _channel.ExchangeDeclareAsync(
-                    exchange: _options.ExchangeName,
-                    type: _options.ExchangeType,
-                    durable: _options.Durable,
-                    cancellationToken: cancellationToken
-                );
+            try
+            {
+                if (_options is { WaitForTopology: true, DeclareExchange: false })
+                {
+                    await TopologyProbe.WaitForExchangeAsync(
+                        _connection,
+                        _options.ExchangeName,
+                        _options.TopologyWaitInterval,
+                        _options.TopologyWaitTimeout,
+                        _logger,
+                        cancellationToken);
+                }
 
-            return _channel;
+                _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
+
+                if (_options.DeclareExchange)
+                    await _channel.ExchangeDeclareAsync(
+                        exchange: _options.ExchangeName,
+                        type: _options.ExchangeType,
+                        durable: _options.Durable,
+                        cancellationToken: cancellationToken
+                    );
+
+                return _channel;
+            }
+            catch
+            {
+                await CleanupAfterFailedInitAsync();
+                throw;
+            }
         }
         finally
         {
@@ -88,6 +112,23 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
             body: envelope.Payload,
             cancellationToken: cancellationToken
         );
+    }
+
+    private async Task CleanupAfterFailedInitAsync()
+    {
+        if (_channel is not null)
+        {
+            try { await _channel.CloseAsync(CancellationToken.None); } catch { /* may already be closed */ }
+            _channel.Dispose();
+            _channel = null;
+        }
+
+        if (_connection is not null)
+        {
+            try { await _connection.CloseAsync(CancellationToken.None); } catch { /* may already be closed */ }
+            _connection.Dispose();
+            _connection = null;
+        }
     }
 
     public void Dispose()

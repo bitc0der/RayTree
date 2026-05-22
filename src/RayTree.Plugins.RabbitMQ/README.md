@@ -159,6 +159,9 @@ The serialised entity payload goes in `body` (already compressed by the time it 
 | `RoutingKeySelector` | `envelope => $"{RoutingKey}.{EntityType}.{changeType}"` | Overrides routing-key construction entirely — receives the full `MessageEnvelope` and returns any string. Replaces the default delegate by assigning a new one |
 | `DeclareExchange` | `true` | Set `false` if the exchange is pre-provisioned and your credentials lack declare rights |
 | `Durable` | `true` | Survives broker restart (only relevant when declaring) |
+| `WaitForTopology` | `false` | When `true` and `DeclareExchange = false`, probe `ExchangeName` with a passive declare and retry on `NOT_FOUND` until it appears, the token is cancelled, or `TopologyWaitTimeout` elapses |
+| `TopologyWaitInterval` | `5 s` | Delay between passive-declare attempts (used when `WaitForTopology = true`) |
+| `TopologyWaitTimeout` | `null` | Hard deadline for the wait loop; `null` means no ceiling |
 
 ---
 
@@ -293,6 +296,9 @@ stateDiagram-v2
 | `ExchangeName` | `null` | When set, queue is bound to this exchange during init |
 | `BindingKey` | `"#"` | Routing-key pattern for the binding (only used when `ExchangeName` is set) |
 | `AckAfterHandler` | `false` | **At-most-once** (default) or **at-least-once** (`true`) — see below |
+| `WaitForTopology` | `false` | When `true`: probes `QueueName` (if `DeclareQueue = false`) and `ExchangeName` (if non-empty) with passive declares, retrying on `NOT_FOUND` until they appear, the token is cancelled, or `TopologyWaitTimeout` elapses |
+| `TopologyWaitInterval` | `5 s` | Delay between passive-declare attempts (used when `WaitForTopology = true`) |
+| `TopologyWaitTimeout` | `null` | Hard deadline for the wait loop; `null` means no ceiling |
 
 ### `AckAfterHandler` — delivery-guarantee toggle
 
@@ -321,6 +327,83 @@ The delivery tag is broker-private state — `ChangeSubscriber` shouldn't know a
 - **`PrefetchCount`** controls the maximum number of in-flight unacked messages per channel. With `AckAfterHandler = true`, this directly caps the at-risk window: if the process crashes, at most `PrefetchCount` messages will be redelivered.
 - **`SubscriberOptions.MaxDegreeOfParallelism`** controls how many envelopes `ChangeSubscriber` processes concurrently from the buffer. Combine with `PrefetchCount` for end-to-end backpressure.
 - The internal `Channel<MessageEnvelope>` is **unbounded** — if your subscriber falls behind, RAM grows. Set `PrefetchCount` to bound it from the broker side.
+
+---
+
+## Topology wait (microservice deployments)
+
+In a microservice deployment one service typically owns and declares the exchange and queue
+while other services connect to them as publisher or consumer. If the owning service has not
+started yet when `InitializeAsync` is called, the broker returns `NOT_FOUND` (404) and the
+connection attempt fails.
+
+Set `WaitForTopology = true` to enable an opt-in retry loop. The plugin probes with AMQP
+passive declares at `TopologyWaitInterval` intervals and returns as soon as the topology
+exists. The `CancellationToken` passed to `InitializeAsync` cancels the loop at any time;
+`TopologyWaitTimeout` adds an optional hard deadline.
+
+```
+[Publisher / Consumer]
+  InitializeAsync()
+    ├─ WaitForTopology = false (default)
+    │    └─ open channel → declare / consume → OK or throw immediately
+    └─ WaitForTopology = true
+         ├─ open probe channel
+         ├─ ExchangeDeclarePassiveAsync / QueueDeclarePassiveAsync
+         │    ├─ OK        → close probe, open working channel, continue
+         │    ├─ NOT_FOUND → close probe, wait TopologyWaitInterval, retry
+         │    └─ other     → propagate immediately (no retry)
+         └─ TopologyWaitTimeout elapsed → rethrow last NOT_FOUND
+```
+
+**Which probes fire?**
+
+| Side | Condition | Probe |
+|---|---|---|
+| Publisher | `WaitForTopology = true` AND `DeclareExchange = false` | `ExchangeDeclarePassiveAsync(ExchangeName)` |
+| Consumer | `WaitForTopology = true` AND `DeclareQueue = false` | `QueueDeclarePassiveAsync(QueueName)` |
+| Consumer | `WaitForTopology = true` AND `ExchangeName` non-empty | `ExchangeDeclarePassiveAsync(ExchangeName)` before `QueueBindAsync` |
+
+Only `NOT_FOUND` (404) retries. `PRECONDITION_FAILED`, `ACCESS_REFUSED`, and connection
+errors propagate immediately so genuine misconfiguration still fails fast.
+
+**Logging** (publisher only — `RabbitMqConsumer` has no logger by design):
+
+| Level | When |
+|---|---|
+| `Information` | First miss for a given exchange or queue |
+| `Debug` | Subsequent misses |
+| `Information` | Recovery (topology became available) |
+| `Error` | Timeout exhaustion, immediately before rethrowing |
+
+### Publisher — wait for externally-owned exchange
+
+```csharp
+new RabbitMqPublisher(new RabbitMqPublisherOptions
+{
+    HostName             = "rabbitmq",
+    ExchangeName         = "entity_changes",
+    DeclareExchange      = false,         // owned by topology-service
+    WaitForTopology      = true,
+    TopologyWaitInterval = TimeSpan.FromSeconds(2),
+    TopologyWaitTimeout  = TimeSpan.FromMinutes(5)
+}, loggerFactory)
+```
+
+### Consumer — wait for externally-owned queue and binding exchange
+
+```csharp
+new RabbitMqConsumer(new RabbitMqConsumerOptions
+{
+    HostName             = "rabbitmq",
+    QueueName            = "order-events",
+    ExchangeName         = "entity_changes",
+    DeclareQueue         = false,         // queue owned by another service
+    WaitForTopology      = true,
+    TopologyWaitInterval = TimeSpan.FromSeconds(2)
+    // TopologyWaitTimeout = null → retry until CancellationToken is cancelled
+})
+```
 
 ---
 
