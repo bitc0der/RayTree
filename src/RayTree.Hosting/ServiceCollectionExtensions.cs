@@ -15,6 +15,8 @@ public static class ServiceCollectionExtensions
         IConfiguration? configuration = null,
         Action<IChangeTrackingBuilder>? configure = null)
     {
+        services.AddSingleton(new ChangeTrackingDiContext(ConfigurationBound: configuration is not null));
+
         services.AddSingleton<EntityChangeTrackerFactory>();
 
         // RayTreeMeter is a DI singleton so callers can also inject it directly for

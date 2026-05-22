@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Tracking;
 
@@ -11,11 +12,13 @@ namespace RayTree.Core.Handling;
 /// </summary>
 internal sealed class IsolatedHandlerBuilder<TEntity>(
     EntitySubscriberBuilder<TEntity> subBuilder,
-    Func<string, IQueueConsumer> factory)
+    Func<string, IQueueConsumer> factory,
+    ILogger log)
     : IIsolatedHandlerBuilder<TEntity>
     where TEntity : class
 {
     private readonly List<(string HandlerName, ChangeType ChangeType, ChangeHandlerAsync<TEntity> Handler, SubscriberOptions? Options)> _entries = new();
+    private static readonly string EntityTypeName = typeof(TEntity).Name;
 
     /// <inheritdoc/>
     public IIsolatedHandlerBuilder<TEntity> OnInsert(string handlerName, ChangeHandlerAsync<TEntity> handler,
@@ -43,6 +46,10 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
 
         ArgumentNullException.ThrowIfNull(handler);
         _entries.Add((handlerName, changeType, handler, options));
+        if (log.IsEnabled(LogLevel.Debug))
+            log.LogDebug(
+                "ChangeTracking: entity override applied EntityType={EntityType} Override={Override} Plugin={Plugin}",
+                EntityTypeName, $"On{changeType}:{handlerName}", handler.Method.DeclaringType?.Name ?? "<delegate>");
         return this;
     }
 

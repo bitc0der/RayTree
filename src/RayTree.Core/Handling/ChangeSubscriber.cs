@@ -65,6 +65,8 @@ public class ChangeSubscriber : IDisposable
 
     internal IReadOnlyCollection<EntityHandlerKey> IsolatedQueueKeys => _isolatedQueues.Keys;
 
+    internal int ConsumerCount => _queues.Count + _isolatedQueues.Count;
+
     private List<Task>? _consumeTasks;
 
     internal async Task InitializeAsync(CancellationToken cancellationToken = default)

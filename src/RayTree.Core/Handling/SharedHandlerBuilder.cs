@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Core.Handling;
@@ -13,10 +14,21 @@ internal sealed class SharedHandlerBuilder<TEntity> : ISharedHandlerBuilder<TEnt
     where TEntity : class
 {
     private readonly EntitySubscriberBuilder<TEntity> _subBuilder;
+    private readonly ILogger _log;
+    private static readonly string EntityTypeName = typeof(TEntity).Name;
 
-    internal SharedHandlerBuilder(EntitySubscriberBuilder<TEntity> subBuilder)
+    internal SharedHandlerBuilder(EntitySubscriberBuilder<TEntity> subBuilder, ILogger log)
     {
         _subBuilder = subBuilder ?? throw new ArgumentNullException(nameof(subBuilder));
+        _log = log;
+    }
+
+    private void LogHandler(string slot, ChangeHandlerAsync<TEntity> handler)
+    {
+        if (_log.IsEnabled(LogLevel.Debug))
+            _log.LogDebug(
+                "ChangeTracking: entity override applied EntityType={EntityType} Override={Override} Plugin={Plugin}",
+                EntityTypeName, slot, handler.Method.DeclaringType?.Name ?? "<delegate>");
     }
 
     /// <inheritdoc/>
@@ -24,6 +36,7 @@ internal sealed class SharedHandlerBuilder<TEntity> : ISharedHandlerBuilder<TEnt
     {
         ArgumentNullException.ThrowIfNull(handler);
         _subBuilder.OnInsert(handler);
+        LogHandler("OnInsert", handler);
         return this;
     }
 
@@ -32,6 +45,7 @@ internal sealed class SharedHandlerBuilder<TEntity> : ISharedHandlerBuilder<TEnt
     {
         ArgumentNullException.ThrowIfNull(handler);
         _subBuilder.OnUpdate(handler);
+        LogHandler("OnUpdate", handler);
         return this;
     }
 
@@ -40,6 +54,7 @@ internal sealed class SharedHandlerBuilder<TEntity> : ISharedHandlerBuilder<TEnt
     {
         ArgumentNullException.ThrowIfNull(handler);
         _subBuilder.OnDelete(handler);
+        LogHandler("OnDelete", handler);
         return this;
     }
 
@@ -48,6 +63,7 @@ internal sealed class SharedHandlerBuilder<TEntity> : ISharedHandlerBuilder<TEnt
     {
         ArgumentNullException.ThrowIfNull(handler);
         _subBuilder.OnChange(changeType, handler);
+        LogHandler($"OnChange:{changeType}", handler);
         return this;
     }
 }
