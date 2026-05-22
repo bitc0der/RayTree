@@ -1,7 +1,7 @@
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RabbitMqMicroservices.Shared;
+using RayTree.Core.Models;
 using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Hosting;
@@ -12,6 +12,13 @@ using RayTree.Plugins.Serializers.MessagePack;
 var rmqHost = Environment.GetEnvironmentVariable("RABBITMQ_HOST") ?? "localhost";
 
 var builder = Host.CreateApplicationBuilder(args);
+
+// Handlers close over this logger so structured log properties (OrderId, Status, etc.) flow through
+// the Generic Host logging pipeline rather than bypassing it via Console.WriteLine.
+var loggerFactory = LoggerFactory.Create(b => b
+    .AddConsole()
+    .SetMinimumLevel(LogLevel.Information));
+var handlerLogger = loggerFactory.CreateLogger("Notifications");
 
 builder.Services.AddChangeTracking(builder.Configuration, cfg =>
 {
@@ -33,6 +40,11 @@ builder.Services.AddChangeTracking(builder.Configuration, cfg =>
                 // OrderService's RoutingKeySelector this yields keys like `change.Order.insert`.
                 ExchangeName = "raytree.changes",
                 BindingKey = "change.Order.*",
+                // Probe the exchange passively until order-service declares it. This replaces
+                // the compose-level depends_on: order-service with an application-level readiness
+                // check, correctly decoupling startup order without tight container coupling.
+                WaitForTopology = true,
+                TopologyWaitInterval = TimeSpan.FromSeconds(5),
             }))
             // Shared-handler dispatch: all three handlers run sequentially in registration order
             // on every matching delivery. Each handler binds to exactly one ChangeType.
@@ -46,25 +58,28 @@ builder.Services.AddChangeTracking(builder.Configuration, cfg =>
 await builder.Build().RunAsync();
 
 // ---- handlers -------------------------------------------------------------------------------
+// Local functions close over handlerLogger — non-static so they capture the variable above.
 
-static Task LogInsertAsync(RayTree.Core.Models.EntityChange<Order> change, CancellationToken ct)
+Task LogInsertAsync(EntityChange<Order> change, CancellationToken ct)
 {
     var order = change.State;
-    Console.WriteLine(
-        $"[NOTIFY] NEW order {order?.Id} — customer={order?.CustomerName} total={order?.TotalAmount:C} status={order?.Status}");
+    handlerLogger.LogInformation(
+        "[NOTIFY] NEW order {OrderId} — customer={Customer} total={Total:C} status={Status}",
+        order?.Id, order?.CustomerName, order?.TotalAmount, order?.Status);
     return Task.CompletedTask;
 }
 
-static Task LogUpdateAsync(RayTree.Core.Models.EntityChange<Order> change, CancellationToken ct)
+Task LogUpdateAsync(EntityChange<Order> change, CancellationToken ct)
 {
     var order = change.State;
-    Console.WriteLine(
-        $"[NOTIFY] UPDATED order {order?.Id} — status={order?.Status} total={order?.TotalAmount:C}");
+    handlerLogger.LogInformation(
+        "[NOTIFY] UPDATED order {OrderId} — status={Status} total={Total:C}",
+        order?.Id, order?.Status, order?.TotalAmount);
     return Task.CompletedTask;
 }
 
-static Task LogDeleteAsync(RayTree.Core.Models.EntityChange<Order> change, CancellationToken ct)
+Task LogDeleteAsync(EntityChange<Order> change, CancellationToken ct)
 {
-    Console.WriteLine($"[NOTIFY] DELETED order {change.EntityId}");
+    handlerLogger.LogInformation("[NOTIFY] DELETED order {OrderId}", change.EntityId);
     return Task.CompletedTask;
 }

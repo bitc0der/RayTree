@@ -105,7 +105,7 @@ internal sealed class OrderSimulator : BackgroundService
         {
             var order = liveOrders[_random.Next(liveOrders.Count)];
             order.Status = s_Statuses[_random.Next(s_Statuses.Length)];
-            order.TotalAmount = Math.Round(order.TotalAmount + (decimal)((_random.NextDouble() - 0.5) * 20), 2);
+            order.TotalAmount = Math.Max(0.01m, Math.Round(order.TotalAmount + (decimal)((_random.NextDouble() - 0.5) * 20), 2));
 
             await _repository.UpdateAsync(order, ct);
             await _tracker.TrackUpdateAsync(order, ct);
