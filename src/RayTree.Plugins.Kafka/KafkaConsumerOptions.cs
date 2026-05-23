@@ -49,4 +49,39 @@ public class KafkaConsumerOptions
     /// </para>
     /// </summary>
     public bool AckAfterHandler { get; set; }
+
+    /// <summary>
+    /// When <c>true</c>, <c>InitializeAsync</c> waits for the configured <see cref="Topic"/> to become
+    /// available on the broker before building the underlying consumer or calling <c>Subscribe</c>.
+    /// Without this, a missing topic causes <c>Consume</c> to return null/empty results indefinitely
+    /// while librdkafka logs <c>UnknownTopicOrPart</c> warnings internally.
+    /// <para>
+    /// Use this in microservice deployments where the topic is owned and created by a different service.
+    /// Defaults to <c>false</c>.
+    /// </para>
+    /// <para>
+    /// The probe retries while the broker reports any of: empty <c>Topics</c> collection,
+    /// per-topic <c>UnknownTopicOrPart</c>, or per-topic <c>LeaderNotAvailable</c>. All other broker
+    /// errors propagate immediately.
+    /// </para>
+    /// <para>
+    /// <b>Auto-create caveat:</b> brokers with <c>auto.create.topics.enable=true</c> will create the
+    /// topic in response to the metadata probe itself, masking real misconfiguration.
+    /// </para>
+    /// </summary>
+    public bool WaitForTopic { get; set; }
+
+    /// <summary>
+    /// Delay between metadata probe attempts when <see cref="WaitForTopic"/> is <c>true</c>.
+    /// Defaults to 5 seconds. Must be positive.
+    /// </summary>
+    public TimeSpan TopicWaitInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Optional ceiling on the total time the topic-wait loop may consume. When <c>null</c>
+    /// (default), the loop continues indefinitely until the topic appears or the
+    /// <see cref="CancellationToken"/> passed to <c>InitializeAsync</c> is cancelled. Must be
+    /// positive when set.
+    /// </summary>
+    public TimeSpan? TopicWaitTimeout { get; set; }
 }

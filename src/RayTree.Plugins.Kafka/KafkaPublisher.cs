@@ -1,5 +1,7 @@
 using System.Text;
 using Confluent.Kafka;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Publisher;
 
@@ -8,27 +10,45 @@ namespace RayTree.Plugins.Kafka;
 public class KafkaPublisher : IQueuePublisher, IDisposable
 {
     private readonly KafkaPublisherOptions _options;
+    private readonly ILogger<KafkaPublisher> _logger;
     private IProducer<string, byte[]>? _producer;
-    private readonly object _lock = new();
 
-    public KafkaPublisher(KafkaPublisherOptions options)
+    // SemaphoreSlim (not lock) so the producer-init critical section can await the async probe.
+    // Mirrors RabbitMqPublisher._semaphore for the same reason.
+    private readonly SemaphoreSlim _semaphore = new(initialCount: 1, maxCount: 1);
+
+    public KafkaPublisher(KafkaPublisherOptions options, ILoggerFactory? loggerFactory = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<KafkaPublisher>();
     }
 
-    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        GetProducer();
-        return Task.CompletedTask;
+        await GetProducerAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private IProducer<string, byte[]> GetProducer()
+    private async Task<IProducer<string, byte[]>> GetProducerAsync(CancellationToken cancellationToken)
     {
         if (_producer != null) return _producer;
 
-        lock (_lock)
+        await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
             if (_producer != null) return _producer;
+
+            // Probe the topic BEFORE building the producer — both the InitializeAsync path
+            // and the lazy PublishAsync path route through here, so the probe cannot be bypassed.
+            if (_options.WaitForTopic)
+            {
+                await KafkaTopicProbe.WaitForTopicAsync(
+                    _options.BootstrapServers,
+                    _options.Topic,
+                    _options.TopicWaitInterval,
+                    _options.TopicWaitTimeout,
+                    _logger,
+                    cancellationToken).ConfigureAwait(false);
+            }
 
             var config = new ProducerConfig { BootstrapServers = _options.BootstrapServers };
 
@@ -49,11 +69,15 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
             _producer = new ProducerBuilder<string, byte[]>(config).Build();
             return _producer;
         }
+        finally
+        {
+            _semaphore.Release();
+        }
     }
 
     public async Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
     {
-        var producer = GetProducer();
+        var producer = await GetProducerAsync(cancellationToken).ConfigureAwait(false);
 
         var message = new Message<string, byte[]>
         {
@@ -73,5 +97,9 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
         await producer.ProduceAsync(_options.Topic, message, cancellationToken);
     }
 
-    public void Dispose() => _producer?.Dispose();
+    public void Dispose()
+    {
+        _producer?.Dispose();
+        _semaphore.Dispose();
+    }
 }

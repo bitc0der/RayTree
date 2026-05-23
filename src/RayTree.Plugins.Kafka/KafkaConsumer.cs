@@ -54,8 +54,21 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                        .CreateLogger<KafkaConsumer>();
     }
 
-    public Task InitializeAsync(CancellationToken cancellationToken = default)
+    public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        // Probe the topic BEFORE allocating native librdkafka handles so a failed probe
+        // (timeout, cancellation, non-retryable error) leaves no state to clean up.
+        if (_options.WaitForTopic)
+        {
+            await KafkaTopicProbe.WaitForTopicAsync(
+                _options.BootstrapServers,
+                _options.Topic,
+                _options.TopicWaitInterval,
+                _options.TopicWaitTimeout,
+                _logger,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         var config = new ConsumerConfig
         {
             BootstrapServers = _options.BootstrapServers,
@@ -66,7 +79,6 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
         _consumer = new ConsumerBuilder<string, byte[]>(config).Build();
         _consumer.Subscribe(_options.Topic);
-        return Task.CompletedTask;
     }
 
     public async IAsyncEnumerable<MessageEnvelope> ConsumeAsync(

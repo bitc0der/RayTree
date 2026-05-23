@@ -62,6 +62,17 @@ public class KafkaPublisherTests
     }
 
     [Test]
+    public void KafkaPublisher_NoLoggerFactory_ConstructsAndDisposesCleanly()
+    {
+        // Legacy call shape: `new KafkaPublisher(options)` with the optional loggerFactory omitted.
+        // Verifies the new optional parameter doesn't break source-compat callers.
+        Assert.DoesNotThrow(() =>
+        {
+            using var publisher = new KafkaPublisher(new KafkaPublisherOptions());
+        });
+    }
+
+    [Test]
     public async Task KafkaPublisher_CopyStream_ProducesCorrectPayload()
     {
         var data = new byte[] { 1, 2, 3, 4, 5 };

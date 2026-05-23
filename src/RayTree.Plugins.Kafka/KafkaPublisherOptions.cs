@@ -21,4 +21,43 @@ public class KafkaPublisherOptions
     /// </summary>
     public Func<MessageEnvelope, string> KeySelector { get; set; } =
         static envelope => $"{envelope.EntityType}:{envelope.EntityId}";
+
+    /// <summary>
+    /// When <c>true</c>, <c>InitializeAsync</c> waits for the configured <see cref="Topic"/> to become
+    /// available on the broker before completing — instead of letting the missing topic propagate as a
+    /// downstream <c>UnknownTopicOrPart</c> error from the first <c>ProduceAsync</c>.
+    /// <para>
+    /// Use this in microservice deployments where the topic is owned and created by a different service.
+    /// Defaults to <c>false</c> — a missing topic surfaces through the underlying client exactly as today.
+    /// </para>
+    /// <para>
+    /// The probe retries while the broker reports any of: empty <c>Topics</c> collection,
+    /// per-topic <c>UnknownTopicOrPart</c>, or per-topic <c>LeaderNotAvailable</c> (a transient state during
+    /// cluster bootstrap / partition-leader election). All other broker errors propagate immediately.
+    /// </para>
+    /// <para>
+    /// <b>Auto-create caveat:</b> brokers with <c>auto.create.topics.enable=true</c> (the default on many
+    /// distributions) will create the topic in response to the metadata probe itself, masking real
+    /// misconfiguration (a typo in <see cref="Topic"/> still "succeeds"). Set the broker option to
+    /// <c>false</c> in deployments that rely on this feature.
+    /// </para>
+    /// </summary>
+    public bool WaitForTopic { get; set; }
+
+    /// <summary>
+    /// Delay between metadata probe attempts when <see cref="WaitForTopic"/> is <c>true</c>.
+    /// Defaults to 5 seconds. Must be positive.
+    /// </summary>
+    public TimeSpan TopicWaitInterval { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Optional ceiling on the total time the topic-wait loop may consume. When <c>null</c>
+    /// (default), the loop continues indefinitely until the topic appears or the
+    /// <see cref="CancellationToken"/> passed to <c>InitializeAsync</c> is cancelled.
+    /// <para>
+    /// The timeout is evaluated <em>after</em> each failed attempt, so the observed wait may
+    /// exceed this value by up to one <see cref="TopicWaitInterval"/>. Must be positive when set.
+    /// </para>
+    /// </summary>
+    public TimeSpan? TopicWaitTimeout { get; set; }
 }

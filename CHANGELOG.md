@@ -6,6 +6,47 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+#### Optional `WaitForTopic` retry for Kafka publisher and consumer (`RayTree.Plugins.Kafka`)
+
+Mirrors the existing RabbitMQ `WaitForTopology` feature for Kafka. When `WaitForTopic = true`
+is set on either `KafkaPublisherOptions` or `KafkaConsumerOptions`, `InitializeAsync` probes
+the broker via `IAdminClient.GetMetadata` and retries while the response indicates the topic
+is not yet available — empty `Topics` collection, per-topic `UnknownTopicOrPart`, or per-topic
+`LeaderNotAvailable`. Other broker errors (authorization, fatal librdkafka errors) propagate
+immediately. New options on both classes: `WaitForTopic` (bool, default `false`),
+`TopicWaitInterval` (TimeSpan, default 5 s), `TopicWaitTimeout` (TimeSpan?, default `null`).
+Both Kafka builder extensions (`UseKafka` on publisher and `UseKafka<TEntity>` on subscriber)
+now accept an optional `ILoggerFactory?` parameter so probe logs reach the host logging
+infrastructure when using the documented fluent API.
+
+### Changed — BINARY-BREAKING
+
+#### `KafkaPublisher` constructor adds optional `ILoggerFactory?` parameter
+
+`public KafkaPublisher(KafkaPublisherOptions options)` → `public KafkaPublisher(KafkaPublisherOptions options, ILoggerFactory? loggerFactory = null)`.
+
+This is **source-compatible** (existing `new KafkaPublisher(options)` call-sites continue to
+compile) but **binary-breaking** (adding an optional parameter to a public constructor
+changes the constructor's binary signature). Downstream applications consuming
+`RayTree.Plugins.Kafka` as a published NuGet must **recompile** against this version —
+binaries built against the older signature will hit `MissingMethodException` at runtime.
+
+### Changed
+
+- `KafkaPublisher` now uses `SemaphoreSlim` instead of `lock` around its producer-init
+  critical section so the new async topic-wait probe can serialize correctly against
+  concurrent `PublishAsync` callers. The probe runs inside the lazy `GetProducerAsync` path
+  used by both `InitializeAsync` and `PublishAsync`.
+- `KafkaConsumer.InitializeAsync` is now genuinely `async Task` instead of returning a
+  pre-completed `Task` so the probe can be awaited safely under any captured
+  `SynchronizationContext`.
+
+---
+
 ## [0.0.15-pre-release]
 
 ### Added
