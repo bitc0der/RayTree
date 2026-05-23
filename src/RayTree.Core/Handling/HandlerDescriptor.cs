@@ -10,8 +10,10 @@ internal static class HandlerDescriptor
     internal static string Describe(Delegate handler)
     {
         var t = handler.Method.DeclaringType;
-        while (t is not null && (t.Name.StartsWith("<>", StringComparison.Ordinal) || t.Name.Contains("DisplayClass")))
+        while (t is not null && (t.Name.StartsWith("<>", StringComparison.Ordinal) || t.Name.Contains("DisplayClass", StringComparison.Ordinal)))
+        {
             t = t.DeclaringType;
+        }
         return t?.Name ?? "<delegate>";
     }
 }

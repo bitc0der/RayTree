@@ -79,6 +79,9 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         }
         catch
         {
+            // No exception payload: inner publisher/subscriber/plugin layers already logged the
+            // root cause at Error. A tracker-level Error would double-log; this Warning marks
+            // the abort point so operators can find it without losing the inner context.
             if (_logger.IsEnabled(LogLevel.Warning))
                 _logger.LogWarning("ChangeTracking: tracker initialization aborted");
             throw;

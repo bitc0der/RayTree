@@ -24,7 +24,7 @@ internal sealed class EntityBuilder<TEntity> : IEntityBuilder<TEntity>
     private readonly ChangeSubscriberBuilder _subscriberBuilder;
     private readonly EntityPublisherBuilder<TEntity> _pubBuilder;
     private readonly EntitySubscriberBuilder<TEntity> _subBuilder;
-    private readonly ILoggerFactory _loggergerFactory;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<EntityBuilder<TEntity>> _logger;
     private static readonly string EntityTypeName = typeof(TEntity).Name;
 
@@ -40,7 +40,7 @@ internal sealed class EntityBuilder<TEntity> : IEntityBuilder<TEntity>
         _subscriberBuilder = subscriberBuilder;
         _pubBuilder = new EntityPublisherBuilder<TEntity>(publisherBuilder);
         _subBuilder = new EntitySubscriberBuilder<TEntity>(subscriberBuilder);
-        _loggergerFactory = loggerFactory;
+        _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<EntityBuilder<TEntity>>();
     }
 
@@ -119,7 +119,7 @@ internal sealed class EntityBuilder<TEntity> : IEntityBuilder<TEntity>
         ArgumentNullException.ThrowIfNull(consumer);
         _subBuilder.UseConsumer(consumer);
         LogOverride("Consumer", consumer.GetType().Name);
-        _sharedBuilder = new SharedHandlerBuilder<TEntity>(_subBuilder, _loggergerFactory);
+        _sharedBuilder = new SharedHandlerBuilder<TEntity>(_subBuilder, _loggerFactory);
         return _sharedBuilder;
     }
 
@@ -127,7 +127,7 @@ internal sealed class EntityBuilder<TEntity> : IEntityBuilder<TEntity>
     {
         ArgumentNullException.ThrowIfNull(factory);
         LogOverride("ConsumerFactory", factory.GetType().Name);
-        _isolatedBuilder = new IsolatedHandlerBuilder<TEntity>(_subBuilder, factory, _loggergerFactory);
+        _isolatedBuilder = new IsolatedHandlerBuilder<TEntity>(_subBuilder, factory, _loggerFactory);
         return _isolatedBuilder;
     }
 

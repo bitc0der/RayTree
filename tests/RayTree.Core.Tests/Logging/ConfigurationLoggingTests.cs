@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RayTree.Core.Models;
 using RayTree.Core.Plugins.Compression;
+using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Tracking;
 using RayTree.Hosting;
 using RayTree.Plugins.InMemory;
@@ -266,11 +268,12 @@ public class ConfigurationLoggingTests
         Assert.That(aborted, Is.Not.Null);
     }
 
-    private sealed class InitFailingPublisher : RayTree.Core.Plugins.Publisher.IQueuePublisher
+    private sealed class InitFailingPublisher : IQueuePublisher
     {
         public Task InitializeAsync(CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("Simulated init failure");
-        public Task PublishAsync(RayTree.Core.Models.MessageEnvelope envelope, CancellationToken cancellationToken = default)
+
+        public Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
     }
 

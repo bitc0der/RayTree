@@ -16,7 +16,7 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
 {
     private readonly ChangePublisherBuilder _publisherBuilder = new();
     private readonly ChangeSubscriberBuilder _subscriberBuilder = new();
-    private readonly ILoggerFactory _loggergerFactory;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly bool _hasCustomLoggerFactory;
     private readonly ILogger<ChangeTrackingBuilder> _logger;
     private RayTreeMeter? _meter;
@@ -32,8 +32,8 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
     internal ChangeTrackingBuilder(ILoggerFactory? loggerFactory = null)
     {
         _hasCustomLoggerFactory = loggerFactory is not null;
-        _loggergerFactory = loggerFactory ?? NullLoggerFactory.Instance;
-        _logger = _loggergerFactory.CreateLogger<ChangeTrackingBuilder>();
+        _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        _logger = _loggerFactory.CreateLogger<ChangeTrackingBuilder>();
     }
 
     public IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox
@@ -127,7 +127,7 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
         if (_logger.IsEnabled(LogLevel.Information))
             _logger.LogInformation("ChangeTracking: configuring entity {EntityType}", typeof(TEntity).Name);
 
-        var entityBuilder = new EntityBuilder<TEntity>(_publisherBuilder, _subscriberBuilder, _loggergerFactory);
+        var entityBuilder = new EntityBuilder<TEntity>(_publisherBuilder, _subscriberBuilder, _loggerFactory);
         configure(entityBuilder);
         entityBuilder.RegisterSubscriberApplicator();
         return this;
@@ -136,14 +136,33 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
     public EntityChangeTracker Build()
     {
         var tracker = BuildInternal();
-        tracker.InitializeAsync().GetAwaiter().GetResult();
+        try
+        {
+            tracker.InitializeAsync().GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Dispose the partially-initialized tracker (owned meter, background services
+            // started by the publisher, dedup store, etc.) — the caller never receives a
+            // reference, so without this it would leak.
+            tracker.Dispose();
+            throw;
+        }
         return tracker;
     }
 
     public async Task<EntityChangeTracker> BuildAsync(CancellationToken cancellationToken = default)
     {
         var tracker = BuildInternal();
-        await tracker.InitializeAsync(cancellationToken);
+        try
+        {
+            await tracker.InitializeAsync(cancellationToken);
+        }
+        catch
+        {
+            tracker.Dispose();
+            throw;
+        }
         return tracker;
     }
 
@@ -155,8 +174,8 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
         if (ownsMeter && _logger.IsEnabled(LogLevel.Debug))
             _logger.LogDebug("ChangeTracking: no meter supplied; created default RayTreeMeter (owned by tracker)");
 
-        _publisherBuilder.UseLoggerFactory(_loggergerFactory);  // always non-null — resolved once here
-        _subscriberBuilder.UseLoggerFactory(_loggergerFactory);
+        _publisherBuilder.UseLoggerFactory(_loggerFactory);  // always non-null — resolved once here
+        _subscriberBuilder.UseLoggerFactory(_loggerFactory);
         _publisherBuilder.UseMeter(meter);
         _subscriberBuilder.UseMeter(meter);
 
@@ -183,6 +202,6 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
                 _hasCustomLoggerFactory);
         }
 
-        return new EntityChangeTracker(publisher, subscriber, meter, ownsMeter: ownsMeter, loggerFactory: _loggergerFactory);
+        return new EntityChangeTracker(publisher, subscriber, meter, ownsMeter: ownsMeter, loggerFactory: _loggerFactory);
     }
 }
