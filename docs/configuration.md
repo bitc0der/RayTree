@@ -381,6 +381,74 @@ builder.ForEntity<Order>(e => e
 The default (`WaitForTopology = false`) is unchanged — a missing exchange or queue surfaces the
 underlying `OperationInterruptedException` immediately.
 
+### Kafka topic wait
+
+The Kafka analogue of `WaitForTopology` for deployments where the topic owner (often a
+dedicated "schema-owner" pod) comes up after the publisher / consumer that depends on it.
+When `WaitForTopic = true`, `InitializeAsync` probes the broker via
+`IAdminClient.GetMetadata` and retries until the topic is reported available.
+
+Three options on both `KafkaPublisherOptions` and `KafkaConsumerOptions`:
+
+| Option | Default | Description |
+|---|---|---|
+| `WaitForTopic` | `false` | Enable the wait loop. |
+| `TopicWaitInterval` | `5 s` | Delay between metadata probe attempts. |
+| `TopicWaitTimeout` | `null` (unlimited) | Hard deadline; `null` means retry until cancellation. |
+
+**Retryable responses** — the probe retries on any of:
+
+- Empty `Metadata.Topics` collection (some broker versions return no entry rather than a placeholder).
+- Per-topic `ErrorCode.UnknownTopicOrPart`.
+- Per-topic `ErrorCode.LeaderNotAvailable` (transient during cluster bootstrap and partition-leader election).
+- Transient transport-level `KafkaException`s: `Local_Transport` (connection refused / socket closed), `Local_AllBrokersDown`, `Local_Resolve` (DNS failure), `Local_TimedOut`. This covers the common startup race where the broker pod has not yet finished starting.
+
+All other broker errors, fatal `KafkaException`s (`Error.IsFatal == true`), and `OperationCanceledException` propagate immediately.
+
+**Probe placement**
+
+- The publisher probes inside the lazy producer-init path so both `InitializeAsync` and `PublishAsync` benefit (the probe runs at most once per `KafkaPublisher` lifetime, then a `volatile bool` flag short-circuits subsequent calls).
+- The consumer probes before allocating the native `IConsumer` handle and re-checks cancellation immediately after, so a Ctrl+C during a slow probe never leaks a librdkafka handle.
+
+**Cancellation latency.** Each `GetMetadata` call is bounded by a small fixed timeout (~1 s),
+decoupled from `TopicWaitInterval`. This keeps shutdown-thread-pinning small regardless of how
+long you set the interval to.
+
+```csharp
+// Publisher — waits for an externally-owned topic
+builder.ForEntity<Order>(e => e
+    .UsePublisher(new KafkaPublisher(new KafkaPublisherOptions
+    {
+        BootstrapServers   = "kafka:9092",
+        Topic              = "orders.events",
+        WaitForTopic       = true,
+        TopicWaitInterval  = TimeSpan.FromSeconds(2),
+        TopicWaitTimeout   = TimeSpan.FromMinutes(5)
+    }, loggerFactory))); // pass loggerFactory so probe progress is observable
+
+// Consumer — waits for the same topic
+builder.ForEntity<Order>(e => e
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseKafka(o =>
+    {
+        o.BootstrapServers  = "kafka:9092";
+        o.Topic             = "orders.events";
+        o.GroupId           = "orders-service";
+        o.WaitForTopic      = true;
+        o.TopicWaitInterval = TimeSpan.FromSeconds(2);
+        // TopicWaitTimeout = null → retry until CancellationToken is cancelled
+    }, loggerFactory)
+    .OnInsert(async (change, ct) => { /* ... */ }));
+```
+
+**Caveats**
+
+- *Auto-create.* Brokers with `auto.create.topics.enable=true` (the default on many distributions, including the stock `confluentinc/cp-kafka` image) will *create* the topic in response to the metadata probe itself, defeating the wait. Set the broker option to `false` in deployments that depend on this feature.
+- *Sync `Build()` + `TopicWaitTimeout = null`.* The synchronous `ChangeTrackingBuilder.Build()` overload (which `AddChangeTracking` uses) does not plumb a cancellation token through. With an unbounded wait, host startup will block indefinitely with no SIGTERM escape. Either set a non-null timeout, or use `BuildAsync(cancellationToken)` with the host's `ApplicationStopping` token.
+- *Logger plumbing.* The publisher's `ILoggerFactory?` parameter and the subscriber-side `UseKafka(configure, loggerFactory)` overload both default to silent (`NullLoggerFactory.Instance`). Pass the host's logger factory explicitly when using `WaitForTopic` so the first-miss / recovery `Information` logs are visible — otherwise a stuck startup is silently invisible.
+
+The default (`WaitForTopic = false`) is unchanged — a missing topic surfaces as `UnknownTopicOrPart` on the first `ProduceAsync` (publisher) or as silent no-message returns from `Consume` (consumer).
+
 ```csharp
 // InMemory (testing)
 .ForEntity<Order>(e => e

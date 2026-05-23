@@ -1,6 +1,6 @@
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
-using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;

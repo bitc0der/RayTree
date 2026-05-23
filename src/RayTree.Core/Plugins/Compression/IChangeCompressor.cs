@@ -1,4 +1,4 @@
-namespace RayTree.Core.Plugins;
+namespace RayTree.Core.Plugins.Compression;
 
 public interface IChangeCompressor
 {

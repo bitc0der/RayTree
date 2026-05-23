@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Tracking;
 
@@ -7,11 +8,12 @@ public static class KafkaBuilderExtensions
 {
     public static IChangeTrackingBuilder UseKafka(
         this IChangeTrackingBuilder builder,
-        Action<KafkaPublisherOptions> configure)
+        Action<KafkaPublisherOptions> configure,
+        ILoggerFactory? loggerFactory = null)
     {
         var options = new KafkaPublisherOptions();
         configure(options);
-        return builder.UsePublisher<IQueuePublisher>(_ => new KafkaPublisher(options));
+        return builder.UsePublisher<IQueuePublisher>(_ => new KafkaPublisher(options, loggerFactory));
     }
 
     public static KafkaPublisherOptions WithTopic(this KafkaPublisherOptions options, string topic)

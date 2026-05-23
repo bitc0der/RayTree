@@ -1,6 +1,5 @@
 using RayTree.Core.Handling;
 using RayTree.Core.Tracking;
-using RayTree.Plugins.Deduplication.Redis;
 using StackExchange.Redis;
 
 namespace RayTree.Plugins.Deduplication.Redis;

@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
-using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Repository;
@@ -82,7 +82,8 @@ public sealed class ChangePublisher : IDisposable
 
         foreach (var entityType in _publishers.Keys)
         {
-            _logger.LogDebug("Registering outbox publisher service for {EntityType}", entityType.Name);
+            if (_logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug("Registering outbox publisher service for {EntityType}", entityType.Name);
             var service = new OutboxPublisherService(this, entityType, Options, _loggerFactory, _meter);
             _publisherServices.Add(service);
             await service.StartAsync(cancellationToken);
