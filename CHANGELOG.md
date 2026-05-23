@@ -15,13 +15,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Mirrors the existing RabbitMQ `WaitForTopology` feature for Kafka. When `WaitForTopic = true`
 is set on either `KafkaPublisherOptions` or `KafkaConsumerOptions`, `InitializeAsync` probes
 the broker via `IAdminClient.GetMetadata` and retries while the response indicates the topic
-is not yet available — empty `Topics` collection, per-topic `UnknownTopicOrPart`, or per-topic
-`LeaderNotAvailable`. Other broker errors (authorization, fatal librdkafka errors) propagate
-immediately. New options on both classes: `WaitForTopic` (bool, default `false`),
-`TopicWaitInterval` (TimeSpan, default 5 s), `TopicWaitTimeout` (TimeSpan?, default `null`).
-Both Kafka builder extensions (`UseKafka` on publisher and `UseKafka<TEntity>` on subscriber)
-now accept an optional `ILoggerFactory?` parameter so probe logs reach the host logging
-infrastructure when using the documented fluent API.
+is not yet available — empty `Topics` collection, per-topic `UnknownTopicOrPart`, per-topic
+`LeaderNotAvailable` (cluster bootstrap / leader election), or a transient transport-level
+`KafkaException` (`Local_Transport`, `Local_AllBrokersDown`, `Local_Resolve`, `Local_TimedOut`
+— the broker-not-yet-reachable startup race). Other broker errors (authorization, fatal
+librdkafka errors) propagate immediately. New options on both classes: `WaitForTopic` (bool,
+default `false`), `TopicWaitInterval` (TimeSpan, default 5 s), `TopicWaitTimeout` (TimeSpan?,
+default `null`). Both Kafka builder extensions (`UseKafka` on publisher and `UseKafka<TEntity>`
+on subscriber) now accept an optional `ILoggerFactory?` parameter so probe logs reach the host
+logging infrastructure when using the documented fluent API.
+
+The probe is implemented in a new internal `KafkaTopicProbe` helper. Per-call metadata timeout
+is a fixed ~1 s decoupled from `TopicWaitInterval` so cancellation latency and shutdown
+thread-pool occupancy are bounded regardless of how long the interval is set.
 
 ### Changed — BINARY-BREAKING
 
@@ -37,13 +43,28 @@ binaries built against the older signature will hit `MissingMethodException` at 
 
 ### Changed
 
-- `KafkaPublisher` now uses `SemaphoreSlim` instead of `lock` around its producer-init
-  critical section so the new async topic-wait probe can serialize correctly against
-  concurrent `PublishAsync` callers. The probe runs inside the lazy `GetProducerAsync` path
-  used by both `InitializeAsync` and `PublishAsync`.
+- `KafkaPublisher` now uses two `SemaphoreSlim` instances (one for the one-shot topic probe
+  gated by a `volatile bool _probeCompleted` flag, one for the very short producer-build
+  critical section) instead of the previous `lock`. Splitting the two means concurrent
+  `PublishAsync` callers do NOT serialize behind a multi-second topic-wait probe — they
+  contend only on the microsecond-long builder lock. The probe runs inside the lazy
+  `GetProducerAsync` path so it covers both `InitializeAsync` and direct `PublishAsync`.
+- `KafkaPublisher.Dispose` is now idempotent (`volatile bool _disposed` guard) and its
+  internal `SafeRelease` swallows `ObjectDisposedException` from in-flight `Release()`
+  calls during a Dispose-during-init race, so host shutdown no longer produces a noisy
+  crash log.
 - `KafkaConsumer.InitializeAsync` is now genuinely `async Task` instead of returning a
   pre-completed `Task` so the probe can be awaited safely under any captured
-  `SynchronizationContext`.
+  `SynchronizationContext`. A `cancellationToken.ThrowIfCancellationRequested()` check
+  between the probe and the native `IConsumer` allocation prevents handle leaks when
+  cancellation arrives during a slow probe.
+
+### Changed — `RayTree.Core`
+
+- `ChangeSubscriber.InitializeAsync` now initializes all registered consumers in parallel
+  via `Task.WhenAll` rather than sequentially. A single consumer with a slow init (e.g.
+  Kafka `WaitForTopic` against a missing topic) no longer blocks unrelated consumers from
+  subscribing.
 
 ---
 

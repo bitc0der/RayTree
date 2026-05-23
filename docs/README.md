@@ -492,6 +492,62 @@ var consumer = new RabbitMqConsumer(new RabbitMqConsumerOptions
 See the [Configuration Guide](configuration.md#rabbitmq-topology-wait) for the full option
 reference and for consumer-factory / Generic Host patterns.
 
+## Kafka Topic Wait
+
+The Kafka analogue of `WaitForTopology` for the same microservice startup-ordering case.
+Enable `WaitForTopic = true` on `KafkaPublisherOptions` or `KafkaConsumerOptions` and
+`InitializeAsync` probes `IAdminClient.GetMetadata` until the topic is reported available.
+
+| Option | Default | Description |
+|---|---|---|
+| `WaitForTopic` | `false` | Enable the wait loop. |
+| `TopicWaitInterval` | `5 s` | Delay between probe attempts. |
+| `TopicWaitTimeout` | `null` | Hard deadline; `null` means no ceiling. |
+
+The probe retries on: empty `Topics` collection, per-topic `UnknownTopicOrPart`, per-topic
+`LeaderNotAvailable` (cluster bootstrap / leader election), and transient transport-level
+`KafkaException`s (`Local_Transport`, `Local_AllBrokersDown`, `Local_Resolve`, `Local_TimedOut`
+— covers the broker-not-yet-reachable startup race). All other broker errors and fatal
+librdkafka errors propagate immediately.
+
+### Publisher example
+
+```csharp
+builder.ForEntity<Order>(e => e
+    .UsePublisher(new KafkaPublisher(new KafkaPublisherOptions
+    {
+        BootstrapServers  = "kafka:9092",
+        Topic             = "orders.events",
+        WaitForTopic      = true,
+        TopicWaitInterval = TimeSpan.FromSeconds(2),
+        TopicWaitTimeout  = TimeSpan.FromMinutes(5)
+    }, loggerFactory))); // pass loggerFactory so probe logs are observable
+```
+
+### Consumer example
+
+```csharp
+builder.ForEntity<Order>(e => e
+    .UseSerializer(new JsonSerializerPlugin())
+    .UseKafka(o =>
+    {
+        o.BootstrapServers  = "kafka:9092";
+        o.Topic             = "orders.events";
+        o.GroupId           = "orders-service";
+        o.WaitForTopic      = true;
+        o.TopicWaitInterval = TimeSpan.FromSeconds(2);
+        // TopicWaitTimeout = null → retry until CancellationToken is cancelled
+    }, loggerFactory)
+    .OnInsert(async (change, ct) => { /* ... */ }));
+```
+
+> **Auto-create caveat:** brokers with `auto.create.topics.enable=true` (the default on many
+> images) create the topic in response to the probe itself, defeating the wait. Set the
+> broker option to `false` in deployments that depend on this feature.
+
+See the [Configuration Guide](configuration.md#kafka-topic-wait) for the full caveats list
+(sync `Build()` + `null` timeout interaction, logger-plumbing tips).
+
 ## Examples
 
 The `examples/` directory contains two complete runnable microservice demos showing the full outbox-to-broker pipeline end to end. Both are standalone solutions (not part of `RayTree.slnx`) and start with a single `docker compose up --build`:
