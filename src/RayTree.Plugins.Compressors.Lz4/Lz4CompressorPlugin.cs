@@ -1,5 +1,4 @@
 using K4os.Compression.LZ4;
-using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Compression;
 
 namespace RayTree.Plugins.Compressors.Lz4;
