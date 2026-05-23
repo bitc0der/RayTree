@@ -3,6 +3,7 @@ using RayTree.Core.Distribution;
 using RayTree.Core.Telemetry;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
 using RayTree.Plugins;

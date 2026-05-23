@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Models;
-using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Consumer;
 using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Serialization;

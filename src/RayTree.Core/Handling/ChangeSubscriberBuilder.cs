@@ -1,6 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Deduplication;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Telemetry;

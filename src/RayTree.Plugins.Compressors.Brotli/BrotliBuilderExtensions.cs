@@ -1,4 +1,5 @@
 using RayTree.Core.Plugins;
+using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.Compressors.Brotli;
