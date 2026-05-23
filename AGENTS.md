@@ -126,6 +126,15 @@ See `CLAUDE.md` for deep architecture documentation, plugin contracts, and key d
   methods.
 - All runtime service classes require a non-nullable `ILoggerFactory` / `ILogger<T>` constructor parameter — no internal
   fallback.
+- Each class owns its own `ILogger<Self>` (created from the injected `ILoggerFactory`) so log entries carry the
+  emitter's category and per-category filtering works as expected. Do not pass a shared `ILogger` instance across
+  multiple classes.
+- Configuration- and lifecycle-time log calls (those added by the `add-tracker-config-logging` change in
+  `ChangeTrackingBuilder`, `EntityBuilder<T>`, `SharedHandlerBuilder<T>`, `IsolatedHandlerBuilder<T>`, and
+  `EntityChangeTracker.InitializeAsync`) MUST be guarded with `if (_logger.IsEnabled(<level>)) ...` so
+  `NullLoggerFactory` produces zero allocations and zero output.
+- See [docs/configuration.md#what-gets-logged](docs/configuration.md#what-gets-logged) for the full per-class log
+  inventory (level, trigger, structured properties).
 
 ### Testing Conventions
 

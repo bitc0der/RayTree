@@ -501,6 +501,31 @@ When using the `.UseKafka(...)` / `.UseRabbitMq(...)` extension methods inside a
 
 ### What gets logged
 
+**Configuration & build phase**
+
+| Class | Level | When | Structured properties |
+|---|---|---|---|
+| `ChangeTrackingBuilder` | `Information` | Each global `Use*` call (`UseOutbox`, `UsePublisher`, `UseSerializer`, `UseCompressor`, `UseRepository`, `UseDeduplicationStore`, `UseMeter`, `UsePublisherOptions`, `UseSubscriberOptions`) | `{Plugin}` |
+| `ChangeTrackingBuilder` | `Information` | `ForEntity<TEntity>` invocation | `{EntityType}` |
+| `ChangeTrackingBuilder` | `Debug` | `BuildInternal` falls back to a default `RayTreeMeter` (no `UseMeter`) | — |
+| `ChangeTrackingBuilder` | `Information` | "ChangeTracker built" summary, once per `Build()` / `BuildAsync()` | `{EntityTypes}`, `{Plugins}`, `{HasCustomMeter}`, `{HasCustomDeduplicationStore}`, `{HasCustomLoggerFactory}` |
+| `EntityBuilder<TEntity>` | `Debug` | Per-entity publisher overrides (`UseOutbox`, `UsePublisher`, `UseSerializer`, `UseCompressor`, `UseRepository`, `UseSubscriberOptions`, `UseConsumer`, `UseConsumerFactory`) | `{EntityType}`, `{Override}`, `{Plugin}` |
+| `SharedHandlerBuilder<TEntity>` | `Debug` | `OnInsert` / `OnUpdate` / `OnDelete` / `OnChange` handler registrations | `{EntityType}`, `{Override}`, `{Plugin}` |
+| `IsolatedHandlerBuilder<TEntity>` | `Debug` | Named handler registrations | `{EntityType}`, `{Override}` (e.g. `OnInsert:audit`), `{Plugin}` |
+
+**Tracker lifecycle**
+
+| Class | Level | When | Structured properties |
+|---|---|---|---|
+| `EntityChangeTracker` | `Information` | "tracker initialization started" — entered `InitializeAsync` | — |
+| `EntityChangeTracker` | `Debug` | Publisher init completed | `{EntityTypeCount}` |
+| `EntityChangeTracker` | `Debug` | Consumer connections initialized | `{ConsumerCount}` |
+| `EntityChangeTracker` | `Information` | "tracker initialization completed" — success | — |
+| `EntityChangeTracker` | `Warning` | "tracker initialization aborted" — abort point marker; inner plugin's `Error` carries the exception payload | — |
+| `ChangeTrackingHostedService` | `Information` | "ChangeTracking starting" — DI startup, once per host | `{ConfigurationBound}` |
+
+**Runtime**
+
 | Class | Level | When |
 |---|---|---|
 | `OutboxPublisherService` | `Information` | Polling loop start / stop |
@@ -518,6 +543,39 @@ When using the `.UseKafka(...)` / `.UseRabbitMq(...)` extension methods inside a
 | `KafkaConsumer` | `Error` | Fatal Kafka error |
 | `KafkaConsumer` | `Warning` | Consume error; envelope parse failure |
 | `RabbitMqConsumer` | `Warning` | Message processing error (before requeue) |
+
+All configuration- and lifecycle-time log calls are guarded by `ILogger.IsEnabled(...)`, so under `NullLoggerFactory.Instance` they produce zero allocations and zero output. Each builder owns an `ILogger<Self>` so per-category filtering works as expected (e.g. silence `Debug` from `IsolatedHandlerBuilder` while keeping `Information` from `ChangeTrackingBuilder`).
+
+#### Example startup output
+
+For a tracker configured with one global serializer + compressor and two entities, the captured log stream looks like:
+
+```text
+info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
+      ChangeTracking: registered global serializer JsonSerializerPlugin
+info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
+      ChangeTracking: registered global compressor NoOpCompressorPlugin
+info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
+      ChangeTracking: configuring entity Order
+dbug: RayTree.Core.Tracking.EntityBuilder`1[Order][0]
+      ChangeTracking: entity override applied EntityType=Order Override=Outbox Plugin=PostgreSqlOutbox`1
+dbug: RayTree.Core.Handling.SharedHandlerBuilder`1[Order][0]
+      ChangeTracking: entity override applied EntityType=Order Override=OnInsert Plugin=MyService
+info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
+      ChangeTracker built. EntityTypes=["Order", "Customer"] Plugins=Outbox=<none> Publisher=<none> Serializer=JsonSerializerPlugin Compressor=NoOpCompressorPlugin Repository=<none> HasCustomMeter=False HasCustomDeduplicationStore=False HasCustomLoggerFactory=True
+info: RayTree.Core.Tracking.EntityChangeTracker[0]
+      ChangeTracking: tracker initialization started
+dbug: RayTree.Core.Tracking.EntityChangeTracker[0]
+      ChangeTracking: publisher initialized EntityTypeCount=2
+dbug: RayTree.Core.Tracking.EntityChangeTracker[0]
+      ChangeTracking: consumers initialized ConsumerCount=1
+info: RayTree.Core.Tracking.EntityChangeTracker[0]
+      ChangeTracking: tracker initialization completed
+info: RayTree.Hosting.ChangeTrackingHostedService[0]
+      ChangeTracking starting. ConfigurationBound=True
+```
+
+On failure, the inner plugin emits the `Error` with the exception, and the tracker emits a single `Warning` marking the abort point so operators can grep back to the cause without losing context.
 
 ## Observability — OpenTelemetry Metrics
 

@@ -10,6 +10,112 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+#### Configuration- and lifecycle-time logging on the tracker builder (`RayTree.Core`, `RayTree.Hosting`)
+
+Before this release the builder and tracker were almost silent during configuration and
+startup: operators bringing up a new service had no visible evidence of which plugins were
+registered, which entity types were configured, or which defaults were applied.
+Misconfigurations (forgotten outbox, wrong consumer factory, mismatched serializer) only
+surfaced as runtime errors later that were hard to trace back to the build step.
+
+The change adds structured `Information` / `Debug` / `Warning` logs through the entire
+configuration and initialization path. No code change is required to opt in — the new logs
+flow automatically through the `ILoggerFactory` already supplied to `ChangeTrackingBuilder`
+(directly, or via `AddChangeTracking` from the DI container).
+
+**Builder configuration logs** — emitted from `ChangeTrackingBuilder` and from per-entity
+builders (`EntityBuilder<TEntity>`, `SharedHandlerBuilder<TEntity>`,
+`IsolatedHandlerBuilder<TEntity>`):
+
+| Level | When | Properties |
+|---|---|---|
+| `Information` | Each global `Use*` call | `{Plugin}` |
+| `Information` | `ForEntity<TEntity>` invocation | `{EntityType}` |
+| `Debug` | Default `RayTreeMeter` fallback in `BuildInternal` | — |
+| `Information` | "ChangeTracker built" summary at the end of `Build()` / `BuildAsync()` | `{EntityTypes}`, `{Plugins}`, `{HasCustomMeter}`, `{HasCustomDeduplicationStore}`, `{HasCustomLoggerFactory}` |
+| `Debug` | Per-entity plugin override (`UseOutbox`, `UsePublisher`, `UseSerializer`, `UseCompressor`, `UseRepository`, `UseConsumer`, `UseConsumerFactory`, `UseSubscriberOptions`) | `{EntityType}`, `{Override}`, `{Plugin}` |
+| `Debug` | Handler registration (`OnInsert` / `OnUpdate` / `OnDelete` / `OnChange`, both Shared and Isolated modes) | `{EntityType}`, `{Override}` (e.g. `OnInsert:audit`), `{Plugin}` |
+
+For lambda handlers, `{Plugin}` walks past compiler-generated closure types
+(`<>c__DisplayClass…`) and reports the user's outer class — so logs show
+`Plugin=MyService` instead of `Plugin=<>c__DisplayClass3_0`.
+
+**Tracker initialization lifecycle** — emitted from `EntityChangeTracker.InitializeAsync`:
+
+| Level | When | Properties |
+|---|---|---|
+| `Information` | "tracker initialization started" | — |
+| `Debug` | Publisher initialization complete | `{EntityTypeCount}` |
+| `Debug` | Consumer connections initialized | `{ConsumerCount}` |
+| `Information` | "tracker initialization completed" — success | — |
+| `Warning` | "tracker initialization aborted" — abort marker on failure; the inner publisher/subscriber/plugin's own `Error` carries the exception payload | — |
+
+The Warning on failure deliberately omits the exception to avoid double-logging — inner
+service layers already log the root cause at `Error`. Operators can grep for the abort line
+and follow it back to the inner Error immediately above in the log stream.
+
+**Tracker disposal on failed init** — `Build()` and `BuildAsync()` now wrap
+`InitializeAsync` in try/catch and call `tracker.Dispose()` before rethrowing.
+Previously a partially-initialized tracker (owned `RayTreeMeter`, publisher background
+services started inside `ChangePublisher.InitializeAsync`, dedup store, etc.) leaked when
+init threw, because the caller never received a reference.
+
+**DI startup log** — emitted from `ChangeTrackingHostedService.StartAsync`:
+
+| Level | When | Properties |
+|---|---|---|
+| `Information` | "ChangeTracking starting" — once per host instance | `{ConfigurationBound}` |
+
+A new internal `ChangeTrackingDiContext` record captures `configuration != null` at
+`AddChangeTracking` registration time and flows it to the hosted service via DI.
+Registration is idempotent (`TryAddSingleton`), so calling `AddChangeTracking` twice
+no longer appends duplicate registrations.
+
+**Per-category log filtering**
+
+Each builder owns an `ILogger<Self>` (not a shared logger), so the category attached to
+every log entry matches the type that actually emitted it. Operators can filter per category
+in their log sink — for example `RayTree.Core.Handling.SharedHandlerBuilder*` to see only
+handler-registration events, or silence `Debug` from a specific builder without affecting
+others.
+
+**Zero overhead under `NullLoggerFactory`**
+
+Every new log call is guarded by `ILogger.IsEnabled(<level>)`. Because
+`NullLogger.IsEnabled` always returns `false`, the entire log body — including the
+build-summary's `EntityTypes` array and `Plugins` string interpolation — is skipped under
+`NullLoggerFactory.Instance`. Callers who opt out of logging pay zero allocation at startup.
+
+**Example output** for a tracker with two entities:
+
+```text
+info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
+      ChangeTracking: registered global serializer JsonSerializerPlugin
+info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
+      ChangeTracking: configuring entity Order
+dbug: RayTree.Core.Tracking.EntityBuilder`1[Order][0]
+      ChangeTracking: entity override applied EntityType=Order Override=Outbox Plugin=PostgreSqlOutbox`1
+dbug: RayTree.Core.Handling.SharedHandlerBuilder`1[Order][0]
+      ChangeTracking: entity override applied EntityType=Order Override=OnInsert Plugin=MyService
+info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
+      ChangeTracker built. EntityTypes=["Order", "Customer"] Plugins=Outbox=<none> Publisher=<none> Serializer=JsonSerializerPlugin Compressor=NoOpCompressorPlugin Repository=<none> HasCustomMeter=False HasCustomDeduplicationStore=False HasCustomLoggerFactory=True
+info: RayTree.Core.Tracking.EntityChangeTracker[0]
+      ChangeTracking: tracker initialization started
+dbug: RayTree.Core.Tracking.EntityChangeTracker[0]
+      ChangeTracking: publisher initialized EntityTypeCount=2
+dbug: RayTree.Core.Tracking.EntityChangeTracker[0]
+      ChangeTracking: consumers initialized ConsumerCount=1
+info: RayTree.Core.Tracking.EntityChangeTracker[0]
+      ChangeTracking: tracker initialization completed
+info: RayTree.Hosting.ChangeTrackingHostedService[0]
+      ChangeTracking starting. ConfigurationBound=True
+```
+
+See [`docs/configuration.md`](docs/configuration.md#what-gets-logged) for the full
+log-entry reference.
+
+---
+
 #### Topology wait — opt-in startup retry for externally-owned RabbitMQ topology (`RayTree.Plugins.RabbitMQ`)
 
 In microservice deployments the exchange or queue that a publisher or consumer depends on is
