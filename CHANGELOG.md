@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.0.15-pre-release]
+## [0.0.16-pre-release]
 
 ### Added
 
@@ -115,6 +115,32 @@ See [`docs/configuration.md`](docs/configuration.md#what-gets-logged) for the fu
 log-entry reference.
 
 ---
+
+#### Kafka microservices example (`examples/Kafka.Microservices`)
+
+This example demonstrates the full outbox-to-Kafka pipeline with two cooperating microservices:
+- **OrderService** — inserts, updates, and deletes `Order` rows in PostgreSQL; writes every change to a PostgreSQL outbox; and publishes each outbox record to the Kafka topic `raytree.order_changes` via `KafkaPublisher`.
+- **NotificationService** — consumes from that topic via `KafkaConsumer` and logs each change to the console.
+
+Both services are fully Dockerized and start with a single `docker compose up --build` command. The example mirrors `examples/RabbitMQ.Microservices` but uses Kafka (KRaft, no Zookeeper) and PostgreSQL as the backing store.
+
+Key concepts demonstrated:
+- **Partition-key ordering** — the default `KeySelector` produces `"{EntityType}:{EntityId}"`, routing all events for the same entity to the same Kafka partition and preserving per-entity order.
+- **Consumer-group scaling** — all `NotificationService` replicas share the same `GroupId`, so Kafka automatically rebalances partitions across them. Start with `docker compose up --scale notification-service=2`.
+- **`FromEarliest` replay** — new consumer groups begin reading from offset 0, so the notification service never misses messages published before it started.
+- **Isolated handler dispatch** — `UseConsumerFactory` enables per-handler consumer groups with independent offset tracking.
+
+The example is a standalone solution (`examples/Kafka.Microservices/Kafka.Microservices.slnx`) and is **not** part of `RayTree.slnx`. See [`examples/Kafka.Microservices/README.md`](../examples/Kafka.Microservices/README.md) for the full walkthrough.
+
+#### Documentation
+
+The existing `examples/RabbitMQ.Microservices` README has been expanded with sections on at-least-once delivery, topology wait, isolated-handler dispatch, distributed deduplication, and OpenTelemetry. A new **Examples** section was added to `docs/README.md` with a comparison table of the RabbitMQ and Kafka microservices demos.
+
+---
+
+## [0.0.15-pre-release]
+
+### Added
 
 #### Topology wait — opt-in startup retry for externally-owned RabbitMQ topology (`RayTree.Plugins.RabbitMQ`)
 
