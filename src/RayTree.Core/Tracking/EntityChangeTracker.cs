@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
 using RayTree.Core.Models;
@@ -17,6 +18,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     private readonly ChangeSubscriber? _subscriber;
     private readonly RayTreeMeter _meter;
     private readonly bool _ownsMeter;
+    private readonly ILogger<EntityChangeTracker> _logger;
     private bool _disposed;
 
     internal ChangePublisher Publisher => _publisher;
@@ -38,20 +40,52 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         ChangePublisher publisher,
         ChangeSubscriber? subscriber = null,
         RayTreeMeter? meter = null,
-        bool ownsMeter = false)
+        bool ownsMeter = false,
+        ILoggerFactory? loggerFactory = null)
     {
         _publisher  = publisher ?? throw new ArgumentNullException(nameof(publisher));
         _subscriber = subscriber;
         _meter      = meter ?? publisher.Meter;
         _ownsMeter  = ownsMeter;
+        _logger        = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<EntityChangeTracker>();
     }
 
     internal async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        await _publisher.InitializeAsync(cancellationToken);
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: tracker initialization started");
 
-        if (_subscriber != null)
-            await _subscriber.InitializeAsync(cancellationToken);
+        try
+        {
+            await _publisher.InitializeAsync(cancellationToken);
+
+            if (_logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(
+                    "ChangeTracking: publisher initialized EntityTypeCount={EntityTypeCount}",
+                    _publisher.GetOutboxes().Count);
+
+            if (_subscriber != null)
+            {
+                await _subscriber.InitializeAsync(cancellationToken);
+
+                if (_logger.IsEnabled(LogLevel.Debug))
+                    _logger.LogDebug(
+                        "ChangeTracking: consumers initialized ConsumerCount={ConsumerCount}",
+                        _subscriber.ConsumerCount);
+            }
+
+            if (_logger.IsEnabled(LogLevel.Information))
+                _logger.LogInformation("ChangeTracking: tracker initialization completed");
+        }
+        catch
+        {
+            // No exception payload: inner publisher/subscriber/plugin layers already logged the
+            // root cause at Error. A tracker-level Error would double-log; this Warning marks
+            // the abort point so operators can find it without losing the inner context.
+            if (_logger.IsEnabled(LogLevel.Warning))
+                _logger.LogWarning("ChangeTracking: tracker initialization aborted");
+            throw;
+        }
     }
 
     internal IOutbox GetOutbox(Type entityType) => _publisher.GetOutbox(entityType);

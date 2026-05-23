@@ -11,7 +11,7 @@ A modular .NET 10 entity change tracking system with outbox pattern support, que
 - **Modular Plugins** - Each serializer and compressor in its own package
 - **In-Memory Testing** - Full in-memory implementation for development and testing
 - **Auto-Initialization** - Automatic database schema initialization on `Build()` / `BuildAsync()`
-- **Structured Logging** - `Microsoft.Extensions.Logging` throughout; pass `ILoggerFactory` to `EntityChangeTracker.Create()` or let `AddChangeTracking` wire it from DI automatically
+- **Structured Logging** - `Microsoft.Extensions.Logging` throughout; pass `ILoggerFactory` to `EntityChangeTracker.Create()` or let `AddChangeTracking` wire it from DI automatically. Covers configuration-time events (`Use*` calls, `ForEntity` overrides, build summary), tracker initialization lifecycle (`InitializeAsync` started / sub-steps / completed / aborted), and runtime events (publish retries, dedup hits, handler failures). Every call is guarded by `IsEnabled(...)` for zero overhead under `NullLoggerFactory`. See [Configuration → What gets logged](configuration.md#what-gets-logged).
 - **OpenTelemetry Metrics** - `System.Diagnostics.Metrics` instruments on a `"RayTree"` meter for outbox writes, publish/subscribe latency, payload size, queue depth, and retry shape. Zero OTel SDK dependency unless the optional `RayTree.OpenTelemetry` package is referenced. See [OpenTelemetry Metrics Guide](opentelemetry-metrics.md).
 - **RabbitMQ Topology Wait** - Opt-in startup retry for `RabbitMqPublisher` and `RabbitMqConsumer` when the exchange or queue is owned by another service. Probes with AMQP passive declares and retries on `NOT_FOUND` until the topology appears, the cancellation token fires, or a configurable timeout elapses.
 

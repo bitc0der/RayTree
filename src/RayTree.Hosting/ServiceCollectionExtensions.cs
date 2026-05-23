@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
@@ -15,6 +16,8 @@ public static class ServiceCollectionExtensions
         IConfiguration? configuration = null,
         Action<IChangeTrackingBuilder>? configure = null)
     {
+        services.TryAddSingleton(new ChangeTrackingDiContext(ConfigurationBound: configuration is not null));
+
         services.AddSingleton<EntityChangeTrackerFactory>();
 
         // RayTreeMeter is a DI singleton so callers can also inject it directly for

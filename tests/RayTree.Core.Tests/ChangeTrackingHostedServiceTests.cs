@@ -79,9 +79,7 @@ public class ChangeTrackingHostedServiceTests
         Assert.That(consumers.Keys, Is.EquivalentTo(new[] { "read-model", "notifier" }),
             "factory must be called once per distinct handler name at Build()");
 
-        var svc = new ChangeTrackingHostedService(
-            tracker,
-            NullLogger<ChangeTrackingHostedService>.Instance);
+        var svc = new ChangeTrackingHostedService(tracker, NullLogger<ChangeTrackingHostedService>.Instance);
 
         await svc.StartAsync(CancellationToken.None);
 
@@ -126,9 +124,7 @@ public class ChangeTrackingHostedServiceTests
             .Build();
 
         // No consumer registered → tracker has no subscriber → StartAsync must be a no-op
-        var svc = new ChangeTrackingHostedService(
-            tracker,
-            NullLogger<ChangeTrackingHostedService>.Instance);
+        var svc = new ChangeTrackingHostedService(tracker, NullLogger<ChangeTrackingHostedService>.Instance);
 
         Assert.DoesNotThrowAsync(() => svc.StartAsync(CancellationToken.None));
         await svc.StopAsync(CancellationToken.None);
