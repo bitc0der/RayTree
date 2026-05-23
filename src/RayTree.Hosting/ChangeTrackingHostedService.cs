@@ -14,7 +14,7 @@ public class ChangeTrackingHostedService : IHostedService
     public ChangeTrackingHostedService(
         EntityChangeTracker tracker,
         ILogger<ChangeTrackingHostedService> logger,
-        ChangeTrackingDiContext? diContext)
+        ChangeTrackingDiContext? diContext = null)
     {
         _tracker   = tracker ?? throw new ArgumentNullException(nameof(tracker));
         _logger    = logger  ?? throw new ArgumentNullException(nameof(logger));
