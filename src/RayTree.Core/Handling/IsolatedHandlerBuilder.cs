@@ -10,15 +10,24 @@ namespace RayTree.Core.Handling;
 /// <c>(handlerName, changeType, handler, options)</c> tuples and validates the registration
 /// set at <see cref="Apply"/> time.
 /// </summary>
-internal sealed class IsolatedHandlerBuilder<TEntity>(
-    EntitySubscriberBuilder<TEntity> subBuilder,
-    Func<string, IQueueConsumer> factory,
-    ILogger log)
-    : IIsolatedHandlerBuilder<TEntity>
+internal sealed class IsolatedHandlerBuilder<TEntity> : IIsolatedHandlerBuilder<TEntity>
     where TEntity : class
 {
+    private readonly EntitySubscriberBuilder<TEntity> _subBuilder;
+    private readonly Func<string, IQueueConsumer> _factory;
+    private readonly ILogger<IsolatedHandlerBuilder<TEntity>> _log;
     private readonly List<(string HandlerName, ChangeType ChangeType, ChangeHandlerAsync<TEntity> Handler, SubscriberOptions? Options)> _entries = new();
     private static readonly string EntityTypeName = typeof(TEntity).Name;
+
+    internal IsolatedHandlerBuilder(
+        EntitySubscriberBuilder<TEntity> subBuilder,
+        Func<string, IQueueConsumer> factory,
+        ILoggerFactory loggerFactory)
+    {
+        _subBuilder = subBuilder;
+        _factory = factory;
+        _log = loggerFactory.CreateLogger<IsolatedHandlerBuilder<TEntity>>();
+    }
 
     /// <inheritdoc/>
     public IIsolatedHandlerBuilder<TEntity> OnInsert(string handlerName, ChangeHandlerAsync<TEntity> handler,
@@ -46,8 +55,8 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
 
         ArgumentNullException.ThrowIfNull(handler);
         _entries.Add((handlerName, changeType, handler, options));
-        if (log.IsEnabled(LogLevel.Debug))
-            log.LogDebug(
+        if (_log.IsEnabled(LogLevel.Debug))
+            _log.LogDebug(
                 "ChangeTracking: entity override applied EntityType={EntityType} Override={Override} Plugin={Plugin}",
                 EntityTypeName, $"On{changeType}:{handlerName}", HandlerDescriptor.Describe(handler));
         return this;
@@ -77,7 +86,7 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
 
         foreach (var name in distinctNames)
         {
-            var consumer = factory(name);
+            var consumer = _factory(name);
             if (consumer is null)
                 throw new InvalidOperationException(
                     $"Consumer factory returned null for handler name '{name}' " +
@@ -99,7 +108,7 @@ internal sealed class IsolatedHandlerBuilder<TEntity>(
         }
 
         // --- Register entity metadata (serializer / compressor / options, no queue) ---
-        subBuilder.ApplyMetadataOnly(subscriber);
+        _subBuilder.ApplyMetadataOnly(subscriber);
 
         // --- Register per-name consumers ---
         foreach (var (name, consumer) in consumers)

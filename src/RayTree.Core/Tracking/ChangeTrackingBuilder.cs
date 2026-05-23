@@ -127,7 +127,7 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
         if (_log.IsEnabled(LogLevel.Information))
             _log.LogInformation("ChangeTracking: configuring entity {EntityType}", typeof(TEntity).Name);
 
-        var entityBuilder = new EntityBuilder<TEntity>(_publisherBuilder, _subscriberBuilder, _log);
+        var entityBuilder = new EntityBuilder<TEntity>(_publisherBuilder, _subscriberBuilder, _loggerFactory);
         configure(entityBuilder);
         entityBuilder.RegisterSubscriberApplicator();
         return this;

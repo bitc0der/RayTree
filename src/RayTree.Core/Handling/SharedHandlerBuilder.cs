@@ -14,13 +14,13 @@ internal sealed class SharedHandlerBuilder<TEntity> : ISharedHandlerBuilder<TEnt
     where TEntity : class
 {
     private readonly EntitySubscriberBuilder<TEntity> _subBuilder;
-    private readonly ILogger _log;
+    private readonly ILogger<SharedHandlerBuilder<TEntity>> _log;
     private static readonly string EntityTypeName = typeof(TEntity).Name;
 
-    internal SharedHandlerBuilder(EntitySubscriberBuilder<TEntity> subBuilder, ILogger log)
+    internal SharedHandlerBuilder(EntitySubscriberBuilder<TEntity> subBuilder, ILoggerFactory loggerFactory)
     {
         _subBuilder = subBuilder ?? throw new ArgumentNullException(nameof(subBuilder));
-        _log = log;
+        _log = loggerFactory.CreateLogger<SharedHandlerBuilder<TEntity>>();
     }
 
     private void LogHandler(string slot, ChangeHandlerAsync<TEntity> handler)

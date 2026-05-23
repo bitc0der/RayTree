@@ -24,7 +24,8 @@ internal sealed class EntityBuilder<TEntity> : IEntityBuilder<TEntity>
     private readonly ChangeSubscriberBuilder _subscriberBuilder;
     private readonly EntityPublisherBuilder<TEntity> _pubBuilder;
     private readonly EntitySubscriberBuilder<TEntity> _subBuilder;
-    private readonly ILogger _log;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger<EntityBuilder<TEntity>> _log;
     private static readonly string EntityTypeName = typeof(TEntity).Name;
 
     // Exactly one of these is non-null once a consumer-binding method has been called.
@@ -34,12 +35,13 @@ internal sealed class EntityBuilder<TEntity> : IEntityBuilder<TEntity>
     internal EntityBuilder(
         ChangePublisherBuilder publisherBuilder,
         ChangeSubscriberBuilder subscriberBuilder,
-        ILogger log)
+        ILoggerFactory loggerFactory)
     {
         _subscriberBuilder = subscriberBuilder;
         _pubBuilder = new EntityPublisherBuilder<TEntity>(publisherBuilder);
         _subBuilder = new EntitySubscriberBuilder<TEntity>(subscriberBuilder);
-        _log = log;
+        _loggerFactory = loggerFactory;
+        _log = loggerFactory.CreateLogger<EntityBuilder<TEntity>>();
     }
 
     private void LogOverride(string slot, string pluginName)
@@ -117,7 +119,7 @@ internal sealed class EntityBuilder<TEntity> : IEntityBuilder<TEntity>
         ArgumentNullException.ThrowIfNull(consumer);
         _subBuilder.UseConsumer(consumer);
         LogOverride("Consumer", consumer.GetType().Name);
-        _sharedBuilder = new SharedHandlerBuilder<TEntity>(_subBuilder, _log);
+        _sharedBuilder = new SharedHandlerBuilder<TEntity>(_subBuilder, _loggerFactory);
         return _sharedBuilder;
     }
 
@@ -125,7 +127,7 @@ internal sealed class EntityBuilder<TEntity> : IEntityBuilder<TEntity>
     {
         ArgumentNullException.ThrowIfNull(factory);
         LogOverride("ConsumerFactory", factory.GetType().Name);
-        _isolatedBuilder = new IsolatedHandlerBuilder<TEntity>(_subBuilder, factory, _log);
+        _isolatedBuilder = new IsolatedHandlerBuilder<TEntity>(_subBuilder, factory, _loggerFactory);
         return _isolatedBuilder;
     }
 
