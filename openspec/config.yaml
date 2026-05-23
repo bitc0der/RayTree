@@ -9,10 +9,6 @@ context: |
   via an outbox, and fans them out to RabbitMQ, Kafka, PostgreSQL NOTIFY, or any
   custom broker — with built-in serialization, compression, deduplication, and retry.
 
-  Repository: https://github.com/bitc0der/RayTree
-  License: Apache 2.0
-  Version: 0.0.16-pre-release
-
   ## Tech Stack
   - Language: C# (LangVersion latest)
   - Framework: .NET 10 (net10.0)
