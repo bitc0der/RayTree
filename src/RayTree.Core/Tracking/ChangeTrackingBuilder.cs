@@ -16,9 +16,9 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
 {
     private readonly ChangePublisherBuilder _publisherBuilder = new();
     private readonly ChangeSubscriberBuilder _subscriberBuilder = new();
-    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILoggerFactory _loggergerFactory;
     private readonly bool _hasCustomLoggerFactory;
-    private readonly ILogger<ChangeTrackingBuilder> _log;
+    private readonly ILogger<ChangeTrackingBuilder> _logger;
     private RayTreeMeter? _meter;
 
     private string? _globalOutboxType;
@@ -32,16 +32,16 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
     internal ChangeTrackingBuilder(ILoggerFactory? loggerFactory = null)
     {
         _hasCustomLoggerFactory = loggerFactory is not null;
-        _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
-        _log = _loggerFactory.CreateLogger<ChangeTrackingBuilder>();
+        _loggergerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+        _logger = _loggergerFactory.CreateLogger<ChangeTrackingBuilder>();
     }
 
     public IChangeTrackingBuilder UseOutbox<T>(Func<Type, IOutbox> factory) where T : IOutbox
     {
         _publisherBuilder.UseOutbox<T>(factory);
         _globalOutboxType = typeof(T).Name;
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: registered global outbox {Plugin}", typeof(T).Name);
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: registered global outbox {Plugin}", typeof(T).Name);
         return this;
     }
 
@@ -49,8 +49,8 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
     {
         _publisherBuilder.UsePublisher<T>(factory);
         _globalPublisherType = typeof(T).Name;
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: registered global publisher {Plugin}", typeof(T).Name);
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: registered global publisher {Plugin}", typeof(T).Name);
         return this;
     }
 
@@ -60,8 +60,8 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
         _publisherBuilder.UseSerializer<T>(factory);
         _subscriberBuilder.UseSerializer(factory(typeof(object)));
         _globalSerializerType = typeof(T).Name;
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: registered global serializer {Plugin}", typeof(T).Name);
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: registered global serializer {Plugin}", typeof(T).Name);
         return this;
     }
 
@@ -71,8 +71,8 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
         _publisherBuilder.UseCompressor<T>(factory);
         _subscriberBuilder.UseCompressor(factory(typeof(object)));
         _globalCompressorType = typeof(T).Name;
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: registered global compressor {Plugin}", typeof(T).Name);
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: registered global compressor {Plugin}", typeof(T).Name);
         return this;
     }
 
@@ -80,24 +80,24 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
     {
         _publisherBuilder.UseRepository<T>(factory);
         _globalRepositoryType = typeof(T).Name;
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: registered global repository {Plugin}", typeof(T).Name);
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: registered global repository {Plugin}", typeof(T).Name);
         return this;
     }
 
     public IChangeTrackingBuilder UsePublisherOptions(Action<OutboxPublisherOptions> configure)
     {
         _publisherBuilder.UseOptions(configure);
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: configured {Plugin}", nameof(OutboxPublisherOptions));
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: configured {Plugin}", nameof(OutboxPublisherOptions));
         return this;
     }
 
     public IChangeTrackingBuilder UseSubscriberOptions(Action<SubscriberOptions> configure)
     {
         _subscriberBuilder.UseOptions(configure);
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: configured {Plugin}", nameof(SubscriberOptions));
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: configured {Plugin}", nameof(SubscriberOptions));
         return this;
     }
 
@@ -105,8 +105,8 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
     {
         _subscriberBuilder.UseDeduplicationStore(store);
         _hasCustomDedupStore = true;
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: registered deduplication store {Plugin}", store.GetType().Name);
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: registered deduplication store {Plugin}", store.GetType().Name);
         return this;
     }
 
@@ -114,8 +114,8 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
     {
         ArgumentNullException.ThrowIfNull(meter);
         _meter = meter;
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: registered meter {Plugin}", nameof(RayTreeMeter));
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: registered meter {Plugin}", nameof(RayTreeMeter));
         return this;
     }
 
@@ -124,10 +124,10 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
     {
         ArgumentNullException.ThrowIfNull(configure);
         _entityTypes.Add(typeof(TEntity));
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: configuring entity {EntityType}", typeof(TEntity).Name);
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: configuring entity {EntityType}", typeof(TEntity).Name);
 
-        var entityBuilder = new EntityBuilder<TEntity>(_publisherBuilder, _subscriberBuilder, _loggerFactory);
+        var entityBuilder = new EntityBuilder<TEntity>(_publisherBuilder, _subscriberBuilder, _loggergerFactory);
         configure(entityBuilder);
         entityBuilder.RegisterSubscriberApplicator();
         return this;
@@ -152,11 +152,11 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
         var meter = _meter ?? new RayTreeMeter();
         var ownsMeter = _meter == null;  // builder-created meter is disposed by the tracker
 
-        if (ownsMeter && _log.IsEnabled(LogLevel.Debug))
-            _log.LogDebug("ChangeTracking: no meter supplied; created default RayTreeMeter (owned by tracker)");
+        if (ownsMeter && _logger.IsEnabled(LogLevel.Debug))
+            _logger.LogDebug("ChangeTracking: no meter supplied; created default RayTreeMeter (owned by tracker)");
 
-        _publisherBuilder.UseLoggerFactory(_loggerFactory);  // always non-null — resolved once here
-        _subscriberBuilder.UseLoggerFactory(_loggerFactory);
+        _publisherBuilder.UseLoggerFactory(_loggergerFactory);  // always non-null — resolved once here
+        _subscriberBuilder.UseLoggerFactory(_loggergerFactory);
         _publisherBuilder.UseMeter(meter);
         _subscriberBuilder.UseMeter(meter);
 
@@ -168,13 +168,13 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
         meter.RegisterPendingGauge(() =>
             publisher.GetOutboxes().Select(kvp => (kvp.Key, kvp.Value)));
 
-        if (_log.IsEnabled(LogLevel.Information))
+        if (_logger.IsEnabled(LogLevel.Information))
         {
             var entityTypeNames = _entityTypes.Select(t => t.Name).ToArray();
             var plugins = $"Outbox={_globalOutboxType ?? "<none>"} Publisher={_globalPublisherType ?? "<none>"} " +
                           $"Serializer={_globalSerializerType ?? "<none>"} Compressor={_globalCompressorType ?? "<none>"} " +
                           $"Repository={_globalRepositoryType ?? "<none>"}";
-            _log.LogInformation(
+            _logger.LogInformation(
                 "ChangeTracker built. EntityTypes={EntityTypes} Plugins={Plugins} HasCustomMeter={HasCustomMeter} HasCustomDeduplicationStore={HasCustomDeduplicationStore} HasCustomLoggerFactory={HasCustomLoggerFactory}",
                 entityTypeNames,
                 plugins,
@@ -183,6 +183,6 @@ public sealed class ChangeTrackingBuilder : IChangeTrackingBuilder
                 _hasCustomLoggerFactory);
         }
 
-        return new EntityChangeTracker(publisher, subscriber, meter, ownsMeter: ownsMeter, loggerFactory: _loggerFactory);
+        return new EntityChangeTracker(publisher, subscriber, meter, ownsMeter: ownsMeter, loggerFactory: _loggergerFactory);
     }
 }

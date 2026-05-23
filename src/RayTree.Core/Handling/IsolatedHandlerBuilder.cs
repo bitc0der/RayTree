@@ -15,7 +15,7 @@ internal sealed class IsolatedHandlerBuilder<TEntity> : IIsolatedHandlerBuilder<
 {
     private readonly EntitySubscriberBuilder<TEntity> _subBuilder;
     private readonly Func<string, IQueueConsumer> _factory;
-    private readonly ILogger<IsolatedHandlerBuilder<TEntity>> _log;
+    private readonly ILogger<IsolatedHandlerBuilder<TEntity>> _logger;
     private readonly List<(string HandlerName, ChangeType ChangeType, ChangeHandlerAsync<TEntity> Handler, SubscriberOptions? Options)> _entries = new();
     private static readonly string EntityTypeName = typeof(TEntity).Name;
 
@@ -26,7 +26,7 @@ internal sealed class IsolatedHandlerBuilder<TEntity> : IIsolatedHandlerBuilder<
     {
         _subBuilder = subBuilder;
         _factory = factory;
-        _log = loggerFactory.CreateLogger<IsolatedHandlerBuilder<TEntity>>();
+        _logger = loggerFactory.CreateLogger<IsolatedHandlerBuilder<TEntity>>();
     }
 
     /// <inheritdoc/>
@@ -55,8 +55,8 @@ internal sealed class IsolatedHandlerBuilder<TEntity> : IIsolatedHandlerBuilder<
 
         ArgumentNullException.ThrowIfNull(handler);
         _entries.Add((handlerName, changeType, handler, options));
-        if (_log.IsEnabled(LogLevel.Debug))
-            _log.LogDebug(
+        if (_logger.IsEnabled(LogLevel.Debug))
+            _logger.LogDebug(
                 "ChangeTracking: entity override applied EntityType={EntityType} Override={Override} Plugin={Plugin}",
                 EntityTypeName, $"On{changeType}:{handlerName}", HandlerDescriptor.Describe(handler));
         return this;

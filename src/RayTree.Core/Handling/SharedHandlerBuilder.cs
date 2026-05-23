@@ -14,19 +14,19 @@ internal sealed class SharedHandlerBuilder<TEntity> : ISharedHandlerBuilder<TEnt
     where TEntity : class
 {
     private readonly EntitySubscriberBuilder<TEntity> _subBuilder;
-    private readonly ILogger<SharedHandlerBuilder<TEntity>> _log;
+    private readonly ILogger<SharedHandlerBuilder<TEntity>> _logger;
     private static readonly string EntityTypeName = typeof(TEntity).Name;
 
     internal SharedHandlerBuilder(EntitySubscriberBuilder<TEntity> subBuilder, ILoggerFactory loggerFactory)
     {
         _subBuilder = subBuilder ?? throw new ArgumentNullException(nameof(subBuilder));
-        _log = loggerFactory.CreateLogger<SharedHandlerBuilder<TEntity>>();
+        _logger = loggerFactory.CreateLogger<SharedHandlerBuilder<TEntity>>();
     }
 
     private void LogHandler(string slot, ChangeHandlerAsync<TEntity> handler)
     {
-        if (_log.IsEnabled(LogLevel.Debug))
-            _log.LogDebug(
+        if (_logger.IsEnabled(LogLevel.Debug))
+            _logger.LogDebug(
                 "ChangeTracking: entity override applied EntityType={EntityType} Override={Override} Plugin={Plugin}",
                 EntityTypeName, slot, HandlerDescriptor.Describe(handler));
     }

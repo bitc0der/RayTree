@@ -18,7 +18,7 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
     private readonly ChangeSubscriber? _subscriber;
     private readonly RayTreeMeter _meter;
     private readonly bool _ownsMeter;
-    private readonly ILogger<EntityChangeTracker> _log;
+    private readonly ILogger<EntityChangeTracker> _logger;
     private bool _disposed;
 
     internal ChangePublisher Publisher => _publisher;
@@ -47,20 +47,20 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
         _subscriber = subscriber;
         _meter      = meter ?? publisher.Meter;
         _ownsMeter  = ownsMeter;
-        _log        = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<EntityChangeTracker>();
+        _logger        = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<EntityChangeTracker>();
     }
 
     internal async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (_log.IsEnabled(LogLevel.Information))
-            _log.LogInformation("ChangeTracking: tracker initialization started");
+        if (_logger.IsEnabled(LogLevel.Information))
+            _logger.LogInformation("ChangeTracking: tracker initialization started");
 
         try
         {
             await _publisher.InitializeAsync(cancellationToken);
 
-            if (_log.IsEnabled(LogLevel.Debug))
-                _log.LogDebug(
+            if (_logger.IsEnabled(LogLevel.Debug))
+                _logger.LogDebug(
                     "ChangeTracking: publisher initialized EntityTypeCount={EntityTypeCount}",
                     _publisher.GetOutboxes().Count);
 
@@ -68,19 +68,19 @@ public sealed class EntityChangeTracker : IEntityChangeTracker
             {
                 await _subscriber.InitializeAsync(cancellationToken);
 
-                if (_log.IsEnabled(LogLevel.Debug))
-                    _log.LogDebug(
+                if (_logger.IsEnabled(LogLevel.Debug))
+                    _logger.LogDebug(
                         "ChangeTracking: consumers initialized ConsumerCount={ConsumerCount}",
                         _subscriber.ConsumerCount);
             }
 
-            if (_log.IsEnabled(LogLevel.Information))
-                _log.LogInformation("ChangeTracking: tracker initialization completed");
+            if (_logger.IsEnabled(LogLevel.Information))
+                _logger.LogInformation("ChangeTracking: tracker initialization completed");
         }
         catch
         {
-            if (_log.IsEnabled(LogLevel.Warning))
-                _log.LogWarning("ChangeTracking: tracker initialization aborted");
+            if (_logger.IsEnabled(LogLevel.Warning))
+                _logger.LogWarning("ChangeTracking: tracker initialization aborted");
             throw;
         }
     }

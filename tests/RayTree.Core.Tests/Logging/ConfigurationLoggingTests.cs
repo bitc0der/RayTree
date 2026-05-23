@@ -79,15 +79,17 @@ public class ConfigurationLoggingTests
     [Test]
     public void GlobalUseCalls_EmitOneInformationLogEach()
     {
+        // Arrange
         var lf = new CapturingLoggerFactory();
 
+        // Act
         new ChangeTrackingBuilder(lf)
             .UseSerializer<JsonSerializerPlugin>(_ => new JsonSerializerPlugin())
             .UseCompressor<NoOpCompressorPlugin>(_ => new NoOpCompressorPlugin())
             .UsePublisherOptions(_ => { })
             .UseSubscriberOptions(_ => { });
 
-        // Filter to builder category, Information level
+        // Assert
         var infos = lf.Entries
             .Where(e => e.Category.Contains("ChangeTrackingBuilder") && e.Level == LogLevel.Information)
             .ToList();
@@ -109,8 +111,10 @@ public class ConfigurationLoggingTests
     [Test]
     public void ForEntity_LogsEntityTypeAtInformation_AndOverridesAtDebug()
     {
+        // Arrange
         var lf = new CapturingLoggerFactory();
 
+        // Act
         new ChangeTrackingBuilder(lf)
             .ForEntity<SampleEntity>(e =>
             {
@@ -120,6 +124,7 @@ public class ConfigurationLoggingTests
                 e.UseCompressor(new NoOpCompressorPlugin());
             });
 
+        // Assert
         var info = lf.Entries.Single(e =>
             e.Level == LogLevel.Information &&
             e.Props.GetValueOrDefault("EntityType")?.ToString() == nameof(SampleEntity));
@@ -142,9 +147,13 @@ public class ConfigurationLoggingTests
     [Test]
     public void Build_EmitsSummaryLog_WithAllStructuredProperties()
     {
+        // Arrange
         var lf = new CapturingLoggerFactory();
+
+        // Act
         using var tracker = BuildMinimal(lf);
 
+        // Assert
         var summary = lf.Entries.Single(e =>
             e.Level == LogLevel.Information &&
             e.Message.StartsWith("ChangeTracker built"));
@@ -159,16 +168,18 @@ public class ConfigurationLoggingTests
     [Test]
     public void Build_SummaryLog_ReportsNone_ForUnregisteredGlobalPlugins()
     {
+        // Arrange
         var lf = new CapturingLoggerFactory();
+
+        // Act
         using var tracker = BuildMinimal(lf);
 
+        // Assert — no global registrations were made (everything per-entity), so every plugin
+        // slot in the summary log must read "<none>".
         var summary = lf.Entries.Single(e =>
             e.Level == LogLevel.Information &&
             e.Message.StartsWith("ChangeTracker built"));
 
-        // No global registrations were made (everything per-entity). The {@Plugins} structure
-        // should report "<none>" for every slot. We assert via the rendered message because
-        // anonymous-type destructuring is opaque on the props dictionary.
         Assert.That(summary.Message, Contains.Substring("<none>"));
     }
 
@@ -179,7 +190,7 @@ public class ConfigurationLoggingTests
     [Test]
     public void Build_WithNullLoggerFactory_EmitsNoLogs()
     {
-        // NullLogger.IsEnabled returns false, so all our guarded calls are skipped.
+        // Arrange & Act — NullLogger.IsEnabled returns false, so all guarded calls are skipped.
         using var tracker = new ChangeTrackingBuilder(NullLoggerFactory.Instance)
             .ForEntity<SampleEntity>(e =>
             {
@@ -190,7 +201,7 @@ public class ConfigurationLoggingTests
             })
             .Build();
 
-        // No assertion target since NullLogger discards everything — assertion is "does not throw".
+        // Assert — NullLogger discards everything; success is "does not throw".
         Assert.That(tracker, Is.Not.Null);
     }
 
@@ -201,9 +212,13 @@ public class ConfigurationLoggingTests
     [Test]
     public void InitializeAsync_LogsStartSubStepsAndCompletion_InOrder()
     {
+        // Arrange
         var lf = new CapturingLoggerFactory();
+
+        // Act
         using var tracker = BuildMinimal(lf);
 
+        // Assert
         var trackerLogs = lf.Entries
             .Where(e => e.Category.Contains("EntityChangeTracker"))
             .ToList();
@@ -218,7 +233,6 @@ public class ConfigurationLoggingTests
         Assert.That(consDbg, Is.GreaterThan(pubDbg));
         Assert.That(complete, Is.GreaterThan(consDbg));
 
-        // Property values
         Assert.That(trackerLogs[pubDbg].Props["EntityTypeCount"], Is.EqualTo(1));
         Assert.That(trackerLogs[consDbg].Props["ConsumerCount"], Is.EqualTo(0));
     }
@@ -226,9 +240,11 @@ public class ConfigurationLoggingTests
     [Test]
     public void InitializeAsync_OnFailure_LogsWarningBeforeRethrow()
     {
+        // Arrange
         var lf = new CapturingLoggerFactory();
 
-        var ex = Assert.Throws<InvalidOperationException>(() =>
+        // Act
+        Assert.Throws<InvalidOperationException>(() =>
         {
             using var tracker = new ChangeTrackingBuilder(lf)
                 .ForEntity<SampleEntity>(e =>
@@ -241,6 +257,7 @@ public class ConfigurationLoggingTests
                 .Build();
         });
 
+        // Assert
         var aborted = lf.Entries.SingleOrDefault(e =>
             e.Category.Contains("EntityChangeTracker") &&
             e.Level == LogLevel.Warning &&
@@ -264,14 +281,16 @@ public class ConfigurationLoggingTests
     [Test]
     public async Task ChangeTrackingHostedService_StartAsync_EmitsStartingLog_WithConfigurationBound()
     {
+        // Arrange
         var lf = new CapturingLoggerFactory();
         using var tracker = BuildMinimal(lf);
-
         var hostedLogger = lf.CreateLogger<ChangeTrackingHostedService>();
         var svc = new ChangeTrackingHostedService(tracker, hostedLogger, new ChangeTrackingDiContext(ConfigurationBound: true));
 
+        // Act
         await svc.StartAsync(CancellationToken.None);
 
+        // Assert
         var starting = lf.Entries.SingleOrDefault(e =>
             e.Level == LogLevel.Information &&
             e.Message.StartsWith("ChangeTracking starting"));
