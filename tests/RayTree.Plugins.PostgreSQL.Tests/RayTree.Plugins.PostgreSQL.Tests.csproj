@@ -4,7 +4,6 @@
     <ProjectReference Include="..\..\src\RayTree.Plugins.InMemory\RayTree.Plugins.InMemory.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.Json\RayTree.Plugins.Serializers.Json.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.Compressors.Gzip\RayTree.Plugins.Compressors.Gzip.csproj" />
-    <PackageReference Include="Testcontainers" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Update="NUnit.Analyzers">
       <PrivateAssets>all</PrivateAssets>

@@ -3,7 +3,6 @@
     <ProjectReference Include="..\..\src\RayTree.Plugins.InMemory\RayTree.Plugins.InMemory.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.Kafka\RayTree.Plugins.Kafka.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.Serializers.Json\RayTree.Plugins.Serializers.Json.csproj" />
-    <PackageReference Include="Testcontainers" />
     <PackageReference Include="Testcontainers.Kafka" />
     <PackageReference Update="NUnit.Analyzers">
       <PrivateAssets>all</PrivateAssets>

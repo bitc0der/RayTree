@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\..\src\RayTree.Plugins.Deduplication.Redis\RayTree.Plugins.Deduplication.Redis.csproj" />
-    <PackageReference Include="Testcontainers" />
     <PackageReference Include="Testcontainers.Redis" />
     <PackageReference Update="NUnit.Analyzers">
       <PrivateAssets>all</PrivateAssets>
