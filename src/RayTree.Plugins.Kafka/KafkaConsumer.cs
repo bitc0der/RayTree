@@ -69,6 +69,12 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                 cancellationToken).ConfigureAwait(false);
         }
 
+        // Honour cancellation in the gap between a slow probe completing and the native
+        // consumer handle being allocated — without this, a Ctrl+C just after probe success
+        // would leak the librdkafka handle (the pre-probe comment justifies probe-first on
+        // the basis that a failed probe leaves no state to clean up).
+        cancellationToken.ThrowIfCancellationRequested();
+
         var config = new ConsumerConfig
         {
             BootstrapServers = _options.BootstrapServers,

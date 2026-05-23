@@ -45,11 +45,12 @@ When `KafkaConsumerOptions.WaitForTopic = true`, `KafkaConsumer.InitializeAsync`
 - **THEN** the first probe SHALL succeed and `InitializeAsync` SHALL proceed to `Subscribe` without emitting any topic-wait log entries at `Information` level or above.
 
 ### Requirement: Retry conditions
-The topic wait loop SHALL retry when the metadata response indicates the topic is not yet available on the broker. "Not yet available" SHALL be defined as any of:
+The topic wait loop SHALL retry when the metadata response indicates the topic is not yet available on the broker, OR when the metadata call throws a transient transport-level `KafkaException` (broker briefly unreachable during startup ordering). "Retryable" SHALL be defined as any of:
 
 1. The `Metadata.Topics` collection contains no entry for the requested topic name.
 2. The entry for the requested topic has `Error.Code == ErrorCode.UnknownTopicOrPart`.
 3. The entry for the requested topic has `Error.Code == ErrorCode.LeaderNotAvailable` (a transient state during fresh-cluster bootstrap and partition leader election).
+4. `GetMetadata` throws a `KafkaException` with `Error.IsFatal == false` AND `Error.Code` in {`Local_Transport`, `Local_AllBrokersDown`, `Local_Resolve`, `Local_TimedOut`}. This covers the dominant microservice startup-ordering case where the broker pod has not yet finished starting.
 
 All other broker error codes, all fatal `KafkaException` instances (where `Error.IsFatal == true`), and `OperationCanceledException` SHALL propagate immediately without retry.
 
@@ -72,6 +73,11 @@ All other broker error codes, all fatal `KafkaException` instances (where `Error
 #### Scenario: Fatal Kafka exception propagates immediately
 - **WHEN** `GetMetadata` throws a `KafkaException` whose `Error.IsFatal` is `true`
 - **THEN** the resulting exception SHALL propagate without retry.
+
+#### Scenario: Transient transport error is retryable
+- **WHEN** `GetMetadata` throws a `KafkaException` with `Error.IsFatal == false` and `Error.Code` in {`Local_Transport`, `Local_AllBrokersDown`, `Local_Resolve`, `Local_TimedOut`} (broker not yet reachable / DNS not yet resolved during cluster startup)
+- **THEN** the probe SHALL treat this as a miss and retry after `TopicWaitInterval`
+- **AND** SHALL log the first miss at `Information` and recovery at `Information` per the standard logging contract.
 
 ### Requirement: Retry interval and timeout configuration
 The publisher and consumer options SHALL expose `TopicWaitInterval` (TimeSpan, default `5 seconds`) and `TopicWaitTimeout` (TimeSpan?, default `null`). When `TopicWaitTimeout` is non-null, the wait loop SHALL stop and rethrow the last `KafkaException` produced by a retryable response once the elapsed time exceeds the timeout. When no `KafkaException` is available (e.g. all responses came back as empty `Topics` collections), the wait loop SHALL throw a `KafkaException` synthesised from `ErrorCode.UnknownTopicOrPart` describing the topic name.
@@ -103,7 +109,7 @@ Both values SHALL be validated when the wait loop is entered. If `TopicWaitInter
 - **THEN** it SHALL throw `ArgumentOutOfRangeException` without issuing any metadata call.
 
 ### Requirement: Cancellation token cancels the wait
-The wait loop SHALL observe the `CancellationToken` passed into `InitializeAsync`. Cancellation SHALL be observed at the next of: (a) the inter-attempt `Task.Delay` boundary, or (b) the return of the in-flight `GetMetadata` call. Because `IAdminClient.GetMetadata` is a synchronous, blocking call that does not accept a managed cancellation token, observation MAY be delayed by up to one `TopicWaitInterval` while a metadata call is in flight. When observed, the loop SHALL throw `OperationCanceledException`.
+The wait loop SHALL observe the `CancellationToken` passed into `InitializeAsync`. Cancellation SHALL be observed at the next of: (a) the inter-attempt `Task.Delay` boundary, or (b) the return of the in-flight `GetMetadata` call. Because `IAdminClient.GetMetadata` is a synchronous, blocking call that does not accept a managed cancellation token, observation MAY be delayed by up to a small fixed per-call metadata timeout (~1 second, decoupled from `TopicWaitInterval`) while a metadata call is in flight. When observed, the loop SHALL throw `OperationCanceledException`.
 
 #### Scenario: Cancellation during the inter-attempt delay
 - **WHEN** the cancellation token is cancelled while the wait loop is sleeping between attempts
@@ -113,9 +119,9 @@ The wait loop SHALL observe the `CancellationToken` passed into `InitializeAsync
 - **WHEN** the cancellation token is already cancelled at the moment the probe entry point is invoked
 - **THEN** the probe SHALL throw `OperationCanceledException` without issuing any metadata call.
 
-#### Scenario: Cancellation during an in-flight metadata call is observed after at most one interval
+#### Scenario: Cancellation during an in-flight metadata call is observed within ~1 second
 - **WHEN** the cancellation token is cancelled while a `GetMetadata` call is in flight
-- **THEN** `InitializeAsync` SHALL throw `OperationCanceledException` no later than the end of the current metadata call plus `TopicWaitInterval` (i.e. at the next decision point after the call returns).
+- **THEN** `InitializeAsync` SHALL throw `OperationCanceledException` no later than the end of the current metadata call (bounded by the implementation's fixed per-call metadata timeout, ~1 second, decoupled from `TopicWaitInterval`).
 
 ### Requirement: Probe uses a disposable admin client
 Each invocation of the wait loop SHALL build a dedicated `IAdminClient`, use it for the duration of the wait, and dispose it before returning control to the caller. The persistent `IProducer` / `IConsumer` held by the publisher/consumer SHALL be created only after the probe succeeds.

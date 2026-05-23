@@ -58,6 +58,13 @@ public class KafkaPublisherOptions
     /// The timeout is evaluated <em>after</em> each failed attempt, so the observed wait may
     /// exceed this value by up to one <see cref="TopicWaitInterval"/>. Must be positive when set.
     /// </para>
+    /// <para>
+    /// <b>Caution:</b> when this is <c>null</c> AND the tracker is constructed via the
+    /// synchronous <c>ChangeTrackingBuilder.Build()</c> path (which <c>AddChangeTracking</c>
+    /// uses), no cancellation token is plumbed through — a missing topic blocks startup
+    /// indefinitely with no SIGTERM/Ctrl+C escape. Either set a non-null timeout, or use
+    /// <c>BuildAsync(cancellationToken)</c> with the host's <c>ApplicationStopping</c> token.
+    /// </para>
     /// </summary>
     public TimeSpan? TopicWaitTimeout { get; set; }
 }

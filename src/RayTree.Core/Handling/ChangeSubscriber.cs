@@ -71,11 +71,15 @@ public class ChangeSubscriber : IDisposable
 
     internal async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var (_, consumer) in _queues)
-            await consumer.InitializeAsync(cancellationToken);
+        // Initialize all consumers in parallel. A single consumer with a slow init (e.g. Kafka
+        // WaitForTopic against a missing topic) MUST NOT block the others — without this,
+        // sequential awaits caused unrelated entity-type subscriptions to stall behind one
+        // misconfigured consumer with no diagnostic indicating which one was blocking.
+        var initTasks = _queues.Values
+            .Concat(_isolatedQueues.Values)
+            .Select(consumer => consumer.InitializeAsync(cancellationToken));
 
-        foreach (var (_, consumer) in _isolatedQueues)
-            await consumer.InitializeAsync(cancellationToken);
+        await Task.WhenAll(initTasks).ConfigureAwait(false);
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)

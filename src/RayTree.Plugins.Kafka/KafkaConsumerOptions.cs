@@ -82,6 +82,13 @@ public class KafkaConsumerOptions
     /// (default), the loop continues indefinitely until the topic appears or the
     /// <see cref="CancellationToken"/> passed to <c>InitializeAsync</c> is cancelled. Must be
     /// positive when set.
+    /// <para>
+    /// <b>Caution:</b> when this is <c>null</c> AND the tracker is constructed via the
+    /// synchronous <c>ChangeTrackingBuilder.Build()</c> path (which <c>AddChangeTracking</c>
+    /// uses), no cancellation token is plumbed through — a missing topic blocks startup
+    /// indefinitely with no SIGTERM/Ctrl+C escape. Either set a non-null timeout, or use
+    /// <c>BuildAsync(cancellationToken)</c> with the host's <c>ApplicationStopping</c> token.
+    /// </para>
     /// </summary>
     public TimeSpan? TopicWaitTimeout { get; set; }
 }
