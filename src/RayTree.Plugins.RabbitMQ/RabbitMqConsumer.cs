@@ -4,22 +4,40 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Consumer;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.RabbitMQ;
 
 public class RabbitMqConsumer : IQueueConsumer, IDisposable
 {
+    private const string ComponentName = "rabbitmq.consumer";
+
     private readonly RabbitMqConsumerOptions _options;
+    private readonly RayTreeMeter? _meter;
+    private readonly string _endpoint;
 
     private IConnection? _connection;
     private IChannel? _channel;
 
     private readonly Channel<MessageEnvelope> _buffer = Channel.CreateUnbounded<MessageEnvelope>();
 
-    public RabbitMqConsumer(RabbitMqConsumerOptions options)
+    // Connection state for the gauge — true while a healthy channel is bound. Owned by
+    // the SDK's recovery events (we do NOT implement recovery here).
+    private volatile bool _connected;
+    private DateTime _lastShutdownAt = DateTime.MinValue;
+    private readonly IDisposable? _stateGaugeSubscription;
+
+    public RabbitMqConsumer(RabbitMqConsumerOptions options, RayTreeMeter? meter = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _meter   = meter;
+        _endpoint = $"{_options.HostName}:{_options.Port}";
+
+        _stateGaugeSubscription = _meter?.RegisterConnectionStateGauge(
+            component: ComponentName,
+            endpoint:  _endpoint,
+            getState:  () => _connected ? 1 : 0);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -33,6 +51,12 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         };
 
         _connection = await factory.CreateConnectionAsync(cancellationToken);
+
+        // Subscribe to SDK recovery events for metric observability. No log output here:
+        // RabbitMqConsumer intentionally has no logger (the documented exception to the
+        // logging-placement rule). The metrics still record disconnect / recovery cycles.
+        _connection.ConnectionShutdownAsync += OnConnectionShutdownAsync;
+        _connection.RecoverySucceededAsync  += OnRecoverySucceededAsync;
 
         try
         {
@@ -98,12 +122,37 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
                 consumer: consumer,
                 cancellationToken: cancellationToken
             );
+
+            _connected = true;
         }
         catch
         {
             await CleanupAfterFailedInitAsync();
             throw;
         }
+    }
+
+    private Task OnConnectionShutdownAsync(object sender, ShutdownEventArgs e)
+    {
+        if (e.Initiator == ShutdownInitiator.Application)
+            return Task.CompletedTask;
+
+        _connected      = false;
+        _lastShutdownAt = DateTime.UtcNow;
+        _meter?.RecordConnectionDisconnect(ComponentName, _endpoint);
+        // No logger — silent in logs by design; metric tells the story.
+        return Task.CompletedTask;
+    }
+
+    private Task OnRecoverySucceededAsync(object sender, AsyncEventArgs e)
+    {
+        var duration = _lastShutdownAt == DateTime.MinValue
+            ? 0
+            : (DateTime.UtcNow - _lastShutdownAt).TotalSeconds;
+        _connected      = true;
+        _lastShutdownAt = DateTime.MinValue;
+        _meter?.RecordConnectionRecovery(ComponentName, _endpoint, outcome: "succeeded", duration);
+        return Task.CompletedTask;
     }
 
     private async Task CleanupAfterFailedInitAsync()
@@ -219,6 +268,12 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
 
     public void Dispose()
     {
+        if (_connection is not null)
+        {
+            _connection.ConnectionShutdownAsync -= OnConnectionShutdownAsync;
+            _connection.RecoverySucceededAsync  -= OnRecoverySucceededAsync;
+        }
+        _stateGaugeSubscription?.Dispose();
         _buffer.Writer.TryComplete();
         _channel?.CloseAsync().GetAwaiter().GetResult();
         _connection?.CloseAsync().GetAwaiter().GetResult();

@@ -5,12 +5,16 @@ using Confluent.Kafka;
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Consumer;
+using RayTree.Core.Resilience;
+using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.Kafka;
 
 public class KafkaConsumer : IQueueConsumer, IDisposable
 {
+    private const string ComponentName = "kafka.consumer";
+
     /// <summary>
     /// Discriminator for the post-handler action the poll thread must perform on a
     /// <see cref="ConsumeResult{TKey, TValue}"/> handed back by the subscriber.
@@ -25,10 +29,13 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
     private readonly KafkaConsumerOptions _options;
     private readonly ILogger<KafkaConsumer> _logger;
+    private readonly RayTreeMeter? _meter;
     private readonly CancellationTokenSource _disposeCts = new();
     private IConsumer<string, byte[]>? _consumer;
     private Task? _pollTask;
     private volatile bool _assigned;
+    private volatile bool _connected;
+    private readonly IDisposable? _stateGaugeSubscription;
 
     // When AckAfterHandler = true, the subscriber posts the original ConsumeResult here
     // and the poll thread drains the channel each iteration and calls Commit/Seek on its
@@ -47,11 +54,22 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
     /// </summary>
     public bool IsAssigned => _assigned;
 
-    public KafkaConsumer(KafkaConsumerOptions options, ILoggerFactory loggerFactory)
+    public KafkaConsumer(
+        KafkaConsumerOptions options,
+        ILoggerFactory       loggerFactory,
+        RayTreeMeter?        meter = null)
     {
         _options = options       ?? throw new ArgumentNullException(nameof(options));
         _logger  = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
                        .CreateLogger<KafkaConsumer>();
+        _meter   = meter;
+
+        _options.ConnectionRecovery.Validate();
+
+        _stateGaugeSubscription = _meter?.RegisterConnectionStateGauge(
+            component: ComponentName,
+            endpoint:  _options.BootstrapServers,
+            getState:  () => _connected ? 1 : 0);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -85,6 +103,26 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
         _consumer = new ConsumerBuilder<string, byte[]>(config).Build();
         _consumer.Subscribe(_options.Topic);
+        _connected = true;
+    }
+
+    /// <summary>
+    /// Builds a fresh consumer with the existing configuration and subscribes to the topic.
+    /// Used by both <see cref="InitializeAsync"/> and <see cref="RebuildConsumer"/> so the
+    /// configuration shape stays identical between initial setup and post-fatal rebuild.
+    /// </summary>
+    private IConsumer<string, byte[]> BuildConsumer()
+    {
+        var config = new ConsumerConfig
+        {
+            BootstrapServers = _options.BootstrapServers,
+            GroupId          = _options.GroupId,
+            AutoOffsetReset  = _options.FromEarliest ? AutoOffsetReset.Earliest : AutoOffsetReset.Latest,
+            EnableAutoCommit = false
+        };
+        var c = new ConsumerBuilder<string, byte[]>(config).Build();
+        c.Subscribe(_options.Topic);
+        return c;
     }
 
     public async IAsyncEnumerable<MessageEnvelope> ConsumeAsync(
@@ -135,11 +173,32 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                     catch (ObjectDisposedException)    { break; }
                     catch (KafkaException ex) when (ex.Error.IsFatal)
                     {
-                        // Fatal broker/network errors cannot be recovered; surface them to
-                        // all ConsumeAsync callers via the channel completion exception.
-                        _logger.LogError(ex, "Fatal Kafka error on topic {Topic}", _options.Topic);
-                        channel.Writer.TryComplete(ex);
-                        return;
+                        // Fatal broker error: dispose the dead consumer and rebuild on this
+                        // same poll thread. Pending deferred-ack actions reference the dying
+                        // consumer and must be dropped — the broker will redeliver via the
+                        // standard at-least-once contract once the new consumer joins.
+                        _connected = false;
+                        _meter?.RecordConnectionDisconnect(ComponentName, _options.BootstrapServers);
+                        _logger.LogWarning(ex,
+                            "Kafka consumer fatal error on topic {Topic}, rebuilding", _options.Topic);
+
+                        if (!_options.ConnectionRecovery.Enabled)
+                        {
+                            _logger.LogError(ex,
+                                "Kafka consumer recovery disabled; surfacing fatal error to consumers");
+                            channel.Writer.TryComplete(ex);
+                            return;
+                        }
+
+                        // Drop stale post-handler actions before rebuild.
+                        while (_postHandlerChannel.Reader.TryRead(out _)) { }
+
+                        if (!RebuildConsumer(linkedToken))
+                        {
+                            channel.Writer.TryComplete(ex);
+                            return;
+                        }
+                        continue;
                     }
                     catch (Exception ex)
                     {
@@ -185,6 +244,89 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
         await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken))
             yield return item;
+    }
+
+    /// <summary>
+    /// Runs synchronously on the poll thread after a fatal-error dispose. Disposes the
+    /// dying consumer, then runs an exponential-backoff loop bounded by
+    /// <c>_options.ConnectionRecovery</c> that re-runs the topic-wait probe (when enabled)
+    /// and builds a fresh <c>IConsumer</c>. Returns <see langword="true"/> on success and
+    /// <see langword="false"/> when retries are exhausted or cancellation fires — the caller
+    /// SHALL surface the failure to <c>ConsumeAsync</c> consumers via channel completion.
+    /// </summary>
+    private bool RebuildConsumer(CancellationToken ct)
+    {
+        try { _consumer?.Close(); _consumer?.Dispose(); } catch { /* may already be torn down */ }
+        _consumer = null;
+        _assigned = false;
+
+        var recovery = _options.ConnectionRecovery;
+        var startedAt = DateTime.UtcNow;
+        var attempt = 0;
+
+        while (true)
+        {
+            if (ct.IsCancellationRequested) return false;
+            attempt++;
+
+            try
+            {
+                // Re-run topic-wait probe on rebuild so a broker restart that races with
+                // topic recreation is handled — matches the kafka-topic-wait reprobe contract.
+                if (_options.WaitForTopic)
+                {
+                    KafkaTopicProbe.WaitForTopicAsync(
+                        _options.BootstrapServers,
+                        _options.Topic,
+                        _options.TopicWaitInterval,
+                        _options.TopicWaitTimeout,
+                        _logger,
+                        ct).GetAwaiter().GetResult();
+                }
+
+                _consumer = BuildConsumer();
+                _connected = true;
+
+                var duration = (DateTime.UtcNow - startedAt).TotalSeconds;
+                _meter?.RecordConnectionRecovery(ComponentName, _options.BootstrapServers,
+                    outcome: "succeeded", duration);
+                _logger.LogInformation(
+                    "Kafka consumer rebuilt for topic {Topic} after {AttemptCount} attempt(s) in {Duration:F2}s",
+                    _options.Topic, attempt, duration);
+                return true;
+            }
+            catch (OperationCanceledException) { return false; }
+            catch (Exception ex)
+            {
+                if (recovery.MaxAttempts is int max && attempt >= max)
+                {
+                    var duration = (DateTime.UtcNow - startedAt).TotalSeconds;
+                    _meter?.RecordConnectionRecovery(ComponentName, _options.BootstrapServers,
+                        outcome: "exhausted", duration);
+                    _logger.LogError(ex,
+                        "Kafka consumer rebuild exhausted on topic {Topic} after {AttemptCount} attempts",
+                        _options.Topic, attempt);
+                    return false;
+                }
+
+                var delay = ComputeBackoffDelay(recovery, attempt);
+                _logger.LogInformation(ex,
+                    "Consumer rebuild attempt {AttemptNumber} failed for {Topic}; retrying in {Delay:F2}s",
+                    attempt, _options.Topic, delay.TotalSeconds);
+                try { Task.Delay(delay, ct).GetAwaiter().GetResult(); }
+                catch (OperationCanceledException) { return false; }
+            }
+        }
+    }
+
+    private static TimeSpan ComputeBackoffDelay(ConnectionRecoveryOptions opts, int attemptNum)
+    {
+        var baseTicks = opts.InitialDelay.Ticks * Math.Pow(opts.Factor, attemptNum - 1);
+        var cappedTicks = Math.Min(baseTicks, opts.MaxDelay.Ticks);
+        if (opts.JitterFraction <= 0) return TimeSpan.FromTicks((long)cappedTicks);
+
+        var jitterMultiplier = 1.0 + (Random.Shared.NextDouble() * 2 - 1) * opts.JitterFraction;
+        return TimeSpan.FromTicks((long)(cappedTicks * jitterMultiplier));
     }
 
     /// <summary>
@@ -314,6 +456,7 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
         var waitMs = _options.PollTimeoutMs * 2 + 200;
         _pollTask?.Wait(TimeSpan.FromMilliseconds(waitMs));
 
+        _stateGaugeSubscription?.Dispose();
         _consumer?.Close();
         _consumer?.Dispose();
         _disposeCts.Dispose();

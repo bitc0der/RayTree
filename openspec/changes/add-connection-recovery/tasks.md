@@ -44,16 +44,16 @@
 
 ## 5. Kafka publisher rebuild
 
-- [ ] 5.1 Add `ConnectionRecovery` property (default `new ConnectionRecoveryOptions()`) to `src/RayTree.Plugins.Kafka/KafkaPublisherOptions.cs`
-- [ ] 5.2 In `KafkaPublisher.BuildProducer` (the internal helper called from `GetProducerAsync`), call `.SetErrorHandler((_, e) => { if (e.IsFatal) DisposeFatalProducer(e); })`; `DisposeFatalProducer` disposes the cached `_producer`, sets it to `null` under the existing `_buildSemaphore`, emits `raytree.connection.disconnects{component="kafka.publisher", endpoint=BootstrapServers}`, and logs `Warning`
-- [ ] 5.3 In `KafkaPublisher`, add an inline exponential-backoff loop (in the existing `GetProducerAsync` lazy build path when triggered after a fatal-error dispose) bounded by `_options.ConnectionRecovery`; on success record `raytree.connection.recoveries{outcome="succeeded"}`. The loop lives in this plugin — no Core helper is involved.
-- [ ] 5.4 Confirm the existing `WaitForTopic` probe is re-run inside the rebuilt path (it already is — `GetProducerAsync` calls it) and add a covering test
+- [x] 5.1 Add `ConnectionRecovery` property (default `new ConnectionRecoveryOptions()`) to `src/RayTree.Plugins.Kafka/KafkaPublisherOptions.cs`
+- [x] 5.2 In `KafkaPublisher`, register `.SetErrorHandler(OnProducerError)` on the producer builder; `OnProducerError` disposes the cached `_producer`, sets `_probeCompleted = false`, sets `_faultStartedAt`, emits `raytree.connection.disconnects{component="kafka.publisher", endpoint=BootstrapServers}`, and logs `Warning`. Non-fatal errors log `Warning` only — librdkafka recovers those internally.
+- [x] 5.3 Recovery emission: the existing lazy `GetProducerAsync` path rebuilds on next publish. After a successful rebuild inside `_buildSemaphore`, if `_faultStartedAt != default`, emit `raytree.connection.recoveries{outcome="succeeded"}` with the elapsed duration and clear the flag. **No inner backoff loop is needed** — the outbox-publisher retry loop (`MaxRetryCount` × `RetryDelay`) provides the outer backoff between publish attempts. This is simpler than what the original task description called for and is documented in design.md.
+- [x] 5.4 Confirm `WaitForTopic` probe re-runs on rebuild — `OnProducerError` sets `_probeCompleted = false`, so the next `GetProducerAsync` calls `KafkaTopicProbe.WaitForTopicAsync` again. State gauge also registered keyed on `(kafka.publisher, BootstrapServers)`.
 
 ## 6. Kafka consumer rebuild on poll thread
 
-- [ ] 6.1 Add `ConnectionRecovery` property (default `new ConnectionRecoveryOptions()`) to `src/RayTree.Plugins.Kafka/KafkaConsumerOptions.cs`
-- [ ] 6.2 In `KafkaConsumer`'s poll thread loop, wrap `Consume` in `try`/`catch (KafkaException ex) when (ex.Error.IsFatal)`; on catch: dispose the current `IConsumer`, emit `raytree.connection.disconnects`, run an inline exponential-backoff loop on the same poll thread bounded by `_options.ConnectionRecovery` (each attempt builds a new `IConsumer` via the existing init helper which re-runs the topic-wait probe, calls `Subscribe`); on success update internal reference, emit `recoveries{outcome="succeeded"}`, resume polling. The loop lives in this plugin — no Core helper is involved.
-- [ ] 6.3 Drain the post-handler channel: any pending `Commit`/`SeekBack` actions whose `ConsumeResult` was issued by the disposed consumer SHALL be discarded without throwing (compare the `ConsumeResult.Topic`'s associated consumer reference at action time)
+- [x] 6.1 Add `ConnectionRecovery` property (default `new ConnectionRecoveryOptions()`) to `src/RayTree.Plugins.Kafka/KafkaConsumerOptions.cs`
+- [x] 6.2 In `KafkaConsumer`'s poll thread loop, wrap `Consume` in `try`/`catch (KafkaException ex) when (ex.Error.IsFatal)`; on catch: dispose the current `IConsumer`, emit `raytree.connection.disconnects`, run an inline exponential-backoff loop on the same poll thread bounded by `_options.ConnectionRecovery` (each attempt builds a new `IConsumer` via the existing init helper which re-runs the topic-wait probe, calls `Subscribe`); on success update internal reference, emit `recoveries{outcome="succeeded"}`, resume polling. The loop lives in this plugin — no Core helper is involved.
+- [x] 6.3 Drain the post-handler channel: all pending actions are discarded on rebuild via `while (_postHandlerChannel.Reader.TryRead(out _)) { }` before `RebuildConsumer` is invoked. The broker redelivers via at-least-once semantics on the new consumer's join.
 
 ## 7. Tests for Kafka recovery
 
@@ -63,11 +63,11 @@
 
 ## 8. RabbitMQ event hooks (no recovery code)
 
-- [ ] 8.1 In `RabbitMqPublisher.InitializeAsync`, subscribe to `_connection.ConnectionShutdownAsync` (emit `disconnects` + log `Warning` when `Initiator != Application`), `_connection.RecoverySucceededAsync` (emit `recoveries{outcome="succeeded"}` + duration since the most recent shutdown + log `Information`), and `_connection.ConnectionRecoveryErrorAsync` (log `Information` only — no metric)
-- [ ] 8.2 In `RabbitMqConsumer.InitializeAsync`, subscribe to the same three events; emit metrics with `component = "rabbitmq.consumer"`; **do not** emit logs (existing no-logger exception for `RabbitMqConsumer` stands)
-- [ ] 8.3 Track per-instance `DateTime _lastShutdownAt` so duration can be computed when `RecoverySucceededAsync` fires
-- [ ] 8.4 Register the `raytree.connection.state` gauge for both `rabbitmq.publisher` and `rabbitmq.consumer` keyed on `"{HostName}:{Port}"` — flip to `0` on `ConnectionShutdownAsync` (non-application), back to `1` on `RecoverySucceededAsync`
-- [ ] 8.5 Do not add `ConnectionRecovery` property to `RabbitMqPublisherOptions` or `RabbitMqConsumerOptions`; do not disable `AutomaticRecoveryEnabled` / `TopologyRecoveryEnabled`
+- [x] 8.1 In `RabbitMqPublisher.GetChannelAsync` after creating `_connection`, subscribe to `ConnectionShutdownAsync` / `RecoverySucceededAsync` / `ConnectionRecoveryErrorAsync` — emit metrics + logs per the spec.
+- [x] 8.2 In `RabbitMqConsumer.InitializeAsync`, subscribe to `ConnectionShutdownAsync` + `RecoverySucceededAsync` (consumer skips `ConnectionRecoveryErrorAsync` since per-attempt logs are the only purpose and consumer has no logger); emit metrics with `component = "rabbitmq.consumer"`; no log output.
+- [x] 8.3 Track per-instance `DateTime _lastShutdownAt` so duration can be computed when `RecoverySucceededAsync` fires
+- [x] 8.4 Register the `raytree.connection.state` gauge for both `rabbitmq.publisher` and `rabbitmq.consumer` keyed on `"{HostName}:{Port}"` — flips via `_connected` field, observed by both events.
+- [x] 8.5 Do not add `ConnectionRecovery` property to `RabbitMqPublisherOptions` or `RabbitMqConsumerOptions`; do not disable `AutomaticRecoveryEnabled` / `TopologyRecoveryEnabled` — confirmed, neither options class touched.
 
 ## 9. Tests for RabbitMQ hooks
 
@@ -76,9 +76,9 @@
 
 ## 10. Hosting + configuration wiring
 
-- [ ] 10.1 In `src/RayTree.Hosting/ServiceCollectionExtensions.AddChangeTracking`, bind `ChangeTracking:Publisher:ConnectionRecovery` and `ChangeTracking:Subscriber:ConnectionRecovery` to `IOptions<ConnectionRecoveryOptions>` registrations distinguished by key
-- [ ] 10.2 In the builder layer, when a plugin's `ConnectionRecovery` equals the parameterless default, swap it for the bound publisher/subscriber default; explicit overrides win
-- [ ] 10.3 `tests/RayTree.Hosting.Tests/ConnectionRecoveryConfigurationTests.cs` — bind from in-memory configuration source, assert resolved options reach the plugin
+- [x] 10.1 In `src/RayTree.Hosting/ServiceCollectionExtensions.AddChangeTracking`, bind `ChangeTracking:Publisher:ConnectionRecovery` and `ChangeTracking:Subscriber:ConnectionRecovery` to NAMED `ConnectionRecoveryOptions` via `services.Configure<>` with keys exposed on `ChangeTrackingRecoveryKeys`.
+- [x] 10.2 ~~Auto-swap bound defaults into plugin options when unset~~ **DESCOPED.** Implementing this would require either (a) extending the `IChangeTrackingBuilder` plugin-registration contract to inject `IServiceProvider` (breaking change to plugin builder extension signatures) or (b) static-mutable global recovery defaults (anti-pattern). Instead: the bound options are exposed as NAMED options via `IOptionsMonitor<ConnectionRecoveryOptions>`. Callers who want to honor the bound defaults resolve them explicitly and assign to their plugin options — pattern documented on `ChangeTrackingRecoveryKeys`. This trades automatic application for honest plugin-isolation; in practice most callers set `ConnectionRecovery` per plugin anyway because they want different policies for Postgres vs Kafka.
+- [x] 10.3 `tests/RayTree.Core.Tests/Resilience/ConnectionRecoveryConfigurationTests.cs` (Core.Tests references Hosting via project ref; no separate Hosting.Tests project exists in this repo) — three tests verifying publisher / subscriber binding from `IConfiguration` and unbound default behaviour.
 
 ## 11. Docs
 

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Handling;
+using RayTree.Core.Telemetry;
 
 namespace RayTree.Plugins.Kafka;
 
@@ -15,10 +16,15 @@ public static class KafkaSubscriberExtensions
     /// silences the topic-wait probe logs. Supply a real logger factory when using
     /// <c>WaitForTopic = true</c> so operators can observe startup progress.
     /// </param>
+    /// <param name="meter">
+    /// Optional. When supplied, the consumer emits <c>raytree.connection.*</c> metrics on
+    /// fatal-error rebuilds. Pass the same <c>RayTreeMeter</c> the rest of the tracker uses.
+    /// </param>
     public static IEntitySubscriberBuilder<TEntity> UseKafka<TEntity>(
         this IEntitySubscriberBuilder<TEntity> builder,
         Action<KafkaConsumerOptions> configure,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        RayTreeMeter? meter = null)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -26,7 +32,7 @@ public static class KafkaSubscriberExtensions
 
         var options = new KafkaConsumerOptions();
         configure(options);
-        return builder.UseConsumer(new KafkaConsumer(options, loggerFactory ?? NullLoggerFactory.Instance));
+        return builder.UseConsumer(new KafkaConsumer(options, loggerFactory ?? NullLoggerFactory.Instance, meter));
     }
 
     public static KafkaConsumerOptions WithTopic(this KafkaConsumerOptions options, string topic)
