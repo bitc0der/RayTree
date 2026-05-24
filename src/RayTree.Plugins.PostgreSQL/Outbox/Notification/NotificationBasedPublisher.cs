@@ -26,10 +26,9 @@ public class NotificationBasedPublisher : IDisposable
     private readonly RayTreeMeter _meter;
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _notificationSemaphore;
-    private NpgsqlConnection? _connection;
     private Task? _listenTask;
     private Task? _fallbackTask;
-    private volatile bool _listenerHealthy = true;
+    private volatile bool _listenerHealthy;
     private bool _firstFallbackPoll = true;
     private IDisposable? _stateGaugeSubscription;
 
@@ -77,68 +76,80 @@ public class NotificationBasedPublisher : IDisposable
 
     public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
 
-    public async Task StartAsync(CancellationToken cancellationToken = default)
+    public Task StartAsync(CancellationToken cancellationToken = default)
     {
-        _connection = new NpgsqlConnection(_options.ConnectionString);
-        await _connection.OpenAsync(cancellationToken);
-
-        _connection.Notification += OnNotification;
-
-        await using var cmd = new NpgsqlCommand($"LISTEN {_options.ChannelName}", _connection);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
-
         _listenTask   = ListenLoopAsync(_cts.Token);
         _fallbackTask = FallbackPollingLoopAsync(_cts.Token);
 
         _logger.LogInformation("NotificationBasedPublisher started, listening on channel {ChannelName}",
             _options.ChannelName);
+        return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         _cts.Cancel();
 
-        if (_listenTask != null)
+        if (_listenTask is not null)
             await Task.WhenAny(_listenTask, Task.Delay(5000, cancellationToken));
 
-        if (_fallbackTask != null)
+        if (_fallbackTask is not null)
             await Task.WhenAny(_fallbackTask, Task.Delay(5000, cancellationToken));
 
-        if (_connection != null)
-        {
-            try
-            {
-                await using var cmd = new NpgsqlCommand($"UNLISTEN {_options.ChannelName}", _connection);
-                await cmd.ExecuteNonQueryAsync(CancellationToken.None);
-            }
-            catch { }
-
-            await _connection.CloseAsync();
-        }
-
+        // The connection is a local in ListenLoopAsync — `await using` cleans it up when
+        // the loop exits, which also implicitly drops the LISTEN registration on the wire.
         _logger.LogInformation("NotificationBasedPublisher stopped");
     }
 
-    private async Task ListenLoopAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// The full LISTEN lifecycle in one loop. Each iteration opens a fresh connection,
+    /// issues <c>LISTEN</c>, and waits on notifications until the connection breaks or
+    /// the loop is cancelled. On a classified connection fault the loop emits one
+    /// disconnect metric per cycle, backs off, and tries again — bounded by
+    /// <c>_options.ConnectionRecovery.MaxAttempts</c>. Non-connection exceptions propagate
+    /// out of the loop and surface to the caller of <see cref="StartAsync"/>.
+    /// </summary>
+    private async Task ListenLoopAsync(CancellationToken ct)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        DateTime? cycleStartedAt = null;   // null while healthy; set when a fault is observed
+        var attemptInCycle = 0;            // attempts since the last successful LISTEN
+
+        while (!ct.IsCancellationRequested)
         {
             try
             {
-                await _connection!.WaitAsync(cancellationToken);
-                if (!_listenerHealthy)
+                await using var conn = new NpgsqlConnection(_options.ConnectionString);
+                await conn.OpenAsync(ct);
+                conn.Notification += OnNotification;
+
+                await using (var listen = new NpgsqlCommand($"LISTEN {_options.ChannelName}", conn))
+                    await listen.ExecuteNonQueryAsync(ct);
+
+                // Successful (re)connect. Emit recovery if we were in a fault cycle.
+                if (cycleStartedAt is { } start)
                 {
-                    _listenerHealthy = true;
-                    _logger.LogInformation("PostgreSQL LISTEN connection on {ChannelName} recovered",
-                        _options.ChannelName);
+                    var duration = (DateTime.UtcNow - start).TotalSeconds;
+                    _meter.RecordConnectionRecovery(ComponentName, _options.ChannelName, outcome: "succeeded", duration);
+                    _logger.LogInformation(
+                        "PostgreSQL LISTEN connection on {ChannelName} reconnected after {AttemptCount} attempt(s) in {Duration:F2}s",
+                        _options.ChannelName, attemptInCycle + 1, duration);
+                    cycleStartedAt = null;
+                    attemptInCycle = 0;
                 }
+                _listenerHealthy = true;
+
+                // Block until the connection drops or cancellation. WaitAsync only returns
+                // when notifications stop arriving for a tick; we re-enter unless cancelled.
+                while (!ct.IsCancellationRequested)
+                    await conn.WaitAsync(ct);
             }
-            catch (OperationCanceledException) { break; }
+            catch (OperationCanceledException) { return; }
             catch (Exception ex) when (IsConnectionFault(ex))
             {
-                // Connection fault: emit disconnect on first detection, then reconnect.
-                if (_listenerHealthy)
+                // First detection in this cycle: flip state and emit disconnect metric.
+                if (cycleStartedAt is null)
                 {
+                    cycleStartedAt   = DateTime.UtcNow;
                     _listenerHealthy = false;
                     _meter.RecordConnectionDisconnect(ComponentName, _options.ChannelName);
                     _logger.LogWarning(ex,
@@ -146,95 +157,25 @@ public class NotificationBasedPublisher : IDisposable
                         _options.ChannelName);
                 }
 
-                if (!_options.ConnectionRecovery.Enabled)
+                if (!_options.ConnectionRecovery.Enabled) return;
+
+                attemptInCycle++;
+                if (_options.ConnectionRecovery.MaxAttempts is int max && attemptInCycle >= max)
                 {
-                    // Recovery disabled: surface the disconnect by exiting the loop. The
-                    // fallback polling loop continues to drain records; the LISTEN fast
-                    // path stays cold until process restart.
-                    break;
-                }
-
-                try
-                {
-                    await ReconnectAsync(cancellationToken);
-                }
-                catch (OperationCanceledException) { break; }
-                catch
-                {
-                    // ReconnectAsync exhausted its retry budget. The disconnect counter
-                    // and exhausted recovery counter are already emitted; exit the loop
-                    // so the surrounding service stops attempting LISTEN. Fallback polling
-                    // continues to provide best-effort delivery.
-                    break;
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// Runs an inline exponential-backoff loop bounded by <c>_options.ConnectionRecovery</c>
-    /// to re-establish the LISTEN connection. Disposes the old connection, opens a fresh one,
-    /// re-attaches the <c>Notification</c> handler, and issues <c>LISTEN</c>. On success the
-    /// loop's surrounding code resumes <c>WaitAsync</c> against the new connection (and flips
-    /// <c>_listenerHealthy</c> back to <c>true</c> on the next successful wake).
-    /// </summary>
-    private async Task ReconnectAsync(CancellationToken cancellationToken)
-    {
-        var recovery = _options.ConnectionRecovery;
-        var startedAt = DateTime.UtcNow;
-        var attemptNum = 0;
-
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            attemptNum++;
-
-            try
-            {
-                // Dispose the broken connection (detach event handler first to avoid
-                // a stray notification firing during the swap).
-                if (_connection is not null)
-                {
-                    _connection.Notification -= OnNotification;
-                    try { await _connection.DisposeAsync(); } catch { /* may already be broken */ }
-                }
-
-                _connection = new NpgsqlConnection(_options.ConnectionString);
-                await _connection.OpenAsync(cancellationToken);
-                _connection.Notification += OnNotification;
-
-                await using (var cmd = new NpgsqlCommand($"LISTEN {_options.ChannelName}", _connection))
-                    await cmd.ExecuteNonQueryAsync(cancellationToken);
-
-                var duration = (DateTime.UtcNow - startedAt).TotalSeconds;
-                _meter.RecordConnectionRecovery(ComponentName, _options.ChannelName, outcome: "succeeded", duration);
-                _logger.LogInformation(
-                    "PostgreSQL LISTEN connection on {ChannelName} reconnected after {AttemptCount} attempt(s) in {Duration:F2}s",
-                    _options.ChannelName, attemptNum, duration);
-                return;
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                if (recovery.MaxAttempts is int max && attemptNum >= max)
-                {
-                    var duration = (DateTime.UtcNow - startedAt).TotalSeconds;
+                    var duration = (DateTime.UtcNow - cycleStartedAt.Value).TotalSeconds;
                     _meter.RecordConnectionRecovery(ComponentName, _options.ChannelName, outcome: "exhausted", duration);
                     _logger.LogError(ex,
                         "PostgreSQL LISTEN reconnect exhausted on {ChannelName} after {AttemptCount} attempts",
-                        _options.ChannelName, attemptNum);
-                    throw;
+                        _options.ChannelName, attemptInCycle);
+                    return;
                 }
 
-                var delay = ComputeBackoffDelay(recovery, attemptNum);
+                var delay = ComputeBackoffDelay(_options.ConnectionRecovery, attemptInCycle);
                 _logger.LogInformation(ex,
                     "LISTEN reconnect attempt {AttemptNumber} failed for {ChannelName}; retrying in {Delay:F2}s",
-                    attemptNum, _options.ChannelName, delay.TotalSeconds);
-
-                await Task.Delay(delay, cancellationToken);
+                    attemptInCycle, _options.ChannelName, delay.TotalSeconds);
+                try { await Task.Delay(delay, ct); }
+                catch (OperationCanceledException) { return; }
             }
         }
     }
@@ -245,8 +186,7 @@ public class NotificationBasedPublisher : IDisposable
         var cappedTicks = Math.Min(baseTicks, opts.MaxDelay.Ticks);
         if (opts.JitterFraction <= 0) return TimeSpan.FromTicks((long)cappedTicks);
 
-        var rand = Random.Shared.NextDouble();                          // [0, 1)
-        var jitterMultiplier = 1.0 + (rand * 2 - 1) * opts.JitterFraction;
+        var jitterMultiplier = 1.0 + (Random.Shared.NextDouble() * 2 - 1) * opts.JitterFraction;
         return TimeSpan.FromTicks((long)(cappedTicks * jitterMultiplier));
     }
 
@@ -542,6 +482,5 @@ public class NotificationBasedPublisher : IDisposable
         _stateGaugeSubscription?.Dispose();
         _cts.Dispose();
         _notificationSemaphore.Dispose();
-        _connection?.Dispose();
     }
 }
