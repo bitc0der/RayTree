@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Distribution;
 using RayTree.Core.Handling;
+using RayTree.Core.Resilience;
 using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 
@@ -37,6 +38,19 @@ public static class ServiceCollectionExtensions
         {
             services.Configure<OutboxPublisherOptions>(configuration.GetSection("ChangeTracking:Publisher"));
             services.Configure<SubscriberOptions>(configuration.GetSection("ChangeTracking:Subscriber"));
+
+            // Connection-recovery defaults are bound as NAMED options so the same type can
+            // be configured independently for publisher-side (Postgres / Kafka publisher)
+            // and subscriber-side (Kafka consumer) plugins. Plugins that want to honor
+            // these defaults resolve them via
+            // <c>IOptionsMonitor&lt;ConnectionRecoveryOptions&gt;.Get(ChangeTrackingRecoveryKeys.Publisher)</c>
+            // and merge into their own options before constructing the publisher/consumer.
+            services.Configure<ConnectionRecoveryOptions>(
+                ChangeTrackingRecoveryKeys.Publisher,
+                configuration.GetSection("ChangeTracking:Publisher:ConnectionRecovery"));
+            services.Configure<ConnectionRecoveryOptions>(
+                ChangeTrackingRecoveryKeys.Subscriber,
+                configuration.GetSection("ChangeTracking:Subscriber:ConnectionRecovery"));
         }
 
         services.AddHostedService<ChangeTrackingHostedService>();

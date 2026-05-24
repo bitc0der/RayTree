@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
@@ -10,8 +11,10 @@ using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
+using RayTree.Core.Resilience;
 using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
+using RayTree.Plugins.PostgreSQL.Internal;
 
 namespace RayTree.Plugins.PostgreSQL.Outbox.Notification;
 
@@ -23,11 +26,18 @@ public class NotificationBasedPublisher : IDisposable
     private readonly RayTreeMeter _meter;
     private readonly CancellationTokenSource _cts = new();
     private readonly SemaphoreSlim _notificationSemaphore;
-    private NpgsqlConnection? _connection;
     private Task? _listenTask;
     private Task? _fallbackTask;
-    private volatile bool _listenerHealthy = true;
+    private volatile bool _listenerHealthy;
     private bool _firstFallbackPoll = true;
+    private IDisposable? _stateGaugeSubscription;
+
+    // Per-outbox transition state for the fallback polling loop. Keyed by entity type;
+    // the value's unhealthy flag flips on the first connection-fault for that outbox and
+    // back to false on the first subsequent successful batch.
+    private readonly ConcurrentDictionary<Type, FallbackOutboxState> _fallbackOutboxState = new();
+
+    private const string ComponentName = "postgres.notification";
 
     private static readonly MethodInfo GetByIdMethod = typeof(NotificationBasedPublisher)
         .GetMethod(nameof(GetByIdCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -51,80 +61,145 @@ public class NotificationBasedPublisher : IDisposable
         _meter                 = _publisher.Meter;
         _notificationSemaphore = new SemaphoreSlim(options.MaxConcurrentNotifications,
                                                    options.MaxConcurrentNotifications);
+
+        // Validate the recovery options eagerly so misconfiguration fails at construction,
+        // not on the first disconnect.
+        _options.ConnectionRecovery.Validate();
+
+        // Register the connection-state gauge keyed on the LISTEN channel. The closure
+        // captures _listenerHealthy so OTel collection sees the live value.
+        _stateGaugeSubscription = _meter.RegisterConnectionStateGauge(
+            component: ComponentName,
+            endpoint:  _options.ChannelName,
+            getState:  () => _listenerHealthy ? 1 : 0);
     }
 
     public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
 
-    public async Task StartAsync(CancellationToken cancellationToken = default)
+    public Task StartAsync(CancellationToken cancellationToken = default)
     {
-        _connection = new NpgsqlConnection(_options.ConnectionString);
-        await _connection.OpenAsync(cancellationToken);
-
-        _connection.Notification += OnNotification;
-
-        await using var cmd = new NpgsqlCommand($"LISTEN {_options.ChannelName}", _connection);
-        await cmd.ExecuteNonQueryAsync(cancellationToken);
-
         _listenTask   = ListenLoopAsync(_cts.Token);
         _fallbackTask = FallbackPollingLoopAsync(_cts.Token);
 
         _logger.LogInformation("NotificationBasedPublisher started, listening on channel {ChannelName}",
             _options.ChannelName);
+        return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         _cts.Cancel();
 
-        if (_listenTask != null)
+        if (_listenTask is not null)
             await Task.WhenAny(_listenTask, Task.Delay(5000, cancellationToken));
 
-        if (_fallbackTask != null)
+        if (_fallbackTask is not null)
             await Task.WhenAny(_fallbackTask, Task.Delay(5000, cancellationToken));
 
-        if (_connection != null)
-        {
-            try
-            {
-                await using var cmd = new NpgsqlCommand($"UNLISTEN {_options.ChannelName}", _connection);
-                await cmd.ExecuteNonQueryAsync(CancellationToken.None);
-            }
-            catch { }
-
-            await _connection.CloseAsync();
-        }
-
+        // The connection is a local in ListenLoopAsync — `await using` cleans it up when
+        // the loop exits, which also implicitly drops the LISTEN registration on the wire.
         _logger.LogInformation("NotificationBasedPublisher stopped");
     }
 
-    private async Task ListenLoopAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// The full LISTEN lifecycle in one loop. Each iteration opens a fresh connection,
+    /// issues <c>LISTEN</c>, and waits on notifications until the connection breaks or
+    /// the loop is cancelled. On a classified connection fault the loop emits one
+    /// disconnect metric per cycle, backs off, and tries again — bounded by
+    /// <c>_options.ConnectionRecovery.MaxAttempts</c>. Non-connection exceptions propagate
+    /// out of the loop and surface to the caller of <see cref="StartAsync"/>.
+    /// </summary>
+    private async Task ListenLoopAsync(CancellationToken ct)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        DateTime? cycleStartedAt = null;   // null while healthy; set when a fault is observed
+        var attemptInCycle = 0;            // attempts since the last successful LISTEN
+
+        while (!ct.IsCancellationRequested)
         {
             try
             {
-                await _connection!.WaitAsync(cancellationToken);
-                if (!_listenerHealthy)
+                await using var conn = new NpgsqlConnection(_options.ConnectionString);
+                await conn.OpenAsync(ct);
+                conn.Notification += OnNotification;
+
+                await using (var listen = new NpgsqlCommand($"LISTEN {_options.ChannelName}", conn))
+                    await listen.ExecuteNonQueryAsync(ct);
+
+                // Successful (re)connect. Emit recovery if we were in a fault cycle.
+                if (cycleStartedAt is { } start)
                 {
-                    _listenerHealthy = true;
-                    _logger.LogInformation("PostgreSQL LISTEN connection on {ChannelName} recovered",
-                        _options.ChannelName);
+                    var duration = Math.Max(0, (DateTime.UtcNow - start).TotalSeconds);
+                    _meter.RecordConnectionRecovery(ComponentName, _options.ChannelName, outcome: "succeeded", duration);
+                    _logger.LogInformation(
+                        "PostgreSQL LISTEN connection on {ChannelName} reconnected after {AttemptCount} attempt(s) in {Duration:F2}s",
+                        _options.ChannelName, attemptInCycle + 1, duration);
+                    cycleStartedAt = null;
+                    attemptInCycle = 0;
                 }
+                _listenerHealthy = true;
+
+                // Block until the connection drops or cancellation. WaitAsync only returns
+                // when notifications stop arriving for a tick; we re-enter unless cancelled.
+                while (!ct.IsCancellationRequested)
+                    await conn.WaitAsync(ct);
             }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex) when (IsConnectionFault(ex))
             {
-                if (_listenerHealthy)
+                // First detection in this cycle: flip state and emit disconnect metric.
+                if (cycleStartedAt is null)
                 {
+                    cycleStartedAt   = DateTime.UtcNow;
                     _listenerHealthy = false;
-                    _logger.LogWarning(ex, "PostgreSQL LISTEN connection on {ChannelName} lost, falling back to polling",
+                    _meter.RecordConnectionDisconnect(ComponentName, _options.ChannelName);
+                    _logger.LogWarning(ex,
+                        "PostgreSQL LISTEN connection on {ChannelName} lost, reconnecting",
                         _options.ChannelName);
                 }
-                try { await Task.Delay(_options.FallbackPollingInterval, cancellationToken); }
-                catch (OperationCanceledException) { break; }
+
+                if (!_options.ConnectionRecovery.Enabled) return;
+
+                attemptInCycle++;
+                if (_options.ConnectionRecovery.MaxAttempts is int max && attemptInCycle >= max)
+                {
+                    var duration = Math.Max(0, (DateTime.UtcNow - cycleStartedAt.Value).TotalSeconds);
+                    _meter.RecordConnectionRecovery(ComponentName, _options.ChannelName, outcome: "exhausted", duration);
+                    _logger.LogError(ex,
+                        "PostgreSQL LISTEN reconnect exhausted on {ChannelName} after {AttemptCount} attempts",
+                        _options.ChannelName, attemptInCycle);
+                    return;
+                }
+
+                var delay = ComputeBackoffDelay(_options.ConnectionRecovery, attemptInCycle);
+                _logger.LogInformation(ex,
+                    "LISTEN reconnect attempt {AttemptNumber} failed for {ChannelName}; retrying in {Delay:F2}s",
+                    attemptInCycle, _options.ChannelName, delay.TotalSeconds);
+                try { await Task.Delay(delay, ct); }
+                catch (OperationCanceledException) { return; }
             }
         }
     }
+
+    // Exponential-backoff delay with symmetric jitter. INTENTIONALLY duplicated in
+    // RayTree.Plugins.Kafka/KafkaConsumer.cs — see the design.md decision "No shared
+    // retry helper in Core" for why extracting this would require InternalsVisibleTo
+    // to plugin assemblies (architectural smell). Keep the two copies in sync by
+    // convention; any change here should be mirrored there.
+    private static TimeSpan ComputeBackoffDelay(ConnectionRecoveryOptions opts, int attemptNum)
+    {
+        var baseTicks = opts.InitialDelay.Ticks * Math.Pow(opts.Factor, attemptNum - 1);
+        var cappedTicks = Math.Min(baseTicks, opts.MaxDelay.Ticks);
+        if (opts.JitterFraction <= 0) return TimeSpan.FromTicks((long)cappedTicks);
+
+        var jitterMultiplier = 1.0 + (Random.Shared.NextDouble() * 2 - 1) * opts.JitterFraction;
+        return TimeSpan.FromTicks((long)(cappedTicks * jitterMultiplier));
+    }
+
+    /// <summary>
+    /// Classifier for LISTEN-side connection faults. Delegates to <see cref="PostgresFault"/>
+    /// so the LISTEN path and the outbox path stay consistent.
+    /// </summary>
+    private static bool IsConnectionFault(Exception ex) => PostgresFault.IsConnectionFault(ex);
 
     private async Task FallbackPollingLoopAsync(CancellationToken cancellationToken)
     {
@@ -272,7 +347,14 @@ public class NotificationBasedPublisher : IDisposable
         foreach (var (entityType, outbox) in _publisher.GetOutboxes())
         {
             if (cancellationToken.IsCancellationRequested) break;
+            await ProcessSingleOutboxAsync(entityType, outbox, cancellationToken);
+        }
+    }
 
+    private async Task ProcessSingleOutboxAsync(Type entityType, IOutbox outbox, CancellationToken cancellationToken)
+    {
+        try
+        {
             var publisher  = _publisher.GetPublisher(entityType);
             var serializer = _publisher.GetSerializer(entityType);
             var compressor = _publisher.GetCompressor(entityType);
@@ -309,6 +391,49 @@ public class NotificationBasedPublisher : IDisposable
                             change.Id, entityType.Name);
                     }
                 });
+
+            // Successful iteration — emit recovery if this outbox was previously unhealthy.
+            if (_fallbackOutboxState.TryGetValue(entityType, out var state) && state.Unhealthy
+                && outbox.ConnectionComponent is { } component)
+            {
+                var endpoint = outbox.ConnectionEndpoint ?? "<unknown>";
+                // Clamp at zero — backward NTP-driven clock jumps would otherwise feed a
+                // negative value into the duration histogram.
+                var duration = Math.Max(0, (DateTime.UtcNow - state.FirstFailureAt).TotalSeconds);
+                _meter.RecordConnectionRecovery(component, endpoint, outcome: "succeeded", duration);
+                _logger.LogInformation(
+                    "Outbox connection recovered for {EntityType} ({Component} at {Endpoint}) after {Duration:F2}s",
+                    entityType.Name, component, endpoint, duration);
+                _fallbackOutboxState[entityType] = new FallbackOutboxState(Unhealthy: false, FirstFailureAt: DateTime.MinValue);
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            // Classify all per-outbox errors HERE so the structured log entries are uniform
+            // and the outer FallbackPollingLoopAsync catch only sees infrastructure-level
+            // issues (Task.Delay failures, etc.). Connection-faults emit the disconnect
+            // metric + Warning; everything else logs Error with the entity-type context.
+            if (outbox.IsConnectionFault(ex) && outbox.ConnectionComponent is { } component)
+            {
+                var endpoint = outbox.ConnectionEndpoint ?? "<unknown>";
+                var state = _fallbackOutboxState.GetOrAdd(entityType,
+                    _ => new FallbackOutboxState(Unhealthy: false, FirstFailureAt: DateTime.MinValue));
+                if (!state.Unhealthy)
+                {
+                    _fallbackOutboxState[entityType] = new FallbackOutboxState(Unhealthy: true, FirstFailureAt: DateTime.UtcNow);
+                    _meter.RecordConnectionDisconnect(component, endpoint);
+                }
+                _logger.LogWarning(ex,
+                    "Outbox connection fault for {EntityType} ({Component} at {Endpoint}); fallback polling will retry",
+                    entityType.Name, component, endpoint);
+            }
+            else
+            {
+                _logger.LogError(ex,
+                    "Error processing fallback batch for {EntityType}; will retry on next polling tick",
+                    entityType.Name);
+            }
         }
     }
 
@@ -370,8 +495,11 @@ public class NotificationBasedPublisher : IDisposable
     public void Dispose()
     {
         StopAsync().GetAwaiter().GetResult();
+        _stateGaugeSubscription?.Dispose();
         _cts.Dispose();
         _notificationSemaphore.Dispose();
-        _connection?.Dispose();
     }
+
+    /// <summary>Per-outbox fault-cycle state used by the fallback polling loop.</summary>
+    private readonly record struct FallbackOutboxState(bool Unhealthy, DateTime FirstFailureAt);
 }

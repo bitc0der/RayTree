@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <!-- LoggerFactory.Create lives in Microsoft.Extensions.Logging, not Abstractions —
+         needed by the outbox-observability tests that capture log entries. -->
+    <PackageReference Include="Microsoft.Extensions.Logging" />
     <ProjectReference Include="..\..\src\RayTree.Core\RayTree.Core.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Hosting\RayTree.Hosting.csproj" />
     <ProjectReference Include="..\..\src\RayTree.Plugins.InMemory\RayTree.Plugins.InMemory.csproj" />
