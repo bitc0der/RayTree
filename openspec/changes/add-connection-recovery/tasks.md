@@ -7,23 +7,23 @@
 
 ## 2. Tests for core record + helper
 
-- [ ] 2.1 `tests/RayTree.Core.Tests/Resilience/ConnectionRecoveryOptionsTests.cs` — defaults match spec; validation throws for invalid `Factor` / `InitialDelay` / `MaxDelay` (must be ≥ `InitialDelay`) / `JitterFraction` / `MaxAttempts`
+- [x] 2.1 `tests/RayTree.Core.Tests/Resilience/ConnectionRecoveryOptionsTests.cs` — defaults match spec; validation throws for invalid `Factor` / `InitialDelay` / `MaxDelay` (must be ≥ `InitialDelay`) / `JitterFraction` / `MaxAttempts`
 - [ ] 2.2 ~~Tests for `ConnectionRetry`~~ **DROPPED with 1.2.** The retry loop now lives per-plugin and is tested via that plugin's integration tests (sections 4 and 7) plus any plugin-internal unit tests the plugin author chooses to add.
-- [ ] 2.3 `tests/RayTree.Core.Tests/Resilience/RecoveryMetricsTests.cs` — inline `CapturingExporter` (existing OTel test pattern); asserts the four instruments are emitted with correct names, units, and tag sets
+- [x] 2.3 `tests/RayTree.Core.Tests/Resilience/RecoveryMetricsTests.cs` — inline `CapturingExporter` (existing OTel test pattern); asserts the four instruments are emitted with correct names, units, and tag sets
 
 ## 3. Postgres LISTEN reconnect
 
-- [ ] 3.1 Add `ConnectionRecovery` property (default `new ConnectionRecoveryOptions()`) to `src/RayTree.Plugins.PostgreSQL/Outbox/Notification/NotificationBasedPublisherOptions.cs`
-- [ ] 3.2 In `NotificationBasedPublisher`, add `private static bool IsConnectionFault(Exception ex)` returning `true` for `NpgsqlException { IsTransient: true }`, `NpgsqlException` with `SocketException`/`IOException` inner, `PostgresException` with `SqlState` in `{"57P01", "57P02", "57P03"}`, and `ObjectDisposedException`
-- [ ] 3.3 Add `ReconnectAsync(CancellationToken ct)` method to `NotificationBasedPublisher` containing an inline exponential-backoff loop bounded by `_options.ConnectionRecovery`. The loop: disposes the broken connection, opens a fresh `NpgsqlConnection`, re-attaches the `Notification` event handler, issues `LISTEN {ChannelName}`, swaps `_connection`. Emits `RayTreeMeter.RecordConnectionRecovery` with `outcome="succeeded"` or `"exhausted"`. The loop lives in this plugin — no Core helper is involved.
-- [ ] 3.4 Modify `ListenLoopAsync` catch block: catch `Exception ex when (IsConnectionFault(ex))` → flip `_listenerHealthy = false`, call `ReconnectAsync`, then continue the loop (which flips `_listenerHealthy = true` on the next successful `WaitAsync`); existing non-connection-fault behaviour unchanged
-- [ ] 3.5 Register the `raytree.connection.state` gauge for `("postgres.notification", _options.ChannelName)` in the constructor
+- [x] 3.1 Add `ConnectionRecovery` property (default `new ConnectionRecoveryOptions()`) to `src/RayTree.Plugins.PostgreSQL/Outbox/Notification/NotificationBasedPublisherOptions.cs`
+- [x] 3.2 In `NotificationBasedPublisher`, add `private static bool IsConnectionFault(Exception ex)` — delegates to the shared `PostgresFault.IsConnectionFault` helper (see task 4a.2).
+- [x] 3.3 Add `ReconnectAsync(CancellationToken ct)` method to `NotificationBasedPublisher` containing an inline exponential-backoff loop bounded by `_options.ConnectionRecovery`. The loop: disposes the broken connection, opens a fresh `NpgsqlConnection`, re-attaches the `Notification` event handler, issues `LISTEN {ChannelName}`, swaps `_connection`. Emits `RayTreeMeter.RecordConnectionRecovery` with `outcome="succeeded"` or `"exhausted"`. The loop lives in this plugin — no Core helper is involved.
+- [x] 3.4 Modify `ListenLoopAsync` catch block: catch `Exception ex when (IsConnectionFault(ex))` → flip `_listenerHealthy = false`, call `ReconnectAsync`, then continue the loop (which flips `_listenerHealthy = true` on the next successful `WaitAsync`); existing non-connection-fault behaviour unchanged
+- [x] 3.5 Register the `raytree.connection.state` gauge for `("postgres.notification", _options.ChannelName)` in the constructor
 
 ## 4. Tests for Postgres reconnect
 
 - [ ] 4.1 `tests/RayTree.Plugins.PostgreSQL.Tests/NotificationBasedPublisherRecoveryTests.cs` ([NonParallelizable], Testcontainers) — restart the Postgres container mid-stream; assert: a notification published before the restart and one published after both arrive at the consumer; fallback polling delivers any record written during the gap; `raytree.connection.disconnects{component="postgres.notification"}` ≥ 1 and `raytree.connection.recoveries{outcome="succeeded"}` ≥ 1
 - [ ] 4.2 Negative test: kill the Postgres container permanently with `MaxAttempts = 2`; assert `raytree.connection.recoveries{outcome="exhausted"}` is recorded and `ListenLoopAsync` exits cleanly
-- [ ] 4.3 Unit test for `IsConnectionFault` classifier covering each true-case and at least two false-case exceptions (e.g. `PostgresException` with SQL state `"23505"` unique violation must return `false`)
+- [x] 4.3 Unit test for `IsConnectionFault` classifier — implemented as `PostgresFaultTests` (see 4b.4); shared with the outbox-observability tests since both paths delegate to the same `PostgresFault` static class.
 
 ## 4a. Outbox connection-fault observability (no retry code)
 
@@ -39,7 +39,7 @@
 - [ ] 4b.1 `tests/RayTree.Core.Tests/OutboxPublisherServiceTests` — unit test with a mocked `IOutbox` that throws a synthetic exception, `IsConnectionFault = true`, `ConnectionComponent = "postgres.outbox"`; assert disconnect metric is emitted once across multiple failed batches, recovery metric is emitted on first success, log levels are correct (`Warning` then `Information`, not `Error`)
 - [ ] 4b.2 Same test with `IsConnectionFault = false` — assert `Error` log path is unchanged and no connection metric is emitted
 - [ ] 4b.3 Same test with `ConnectionComponent = null` — assert `Error` path is preserved (no metric) even when `IsConnectionFault = true`
-- [ ] 4b.4 `tests/RayTree.Plugins.PostgreSQL.Tests/PostgresFaultTests.cs` — unit test the static classifier against each documented SqlState and exception type
+- [x] 4b.4 `tests/RayTree.Plugins.PostgreSQL.Tests/PostgresFaultTests.cs` — unit test the static classifier against each documented SqlState and exception type
 - [ ] 4b.5 Add a scenario to `NotificationBasedPublisherRecoveryTests` (integration) covering the fallback polling path — restart Postgres while NOTIFY is healthy but force an outbox-read path to fail (e.g. via a brief partition); assert `disconnects{component="postgres.outbox"}` is emitted independently of the `postgres.notification` metric
 
 ## 5. Kafka publisher rebuild

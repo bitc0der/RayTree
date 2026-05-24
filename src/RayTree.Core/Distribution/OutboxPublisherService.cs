@@ -23,6 +23,13 @@ public class OutboxPublisherService : IDisposable
     private volatile bool _stopping;
     private DateTime _lastCleanup = DateTime.MinValue;
 
+    // Outbox connection-fault transition tracking. Set when a batch fails with an exception
+    // the outbox classifies as a connection fault; cleared on the first subsequent successful
+    // batch. The flag is read on success-after-failure to emit the recovery metric and is
+    // accessed only from the single polling task, so no synchronization is required.
+    private bool _outboxUnhealthy;
+    private DateTime _firstUnhealthyAt;
+
     private static readonly MethodInfo GetUnpublishedMethod = typeof(OutboxPublisherService)
         .GetMethod(nameof(GetUnpublishedCoreAsync), BindingFlags.NonPublic | BindingFlags.Static)!;
 
@@ -72,13 +79,18 @@ public class OutboxPublisherService : IDisposable
                 if (!_stopping)
                 {
                     batchWasFull = await ProcessBatchAsync(cancellationToken);
+
+                    // Successful batch — emit recovery metric if we were previously unhealthy.
+                    if (_outboxUnhealthy)
+                        EmitOutboxRecovered();
+
                     await MaybeRunCleanupAsync(cancellationToken);
                 }
             }
             catch (OperationCanceledException) { break; }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing outbox batch for {EntityType}", _entityType.Name);
+                HandleBatchError(ex);
             }
 
             // When the batch was full more records are likely waiting — loop immediately
@@ -282,6 +294,60 @@ public class OutboxPublisherService : IDisposable
 
         if (succeeded)
             _lastCleanup = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Inspects an exception thrown from a polling batch. Connection-level faults
+    /// (as classified by the outbox's own <see cref="IOutbox.IsConnectionFault"/>)
+    /// are logged at <c>Warning</c> and tracked as a recovery cycle via the connection
+    /// metrics. All other exceptions retain the existing <c>Error</c> log path.
+    /// </summary>
+    private void HandleBatchError(Exception ex)
+    {
+        // Parallel.ForEachAsync may surface a wrapped AggregateException when one or more
+        // inner publish calls threw; unwrap the first inner so the classifier sees the
+        // real cause (e.g. NpgsqlException with a connection-level SqlState).
+        var rootCause = ex switch
+        {
+            AggregateException agg when agg.InnerException is not null => agg.InnerException,
+            _                                                          => ex
+        };
+
+        var outbox = _publisher.GetOutbox(_entityType);
+        if (outbox.IsConnectionFault(rootCause) && outbox.ConnectionComponent is { } component)
+        {
+            var endpoint = outbox.ConnectionEndpoint ?? "<unknown>";
+            if (!_outboxUnhealthy)
+            {
+                _outboxUnhealthy   = true;
+                _firstUnhealthyAt  = DateTime.UtcNow;
+                _meter.RecordConnectionDisconnect(component, endpoint);
+            }
+            _logger.LogWarning(rootCause,
+                "Outbox connection fault for {EntityType} ({Component} at {Endpoint}); polling will retry on next tick",
+                _entityType.Name, component, endpoint);
+        }
+        else
+        {
+            _logger.LogError(ex, "Error processing outbox batch for {EntityType}", _entityType.Name);
+        }
+    }
+
+    /// <summary>
+    /// Emits the connection-recovery metric and log entry, then clears the unhealthy flag.
+    /// Called from the polling loop on the first successful batch following a fault.
+    /// </summary>
+    private void EmitOutboxRecovered()
+    {
+        var outbox    = _publisher.GetOutbox(_entityType);
+        var component = outbox.ConnectionComponent ?? "outbox";
+        var endpoint  = outbox.ConnectionEndpoint  ?? "<unknown>";
+        var duration  = (DateTime.UtcNow - _firstUnhealthyAt).TotalSeconds;
+        _meter.RecordConnectionRecovery(component, endpoint, outcome: "succeeded", duration);
+        _logger.LogInformation(
+            "Outbox connection recovered for {EntityType} ({Component} at {Endpoint}) after {Duration:F2}s",
+            _entityType.Name, component, endpoint, duration);
+        _outboxUnhealthy = false;
     }
 
     public void Dispose()

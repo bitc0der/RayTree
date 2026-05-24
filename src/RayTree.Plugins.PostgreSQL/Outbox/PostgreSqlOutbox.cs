@@ -3,6 +3,7 @@ using Npgsql;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Tracking;
+using RayTree.Plugins.PostgreSQL.Internal;
 using RayTree.Plugins.PostgreSQL.Outbox.Notification;
 using RayTree.Plugins.PostgreSQL.Outbox.Schema;
 using RayTree.Plugins.PostgreSQL.Schema;
@@ -17,6 +18,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
     private readonly string _insertSql;
     private readonly string _selectColumns;
     private readonly ILogger<PostgreSqlOutbox<TEntity>> _logger;
+    private readonly string _endpoint;
 
     public PostgreSqlOutbox(PostgreSqlOutboxOptions options, ILoggerFactory loggerFactory)
     {
@@ -31,6 +33,35 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         _propertyColumns = EntityColumnMapper.GetColumns(typeof(TEntity));
         _insertSql = BuildInsertSql();
         _selectColumns = BuildSelectColumns();
+        _endpoint = ParseEndpoint(options.ConnectionString);
+    }
+
+    /// <inheritdoc/>
+    public bool IsConnectionFault(Exception ex) => PostgresFault.IsConnectionFault(ex);
+
+    /// <inheritdoc/>
+    public string? ConnectionComponent => "postgres.outbox";
+
+    /// <inheritdoc/>
+    public string? ConnectionEndpoint => _endpoint;
+
+    /// <summary>
+    /// Parses <c>Host:Port</c> from an Npgsql connection string. Falls back to
+    /// <c>"&lt;unknown&gt;"</c> when the string is malformed so metric emission never throws.
+    /// </summary>
+    private static string ParseEndpoint(string connectionString)
+    {
+        try
+        {
+            var builder = new NpgsqlConnectionStringBuilder(connectionString);
+            var host = string.IsNullOrEmpty(builder.Host) ? "<unknown>" : builder.Host;
+            var port = builder.Port;
+            return $"{host}:{port}";
+        }
+        catch
+        {
+            return "<unknown>";
+        }
     }
 
     private string BuildInsertSql()
