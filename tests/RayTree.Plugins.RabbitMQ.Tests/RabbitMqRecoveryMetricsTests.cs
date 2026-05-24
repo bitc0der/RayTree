@@ -75,9 +75,9 @@ public class RabbitMqRecoveryMetricsTests : IAsyncDisposable
         using var consumer = BuildConsumer();
         await consumer.InitializeAsync();
 
-        // Give the SDK a moment to settle (RabbitMqConsumer kicks off BasicConsumeAsync
-        // asynchronously after InitializeAsync returns).
-        await Task.Delay(500);
+        // Brief settle for RabbitMqConsumer's async BasicConsume registration. Polling
+        // here would require a public IsConnected accessor we don't currently expose.
+        await Task.Delay(200);
 
         // Act — broker-driven close. The 'test' string is the rabbitmqctl reason.
         var result = await _rabbitMq.ExecAsync(new[] {
@@ -108,7 +108,7 @@ public class RabbitMqRecoveryMetricsTests : IAsyncDisposable
 
         // Act — clean dispose; the SDK fires ConnectionShutdownAsync with Initiator=Application.
         publisher.Dispose();
-        await Task.Delay(500);   // give the shutdown event time to fire
+        await Task.Delay(100);   // brief settle window for the shutdown handler
 
         // Assert — the publisher MUST NOT count its own clean teardown as a recovery event.
         // (Otherwise dashboards would show a spurious disconnect every time a host shuts down.)

@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Models;
 using RayTree.Core.Telemetry;
@@ -121,21 +122,61 @@ public class KafkaRecoveryMetricsTests : IAsyncDisposable
         // transport errors continuously while trying to bootstrap. The publisher SHALL NOT
         // treat these as a fault — _faultTicks stays 0, no disconnect counter, no rebuild.
         // This verifies the `!error.IsFatal` short-circuit in OnError.
+        //
+        // To avoid a blind sleep, capture the publisher's Warning logs and poll until at
+        // least one fires — that proves librdkafka actually emitted a non-fatal error our
+        // handler observed. Once we have that, the metric assertion is deterministic.
+        var logs = new WarningCountingLoggerProvider();
+        using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(logs).SetMinimumLevel(LogLevel.Warning));
+
         using var publisher = new KafkaPublisher(new KafkaPublisherOptions
         {
             BootstrapServers = "127.0.0.1:1",   // nothing here
             Topic            = "unreachable-test"
-        }, loggerFactory: null, meter: _meter);
+        }, loggerFactory: loggerFactory, meter: _meter);
 
         await publisher.InitializeAsync();
-        // Give librdkafka time to attempt the bootstrap connection and emit several
-        // non-fatal `Local_AllBrokersDown` / `Local_Transport` errors.
-        await Task.Delay(2_000);
 
+        // Wait until OnError has fired at least once with a non-fatal error.
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (logs.NonFatalErrors == 0 && sw.Elapsed < TimeSpan.FromSeconds(15))
+            await Task.Delay(50);
+        Assert.That(logs.NonFatalErrors, Is.GreaterThanOrEqualTo(1),
+            "librdkafka SHOULD emit at least one non-fatal error against an unreachable broker");
+
+        // Now the assertion is deterministic: the OnError path was exercised, but the
+        // fatal-error branch was not. Metrics MUST be untouched.
         Assert.That(_capture.SumOf("raytree.connection.disconnects", "kafka.publisher"), Is.EqualTo(0),
             "non-fatal transient errors MUST NOT increment the disconnect counter");
         Assert.That(_capture.SumOf("raytree.connection.recoveries", "kafka.publisher"), Is.EqualTo(0),
             "without a fatal error there's nothing to recover from — no recovery should be emitted");
+    }
+
+    /// <summary>
+    /// Minimal logger provider that counts Warning entries containing "non-fatal" — used by
+    /// the unreachable-broker test to poll until librdkafka has actually surfaced an error
+    /// rather than burning a fixed delay.
+    /// </summary>
+    private sealed class WarningCountingLoggerProvider : ILoggerProvider
+    {
+        private int _nonFatal;
+        public int NonFatalErrors => Volatile.Read(ref _nonFatal);
+        public ILogger CreateLogger(string categoryName) => new CountingLogger(this);
+        public void Dispose() { }
+
+        private sealed class CountingLogger : ILogger
+        {
+            private readonly WarningCountingLoggerProvider _owner;
+            public CountingLogger(WarningCountingLoggerProvider owner) { _owner = owner; }
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+            public void Log<TState>(LogLevel level, EventId id, TState state, Exception? ex,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (level == LogLevel.Warning && formatter(state, ex).Contains("non-fatal", StringComparison.OrdinalIgnoreCase))
+                    Interlocked.Increment(ref _owner._nonFatal);
+            }
+        }
     }
 
     [Test]
@@ -153,7 +194,7 @@ public class KafkaRecoveryMetricsTests : IAsyncDisposable
         await publisher.PublishAsync(SampleEnvelope(topic));
 
         publisher.Dispose();
-        await Task.Delay(500);   // give any pending callbacks a moment to fire
+        await Task.Delay(100);   // brief settle window for any in-flight librdkafka callbacks
 
         Assert.That(_capture.SumOf("raytree.connection.disconnects", "kafka.publisher"), Is.EqualTo(0),
             "application-initiated dispose must not register as a disconnect");

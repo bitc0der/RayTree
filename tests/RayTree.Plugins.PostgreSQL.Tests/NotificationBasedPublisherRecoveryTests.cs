@@ -380,6 +380,19 @@ public class NotificationBasedPublisherRecoveryTests
                     .Sum(m => m.Value);
         }
 
+        /// <summary>Forces the observable gauges to emit. Used to deterministically sample the
+        /// connection-state gauge inside a polling helper instead of relying on a sleep.</summary>
+        public void RecordObservableInstruments() => _listener.RecordObservableInstruments();
+
+        public double? LatestGaugeOf(string instrumentName, string component)
+        {
+            lock (_gate)
+            {
+                var hit = _measurements.LastOrDefault(m => m.Name == instrumentName && m.Component == component);
+                return hit.Name is null ? null : hit.Value;
+            }
+        }
+
         public void Dispose() => _listener.Dispose();
 
         private readonly record struct Recorded(string Name, double Value, string? Component, string? Outcome);
