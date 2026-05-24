@@ -6,6 +6,14 @@ namespace RayTree.Core.Resilience;
 /// schedule: the Nth retry waits <c>min(InitialDelay × Factor^(N-1), MaxDelay)</c> seconds,
 /// jittered by <c>±JitterFraction</c>. RabbitMQ does not consume these options — the
 /// RabbitMQ.Client SDK owns its own recovery policy.
+/// <para>
+/// <b>Validation timing:</b> per-field invariants (positive delays, factor &gt;= 1, jitter
+/// in [0, 1], positive MaxAttempts) are enforced at init time — they throw from object
+/// initializers before construction completes. Cross-field invariants
+/// (<c>MaxDelay &gt;= InitialDelay</c>) cannot be checked at init time because
+/// object-initializer assignment order is undefined; they're checked by <see cref="Validate"/>,
+/// which plugins call on first use before entering their retry loop.
+/// </para>
 /// </summary>
 public sealed class ConnectionRecoveryOptions
 {

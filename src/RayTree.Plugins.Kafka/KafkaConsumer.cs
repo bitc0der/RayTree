@@ -275,6 +275,11 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                 // topic recreation is handled — matches the kafka-topic-wait reprobe contract.
                 if (_options.WaitForTopic)
                 {
+                    // Sync-over-async exception to AGENTS.md: this runs on the dedicated
+                    // Kafka poll thread which has no SynchronizationContext. librdkafka
+                    // requires Consume/Commit/Seek/Subscribe all on one thread, so we can't
+                    // hop to await continuations. Deadlock is impossible here — the task
+                    // completes independently on Npgsql / admin-client threads.
                     KafkaTopicProbe.WaitForTopicAsync(
                         _options.BootstrapServers,
                         _options.Topic,
@@ -287,7 +292,8 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                 _consumer = BuildConsumer();
                 _connected = true;
 
-                var duration = (DateTime.UtcNow - startedAt).TotalSeconds;
+                // Clamp at zero — backward NTP clock jump between disconnect and recovery.
+                var duration = Math.Max(0, (DateTime.UtcNow - startedAt).TotalSeconds);
                 _meter?.RecordConnectionRecovery(ComponentName, _options.BootstrapServers,
                     outcome: "succeeded", duration);
                 _logger.LogInformation(
@@ -300,7 +306,7 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
             {
                 if (recovery.MaxAttempts is int max && attempt >= max)
                 {
-                    var duration = (DateTime.UtcNow - startedAt).TotalSeconds;
+                    var duration = Math.Max(0, (DateTime.UtcNow - startedAt).TotalSeconds);
                     _meter?.RecordConnectionRecovery(ComponentName, _options.BootstrapServers,
                         outcome: "exhausted", duration);
                     _logger.LogError(ex,
@@ -313,12 +319,19 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                 _logger.LogInformation(ex,
                     "Consumer rebuild attempt {AttemptNumber} failed for {Topic}; retrying in {Delay:F2}s",
                     attempt, _options.Topic, delay.TotalSeconds);
+                // Sync-over-async: same justification as the probe call above — we own
+                // this thread (poll thread), no SynchronizationContext, no deadlock risk.
                 try { Task.Delay(delay, ct).GetAwaiter().GetResult(); }
                 catch (OperationCanceledException) { return false; }
             }
         }
     }
 
+    // Exponential-backoff delay with symmetric jitter. INTENTIONALLY duplicated in
+    // RayTree.Plugins.PostgreSQL/Outbox/Notification/NotificationBasedPublisher.cs — see
+    // the design.md decision "No shared retry helper in Core" for why extracting this
+    // would require InternalsVisibleTo to plugin assemblies (architectural smell).
+    // Keep the two copies in sync by convention; any change here should be mirrored there.
     private static TimeSpan ComputeBackoffDelay(ConnectionRecoveryOptions opts, int attemptNum)
     {
         var baseTicks = opts.InitialDelay.Ticks * Math.Pow(opts.Factor, attemptNum - 1);

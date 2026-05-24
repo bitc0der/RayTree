@@ -81,10 +81,14 @@ Emitted by every connection-bearing plugin to make broker / database connection 
 | `raytree.connection.recovery.duration` | histogram | `s` | `component`, `endpoint`, `outcome` | Wall-clock seconds from first detection to recovery completion (success or exhaustion). |
 | `raytree.connection.state` | observable gauge | `{state}` | `component`, `endpoint` | `1` while connected, `0` while in a fault cycle. Sampled per OTel collection tick. |
 
-Postgres has **two** components because they observe different code paths:
+#### Postgres has two components
 
-- `postgres.notification` — the long-lived LISTEN connection inside `NotificationBasedPublisher.ListenLoopAsync`. Recovery is **active**: the plugin reconnects with exponential backoff.
-- `postgres.outbox` — the short-lived pooled connections used by `PostgreSqlOutbox` operations called from `OutboxPublisherService` and `NotificationBasedPublisher.FallbackPollingLoopAsync`. Recovery is **passive observation only**: the polling loop already retries naturally on the next tick; we just emit metrics + demote the per-batch `Error` log to `Warning` so a transient Postgres blip looks like one fault cycle, not a stream of unrelated errors.
+Postgres emits two distinct `component` values because they observe different code paths with different recovery shapes:
+
+- **`postgres.notification`** — the long-lived LISTEN connection inside `NotificationBasedPublisher.ListenLoopAsync`. Recovery is **active**: the plugin reconnects with exponential backoff bounded by `NotificationBasedPublisherOptions.ConnectionRecovery`.
+- **`postgres.outbox`** — the short-lived pooled connections used by `PostgreSqlOutbox` operations called from `OutboxPublisherService` and `NotificationBasedPublisher.FallbackPollingLoopAsync`. Recovery is **passive observation only**: the polling loop already retries naturally on the next tick; we just emit metrics + demote the per-batch `Error` log to `Warning` so a transient Postgres blip looks like one fault cycle, not a stream of unrelated errors.
+
+#### RabbitMQ recovery owned by the SDK
 
 RabbitMQ recovery is performed by `RabbitMQ.Client`'s built-in `AutomaticRecoveryEnabled = true`. RayTree subscribes to the SDK's `ConnectionShutdownAsync` / `RecoverySucceededAsync` events for metric emission only — no recovery code lives in RayTree. The library's `NetworkRecoveryInterval` controls timing; RayTree's `ConnectionRecoveryOptions` does not apply to RabbitMQ.
 

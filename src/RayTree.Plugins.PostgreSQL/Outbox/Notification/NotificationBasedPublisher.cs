@@ -128,7 +128,7 @@ public class NotificationBasedPublisher : IDisposable
                 // Successful (re)connect. Emit recovery if we were in a fault cycle.
                 if (cycleStartedAt is { } start)
                 {
-                    var duration = (DateTime.UtcNow - start).TotalSeconds;
+                    var duration = Math.Max(0, (DateTime.UtcNow - start).TotalSeconds);
                     _meter.RecordConnectionRecovery(ComponentName, _options.ChannelName, outcome: "succeeded", duration);
                     _logger.LogInformation(
                         "PostgreSQL LISTEN connection on {ChannelName} reconnected after {AttemptCount} attempt(s) in {Duration:F2}s",
@@ -162,7 +162,7 @@ public class NotificationBasedPublisher : IDisposable
                 attemptInCycle++;
                 if (_options.ConnectionRecovery.MaxAttempts is int max && attemptInCycle >= max)
                 {
-                    var duration = (DateTime.UtcNow - cycleStartedAt.Value).TotalSeconds;
+                    var duration = Math.Max(0, (DateTime.UtcNow - cycleStartedAt.Value).TotalSeconds);
                     _meter.RecordConnectionRecovery(ComponentName, _options.ChannelName, outcome: "exhausted", duration);
                     _logger.LogError(ex,
                         "PostgreSQL LISTEN reconnect exhausted on {ChannelName} after {AttemptCount} attempts",
@@ -180,6 +180,11 @@ public class NotificationBasedPublisher : IDisposable
         }
     }
 
+    // Exponential-backoff delay with symmetric jitter. INTENTIONALLY duplicated in
+    // RayTree.Plugins.Kafka/KafkaConsumer.cs — see the design.md decision "No shared
+    // retry helper in Core" for why extracting this would require InternalsVisibleTo
+    // to plugin assemblies (architectural smell). Keep the two copies in sync by
+    // convention; any change here should be mirrored there.
     private static TimeSpan ComputeBackoffDelay(ConnectionRecoveryOptions opts, int attemptNum)
     {
         var baseTicks = opts.InitialDelay.Ticks * Math.Pow(opts.Factor, attemptNum - 1);
@@ -392,7 +397,9 @@ public class NotificationBasedPublisher : IDisposable
                 && outbox.ConnectionComponent is { } component)
             {
                 var endpoint = outbox.ConnectionEndpoint ?? "<unknown>";
-                var duration = (DateTime.UtcNow - state.FirstFailureAt).TotalSeconds;
+                // Clamp at zero — backward NTP-driven clock jumps would otherwise feed a
+                // negative value into the duration histogram.
+                var duration = Math.Max(0, (DateTime.UtcNow - state.FirstFailureAt).TotalSeconds);
                 _meter.RecordConnectionRecovery(component, endpoint, outcome: "succeeded", duration);
                 _logger.LogInformation(
                     "Outbox connection recovered for {EntityType} ({Component} at {Endpoint}) after {Duration:F2}s",
@@ -401,25 +408,34 @@ public class NotificationBasedPublisher : IDisposable
             }
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception ex) when (outbox.IsConnectionFault(ex) && outbox.ConnectionComponent is not null)
+        catch (Exception ex)
         {
-            var component = outbox.ConnectionComponent;
-            var endpoint  = outbox.ConnectionEndpoint ?? "<unknown>";
-
-            var state = _fallbackOutboxState.GetOrAdd(entityType,
-                _ => new FallbackOutboxState(Unhealthy: false, FirstFailureAt: DateTime.MinValue));
-            if (!state.Unhealthy)
+            // Classify all per-outbox errors HERE so the structured log entries are uniform
+            // and the outer FallbackPollingLoopAsync catch only sees infrastructure-level
+            // issues (Task.Delay failures, etc.). Connection-faults emit the disconnect
+            // metric + Warning; everything else logs Error with the entity-type context.
+            if (outbox.IsConnectionFault(ex) && outbox.ConnectionComponent is { } component)
             {
-                _fallbackOutboxState[entityType] = new FallbackOutboxState(Unhealthy: true, FirstFailureAt: DateTime.UtcNow);
-                _meter.RecordConnectionDisconnect(component, endpoint);
+                var endpoint = outbox.ConnectionEndpoint ?? "<unknown>";
+                var state = _fallbackOutboxState.GetOrAdd(entityType,
+                    _ => new FallbackOutboxState(Unhealthy: false, FirstFailureAt: DateTime.MinValue));
+                if (!state.Unhealthy)
+                {
+                    _fallbackOutboxState[entityType] = new FallbackOutboxState(Unhealthy: true, FirstFailureAt: DateTime.UtcNow);
+                    _meter.RecordConnectionDisconnect(component, endpoint);
+                }
+                _logger.LogWarning(ex,
+                    "Outbox connection fault for {EntityType} ({Component} at {Endpoint}); fallback polling will retry",
+                    entityType.Name, component, endpoint);
             }
-            _logger.LogWarning(ex,
-                "Outbox connection fault for {EntityType} ({Component} at {Endpoint}); fallback polling will retry",
-                entityType.Name, component, endpoint);
+            else
+            {
+                _logger.LogError(ex,
+                    "Error processing fallback batch for {EntityType}; will retry on next polling tick",
+                    entityType.Name);
+            }
         }
     }
-
-    private readonly record struct FallbackOutboxState(bool Unhealthy, DateTime FirstFailureAt);
 
     private static Task<EntityChange?> GetByIdAsync(IOutbox outbox, Type entityType, long id, CancellationToken ct)
         => (Task<EntityChange?>)GetByIdMethod.MakeGenericMethod(entityType).Invoke(null, [outbox, id, ct])!;
@@ -483,4 +499,7 @@ public class NotificationBasedPublisher : IDisposable
         _cts.Dispose();
         _notificationSemaphore.Dispose();
     }
+
+    /// <summary>Per-outbox fault-cycle state used by the fallback polling loop.</summary>
+    private readonly record struct FallbackOutboxState(bool Unhealthy, DateTime FirstFailureAt);
 }

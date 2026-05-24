@@ -25,6 +25,7 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
     // Connection state for the gauge — true while a healthy channel is bound. Owned by
     // the SDK's recovery events (we do NOT implement recovery here).
     private volatile bool _connected;
+    private volatile bool _disposing;
     private DateTime _lastShutdownAt = DateTime.MinValue;
     private readonly IDisposable? _stateGaugeSubscription;
 
@@ -134,7 +135,10 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
 
     private Task OnConnectionShutdownAsync(object sender, ShutdownEventArgs e)
     {
-        if (e.Initiator == ShutdownInitiator.Application)
+        // Suppress when shutdown is part of our own teardown — same race-guard pattern
+        // as the publisher (broker may already be dead when Dispose() runs, in which case
+        // the SDK reports the shutdown with Initiator=Library, not Application).
+        if (e.Initiator == ShutdownInitiator.Application || _disposing)
             return Task.CompletedTask;
 
         _connected      = false;
@@ -146,9 +150,11 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
 
     private Task OnRecoverySucceededAsync(object sender, AsyncEventArgs e)
     {
+        // Clamp at zero — backward NTP-driven clock jumps would otherwise feed a negative
+        // value into the duration histogram.
         var duration = _lastShutdownAt == DateTime.MinValue
             ? 0
-            : (DateTime.UtcNow - _lastShutdownAt).TotalSeconds;
+            : Math.Max(0, (DateTime.UtcNow - _lastShutdownAt).TotalSeconds);
         _connected      = true;
         _lastShutdownAt = DateTime.MinValue;
         _meter?.RecordConnectionRecovery(ComponentName, _endpoint, outcome: "succeeded", duration);
@@ -268,6 +274,9 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
 
     public void Dispose()
     {
+        // Mark before detaching / closing so a non-Application shutdown surfaced during
+        // close (broker already dead) is suppressed by the handler's _disposing guard.
+        _disposing = true;
         if (_connection is not null)
         {
             _connection.ConnectionShutdownAsync -= OnConnectionShutdownAsync;
@@ -275,8 +284,8 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         }
         _stateGaugeSubscription?.Dispose();
         _buffer.Writer.TryComplete();
-        _channel?.CloseAsync().GetAwaiter().GetResult();
-        _connection?.CloseAsync().GetAwaiter().GetResult();
+        try { _channel?.CloseAsync().GetAwaiter().GetResult();    } catch { /* may already be closed */ }
+        try { _connection?.CloseAsync().GetAwaiter().GetResult(); } catch { /* may already be closed */ }
         _channel?.Dispose();
         _connection?.Dispose();
     }

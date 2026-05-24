@@ -115,6 +115,30 @@ public class KafkaRecoveryMetricsTests : IAsyncDisposable
     }
 
     [Test]
+    public async Task Publisher_UnreachableBroker_NoFatalDisconnect_NoRebuild()
+    {
+        // Point at a port that has nothing listening. librdkafka emits non-fatal
+        // transport errors continuously while trying to bootstrap. The publisher SHALL NOT
+        // treat these as a fault — _faultTicks stays 0, no disconnect counter, no rebuild.
+        // This verifies the `!error.IsFatal` short-circuit in OnError.
+        using var publisher = new KafkaPublisher(new KafkaPublisherOptions
+        {
+            BootstrapServers = "127.0.0.1:1",   // nothing here
+            Topic            = "unreachable-test"
+        }, loggerFactory: null, meter: _meter);
+
+        await publisher.InitializeAsync();
+        // Give librdkafka time to attempt the bootstrap connection and emit several
+        // non-fatal `Local_AllBrokersDown` / `Local_Transport` errors.
+        await Task.Delay(2_000);
+
+        Assert.That(_capture.SumOf("raytree.connection.disconnects", "kafka.publisher"), Is.EqualTo(0),
+            "non-fatal transient errors MUST NOT increment the disconnect counter");
+        Assert.That(_capture.SumOf("raytree.connection.recoveries", "kafka.publisher"), Is.EqualTo(0),
+            "without a fatal error there's nothing to recover from — no recovery should be emitted");
+    }
+
+    [Test]
     public async Task Publisher_CleanDispose_DoesNotEmitDisconnectOrRecovery()
     {
         var topic = $"dispose-smoke-{Guid.NewGuid():N}";

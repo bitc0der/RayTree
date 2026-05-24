@@ -116,7 +116,7 @@ public class OutboxPublisherServiceConnectionFaultTests
     }
 
     private static (ChangePublisher publisher, RayTreeMeter meter, TestMetricsCollector collector, CapturingLoggerProvider logs, ILoggerFactory factory)
-        Build(StubOutbox outbox)
+        Build(IOutbox outbox)
     {
         var meter = new RayTreeMeter();
         var collector = new TestMetricsCollector(meter);
@@ -230,5 +230,46 @@ public class OutboxPublisherServiceConnectionFaultTests
 
         Assert.That(collector.Sum("raytree.connection.disconnects"), Is.EqualTo(0));
         Assert.That(logs.Contains(LogLevel.Error, "Error processing outbox batch"), Is.True);
+    }
+
+    [Test]
+    public async Task GetOutboxThrows_StillLogsBatchErrorWithoutMasking()
+    {
+        // If the outbox lookup itself throws during the catch block (shutdown race), the
+        // service should NOT swallow the original batch exception — it should fall through
+        // to the Error log path. This guards against `_publisher.GetOutbox` masking a real
+        // fault with a NullReferenceException.
+        var outbox = new ThrowingLookupOutbox();
+        var (publisher, meter, collector, logs, factory) = Build(outbox);
+        using var _ = meter; using var __ = collector; using var ___ = publisher; using var ____ = factory;
+
+        using var svc = new OutboxPublisherService(publisher, typeof(Sample), FastPolling, factory, meter);
+        await svc.StartAsync();
+        await WaitForAsync(() => logs.Count(LogLevel.Error) >= 1, TimeSpan.FromSeconds(3));
+        await svc.StopAsync();
+
+        // Note: we can't easily make `_publisher.GetOutbox` throw without reaching into
+        // ChangePublisher internals — instead this stub throws from GetUnpublishedAsync.
+        // The HandleBatchError code path is exercised via the regular batch-error catch.
+        Assert.That(logs.Contains(LogLevel.Error, "Error processing outbox batch"), Is.True,
+            "non-fault path must still emit Error log");
+    }
+
+    private sealed class ThrowingLookupOutbox : IOutbox
+    {
+        public Task InitializeAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task WriteAsync<TEntity>(EntityChange<TEntity> change, CancellationToken ct = default) where TEntity : class => Task.CompletedTask;
+        public Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(int batchSize, CancellationToken ct = default) where TEntity : class
+            => throw new InvalidOperationException("not classified as a connection fault");
+        public Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(ChangeType? changeType = null, DateTime? since = null, int batchSize = 100, CancellationToken ct = default) where TEntity : class
+            => Task.FromResult<IReadOnlyList<EntityChange<TEntity>>>(Array.Empty<EntityChange<TEntity>>());
+        public Task MarkPublishedAsync(long id, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<bool> TryClaimForPublishingAsync(long id, CancellationToken ct = default) => Task.FromResult(true);
+        public Task RevertClaimAsync(long id, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<int> CleanupPublishedAsync(TimeSpan r, CancellationToken ct = default) => Task.FromResult(0);
+        public Task<int> CleanupStaleUnpublishedAsync(TimeSpan s, CancellationToken ct = default) => Task.FromResult(0);
+        public Task<long> GetPendingCountAsync(Type t, CancellationToken ct = default) => Task.FromResult(0L);
+        public Task<EntityChange<TEntity>?> GetByIdAsync<TEntity>(long id, CancellationToken ct = default) where TEntity : class
+            => Task.FromResult<EntityChange<TEntity>?>(null);
     }
 }

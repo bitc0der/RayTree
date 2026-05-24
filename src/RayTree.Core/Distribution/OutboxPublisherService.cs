@@ -313,8 +313,16 @@ public class OutboxPublisherService : IDisposable
             _                                                          => ex
         };
 
-        var outbox = _publisher.GetOutbox(_entityType);
-        if (outbox.IsConnectionFault(rootCause) && outbox.ConnectionComponent is { } component)
+        // Resolve the outbox defensively — during shutdown / disposal `GetOutbox` could
+        // itself throw. If it does, we don't want to mask the real batch error with a
+        // lookup failure, so fall through to the existing Error path.
+        IOutbox? outbox = null;
+        try { outbox = _publisher.GetOutbox(_entityType); }
+        catch { /* fall through to non-classified path below */ }
+
+        if (outbox is not null
+            && outbox.IsConnectionFault(rootCause)
+            && outbox.ConnectionComponent is { } component)
         {
             var endpoint = outbox.ConnectionEndpoint ?? "<unknown>";
             if (!_outboxUnhealthy)
@@ -339,15 +347,31 @@ public class OutboxPublisherService : IDisposable
     /// </summary>
     private void EmitOutboxRecovered()
     {
-        var outbox    = _publisher.GetOutbox(_entityType);
-        var component = outbox.ConnectionComponent ?? "outbox";
-        var endpoint  = outbox.ConnectionEndpoint  ?? "<unknown>";
-        var duration  = (DateTime.UtcNow - _firstUnhealthyAt).TotalSeconds;
-        _meter.RecordConnectionRecovery(component, endpoint, outcome: "succeeded", duration);
-        _logger.LogInformation(
-            "Outbox connection recovered for {EntityType} ({Component} at {Endpoint}) after {Duration:F2}s",
-            _entityType.Name, component, endpoint, duration);
-        _outboxUnhealthy = false;
+        // Always clear the flag — even if metric emission throws or the outbox lookup
+        // fails (e.g. shutdown). Otherwise we'd loop emitting the recovery on every
+        // subsequent successful batch.
+        try
+        {
+            var outbox    = _publisher.GetOutbox(_entityType);
+            var component = outbox.ConnectionComponent ?? "outbox";
+            var endpoint  = outbox.ConnectionEndpoint  ?? "<unknown>";
+            // Clamp at zero to defend against backward clock jumps between disconnect and recovery.
+            var duration  = Math.Max(0, (DateTime.UtcNow - _firstUnhealthyAt).TotalSeconds);
+            _meter.RecordConnectionRecovery(component, endpoint, outcome: "succeeded", duration);
+            _logger.LogInformation(
+                "Outbox connection recovered for {EntityType} ({Component} at {Endpoint}) after {Duration:F2}s",
+                _entityType.Name, component, endpoint, duration);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to emit outbox recovery metric for {EntityType}; clearing unhealthy flag anyway",
+                _entityType.Name);
+        }
+        finally
+        {
+            _outboxUnhealthy = false;
+        }
     }
 
     public void Dispose()

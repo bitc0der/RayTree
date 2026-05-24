@@ -78,8 +78,13 @@ public class NotificationBasedPublisherRecoveryTests
         using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
             await ctx.Queue.Reader.ReadAsync(cts.Token);
 
-        // Give the LISTEN session time to register on the broker side before we kill it.
-        await Task.Delay(300);
+        // Wait until the state gauge reports 1 (LISTEN successfully attached). Polling
+        // is deterministic and exits as soon as ListenLoopAsync flips _listenerHealthy.
+        await WaitForAsync(
+            () => { _capture.RecordObservableInstruments();
+                    return _capture.LatestGaugeOf("raytree.connection.state", "postgres.notification") == 1; },
+            TimeSpan.FromSeconds(5),
+            "LISTEN session attached (gauge reports 1)");
 
         // Act — terminate the listener's backend process. pg_terminate_backend kills the
         // backend and closes the TCP connection so WaitAsync surfaces the drop on the next
@@ -170,6 +175,48 @@ public class NotificationBasedPublisherRecoveryTests
         Assert.That(_capture.SumOf("raytree.connection.disconnects", "postgres.notification"),
             Is.GreaterThanOrEqualTo(1),
             "disconnect must precede exhausted recovery");
+
+        await ctx.Publisher.StopAsync();
+    }
+
+    [Test]
+    public async Task RecoveryDisabled_DoesNotReconnect_AfterListenConnectionKilled()
+    {
+        // When ConnectionRecovery.Enabled = false, the listener loop SHALL exit on a
+        // connection fault rather than try to reconnect. The fallback polling loop keeps
+        // running and is responsible for delivery — the LISTEN fast-path stays cold until
+        // process restart, by design.
+        var channel = $"channel_disabled_{Guid.NewGuid():N}";
+        await using var ctx = await BuildPublisherAsync(channel,
+            recovery: new ConnectionRecoveryOptions { Enabled = false });
+
+        await ctx.Publisher.StartAsync();
+
+        // Poll until LISTEN attaches (gauge = 1) instead of a fixed warm-up delay.
+        await WaitForAsync(
+            () => { _capture.RecordObservableInstruments();
+                    return _capture.LatestGaugeOf("raytree.connection.state", "postgres.notification") == 1; },
+            TimeSpan.FromSeconds(5),
+            "LISTEN session attached");
+
+        await TerminateListenBackendsAsync(channel);
+
+        // With Enabled = false, ListenLoopAsync exits on the first fault. Wait until the
+        // task is done — at that point we have a strong invariant that no further
+        // recovery metrics CAN fire. Replaces a 2s blind delay with a polling check that
+        // exits as soon as the loop is provably done (typically within a few hundred ms).
+        await WaitForAsync(
+            () => !ctx.Publisher.IsRunning,
+            TimeSpan.FromSeconds(10),
+            "ListenLoopAsync to exit (Enabled = false short-circuits reconnect)");
+
+        // Assert: disconnect fired, no recovery (succeeded or exhausted) was attempted.
+        Assert.That(_capture.SumOf("raytree.connection.disconnects", "postgres.notification"), Is.GreaterThanOrEqualTo(1),
+            "disconnect SHALL still be observed even with recovery disabled");
+        Assert.That(_capture.SumOf("raytree.connection.recoveries", "postgres.notification", outcome: "succeeded"),
+            Is.EqualTo(0), "Enabled = false SHALL skip reconnect — no succeeded recovery");
+        Assert.That(_capture.SumOf("raytree.connection.recoveries", "postgres.notification", outcome: "exhausted"),
+            Is.EqualTo(0), "Enabled = false SHALL skip reconnect — no exhausted recovery");
 
         await ctx.Publisher.StopAsync();
     }

@@ -18,7 +18,10 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
     private readonly SemaphoreSlim _buildLock = new(initialCount: 1, maxCount: 1);
     private readonly IDisposable? _stateGaugeSubscription;
 
-    private IProducer<string, byte[]>? _producer;
+    // volatile so the connection-state gauge callback (foreign thread, no lock) sees the
+    // latest reference rather than a JIT-cached read. Assignments under _buildLock provide
+    // a release barrier; the gauge does a Volatile.Read for the matching acquire.
+    private volatile IProducer<string, byte[]>? _producer;
 
     // 0 means "healthy". Any other value is the UTC ticks of the first fatal error in the
     // current fault cycle — used as both the "rebuild requested" signal and the start of
@@ -96,7 +99,10 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
             var faultTicks = Interlocked.Exchange(ref _faultTicks, 0);
             if (faultTicks != 0)
             {
-                var duration = (DateTime.UtcNow - new DateTime(faultTicks, DateTimeKind.Utc)).TotalSeconds;
+                // Clamp at 0 to defend against NTP-driven backward clock jumps between the
+                // fault stamp and rebuild — keeps the histogram from recording negatives.
+                var duration = Math.Max(0,
+                    (DateTime.UtcNow - new DateTime(faultTicks, DateTimeKind.Utc)).TotalSeconds);
                 _meter?.RecordConnectionRecovery(ComponentName, _options.BootstrapServers,
                     outcome: "succeeded", duration);
                 _logger.LogInformation(

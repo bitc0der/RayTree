@@ -28,6 +28,10 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
     private volatile bool _connected;
     private DateTime _lastShutdownAt = DateTime.MinValue;
     private readonly IDisposable? _stateGaugeSubscription;
+    // Set true from Dispose() before initiating CloseAsync so the shutdown handler can
+    // suppress spurious disconnect metrics even if the SDK reports the shutdown with
+    // Initiator=Library (e.g. broker already dead when Dispose ran).
+    private volatile bool _disposing;
 
     public RabbitMqPublisher(
         RabbitMqPublisherOptions options,
@@ -165,10 +169,11 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 
     private Task OnConnectionShutdownAsync(object sender, ShutdownEventArgs e)
     {
-        // Application-initiated shutdowns (Dispose/Close) are part of normal teardown,
-        // not a recovery event. Skip metric + log; the connected state is irrelevant
-        // because the publisher is going away.
-        if (e.Initiator == ShutdownInitiator.Application)
+        // Suppress metric + log when shutdown is part of our own teardown — either because
+        // the SDK reports the shutdown with Initiator=Application (clean Close path) OR
+        // because Dispose has begun but the broker happened to be dead first so the SDK
+        // reports a non-Application initiator. _disposing covers the latter race.
+        if (e.Initiator == ShutdownInitiator.Application || _disposing)
             return Task.CompletedTask;
 
         _connected      = false;
@@ -182,9 +187,11 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 
     private Task OnRecoverySucceededAsync(object sender, AsyncEventArgs e)
     {
+        // Clamp at zero — backward NTP-driven clock jumps would otherwise feed a negative
+        // value into the duration histogram.
         var duration = _lastShutdownAt == DateTime.MinValue
             ? 0
-            : (DateTime.UtcNow - _lastShutdownAt).TotalSeconds;
+            : Math.Max(0, (DateTime.UtcNow - _lastShutdownAt).TotalSeconds);
         _connected      = true;
         _lastShutdownAt = DateTime.MinValue;
         _meter?.RecordConnectionRecovery(ComponentName, _endpoint, outcome: "succeeded", duration);
@@ -206,6 +213,12 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 
     public void Dispose()
     {
+        // Mark disposal BEFORE detaching handlers and closing the connection — if the SDK
+        // surfaces a non-Application shutdown during close (e.g. broker already crashed),
+        // the still-attached handler short-circuits on _disposing rather than recording a
+        // spurious disconnect.
+        _disposing = true;
+
         if (_connection is not null)
         {
             _connection.ConnectionShutdownAsync       -= OnConnectionShutdownAsync;
@@ -214,8 +227,8 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
         }
 
         _stateGaugeSubscription?.Dispose();
-        _channel?.CloseAsync().GetAwaiter().GetResult();
-        _connection?.CloseAsync().GetAwaiter().GetResult();
+        try { _channel?.CloseAsync().GetAwaiter().GetResult();    } catch { /* may already be closed */ }
+        try { _connection?.CloseAsync().GetAwaiter().GetResult(); } catch { /* may already be closed */ }
         _channel?.Dispose();
         _connection?.Dispose();
         _semaphore.Dispose();
