@@ -135,6 +135,14 @@ See `CLAUDE.md` for deep architecture documentation, plugin contracts, and key d
   `NullLoggerFactory` produces zero allocations and zero output.
 - See [docs/configuration.md#what-gets-logged](docs/configuration.md#what-gets-logged) for the full per-class log
   inventory (level, trigger, structured properties).
+- **Connection-recovery logs** (added by the `add-connection-recovery` change) live in the runtime service classes that
+  own the connection (`NotificationBasedPublisher`, `OutboxPublisherService`, `KafkaPublisher`, `KafkaConsumer`,
+  `RabbitMqPublisher`) and use those classes' existing non-nullable `ILogger<T>`. **Exception:** `RabbitMqConsumer` has
+  no logger field (pre-existing exception to the logging-placement rule — message-receive errors silently NACK + requeue
+  with no useful context to log). Its connection disconnect/recovery events are therefore observable **only** via the
+  `raytree.connection.*` metric instruments; no log output. Plugins that emit connection-recovery metrics do so through
+  the public `RayTreeMeter.RecordConnectionDisconnect` / `RecordConnectionRecovery` / `RegisterConnectionStateGauge`
+  facade methods — no `InternalsVisibleTo` is granted to plugin assemblies for this purpose.
 
 ### Testing Conventions
 

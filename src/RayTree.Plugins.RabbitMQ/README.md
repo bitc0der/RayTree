@@ -319,7 +319,7 @@ The delivery tag is broker-private state — `ChangeSubscriber` shouldn't know a
 | Situation | Behaviour |
 |---|---|
 | `ParseEnvelope` throws (malformed message) | `BasicNack(requeue: true)` — broker requeues; **no log** (acknowledged exception to the project's logging-placement rule: no useful context is available inside the RabbitMQ delivery callback, and NACK/requeue is the only correct recovery) |
-| Broker connection drops | The `IConnection` is closed; unacknowledged messages are returned to the queue automatically. A new connection must be established (typically by recreating the consumer) |
+| Broker connection drops | `RabbitMQ.Client.AutomaticRecoveryEnabled` (library default — RayTree does **not** disable it) transparently rebuilds the connection, channel, topology, and consumer registration. RayTree subscribes to the SDK's `ConnectionShutdownAsync` / `RecoverySucceededAsync` events to emit `raytree.connection.disconnects` / `raytree.connection.recoveries` metrics keyed on `component = "rabbitmq.publisher"` or `"rabbitmq.consumer"`. The library's `NetworkRecoveryInterval` controls retry timing; RayTree's `ConnectionRecoveryOptions` is not consumed by the RabbitMQ plugin. Unacknowledged messages are returned to the queue automatically per AMQP semantics. |
 | `RabbitMqConsumer.Dispose` | Closes channel + connection synchronously; any in-flight unacked deliveries are requeued by the broker |
 
 ### Tuning notes

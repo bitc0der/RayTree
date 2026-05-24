@@ -82,11 +82,11 @@
 
 ## 11. Docs
 
-- [ ] 11.1 Update `CLAUDE.md` plugin descriptions for `NotificationBasedPublisher`, `KafkaPublisher`, `KafkaConsumer`, `RabbitMqPublisher`, `RabbitMqConsumer` with the new `ConnectionRecovery` option (where applicable), the metric instruments, and the fact that RabbitMQ recovery is performed by the SDK
-- [ ] 11.2 Update [docs/opentelemetry-metrics.md](docs/opentelemetry-metrics.md) with the four new instruments, tag semantics, and suggested histogram bucket boundaries (`[0.1, 0.5, 1, 2, 5, 10, 30, 60, 120]` s)
-- [ ] 11.3 Update `AGENTS.md` logging-placement rule to call out that connection-recovery logs are runtime-service logs with non-null `ILogger<T>` (and that `RabbitMqConsumer` is silent for logs but observable in metrics)
-- [ ] 11.4 Update `src/RayTree.Plugins.RabbitMQ/README.md` "Broker connection drops" row to reflect that the SDK recovers automatically and RayTree observes it
-- [ ] 11.5 Update `src/RayTree.Plugins.Kafka/README.md` and `src/RayTree.Plugins.PostgreSQL/README.md` (if it exists) with the new recovery sections
+- [x] 11.1 Updated `CLAUDE.md` — added consolidated "Connection recovery" subsection between EF Core integration and Key Design Decisions covering all five plugins, the shared metric surface, the no-IVT architectural rule, the retry-math-duplication trade-off, and the named-options binding shape.
+- [x] 11.2 Updated `docs/opentelemetry-metrics.md` — added "Connection recovery" subsection with the four new instruments, component-vs-endpoint tag semantics, the `postgres.notification` vs `postgres.outbox` distinction, RabbitMQ observe-only note, `[0.1, 0.5, 1, 2, 5, 10, 30, 60, 120]` s histogram view, and four operator-grade Prometheus alert queries.
+- [x] 11.3 Updated `AGENTS.md` — extended the Logging section with the connection-recovery placement rule, the `RabbitMqConsumer` silent-but-observable-via-metrics exception, and the no-IVT contract for plugin metric emission.
+- [x] 11.4 Updated `src/RayTree.Plugins.RabbitMQ/README.md` — "Broker connection drops" row now describes SDK-driven recovery + RayTree-side event observation.
+- [x] 11.5 Updated `src/RayTree.Plugins.Kafka/README.md` — error-handling table now describes consumer + publisher fatal-error rebuild paths. Updated `src/RayTree.Plugins.PostgreSQL/README.md` — new "Connection recovery" section explaining `postgres.notification` (active reconnect) vs `postgres.outbox` (passive observation) shapes and why write paths intentionally don't retry.
 
 ## 12. CI
 
