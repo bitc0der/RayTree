@@ -53,13 +53,19 @@ Three out of five are already correct. Two have real bugs. The earlier draft of 
 
 **Trade-off**: future plugins (NATS, Pulsar, Azure Service Bus) will each write their own recovery code if they need it. We accept this — the alternative is a load-bearing abstraction designed for hypothetical future plugins, which `AGENTS.md` also explicitly warns against ("Don't design for hypothetical future requirements").
 
-### 2. One internal helper for the backoff loop
+### 2. No shared retry helper in Core — each plugin implements its own
 
-**Decision**: extract one `internal static class ConnectionRetry` in `RayTree.Core/Resilience/` with a single `RunAsync(Func<CancellationToken, Task> attempt, ConnectionRecoveryOptions options, string component, string endpoint, RayTreeMeter meter, ILogger logger, CancellationToken ct)` method. Used by Postgres and Kafka — two call-sites — but the same backoff math, the same metric/log emission, the same cancellation semantics. Two copies of the loop is the borderline; one helper is fine.
+**Decision**: retry lives in each plugin that needs it. `RayTree.Core` does not own a `ConnectionRetry` helper or any backoff math. The two plugins that own retry code (Postgres LISTEN, Kafka) each implement their own inline exponential-backoff loop (~20 lines each) using only Core's **public** API — `ConnectionRecoveryOptions` for tuning, `RayTreeMeter.RecordConnectionDisconnect` / `RecordConnectionRecovery` for metric emission.
 
-**Why**: this is the line between "useful helper" and "abstraction." A static method taking everything it needs as parameters has no surface area to learn — it's plumbing, not architecture. `RayTreeMeter` already follows the same shape (it's a class that owns instruments and exposes static-ish helpers via instance methods).
+**Why**:
+- Plugin assemblies should consume Core via its public API only. A shared `internal static ConnectionRetry` would require `InternalsVisibleTo` entries for `RayTree.Plugins.Kafka` and any future plugin needing recovery — that's an architectural smell (Core leaking implementation details to plugins it doesn't own).
+- The duplication is small (~20 LoC per plugin) and *honest* — each plugin's loop has plugin-specific concerns (Postgres reissues `LISTEN`; Kafka rebuilds a native handle; their dispose/build steps differ even if the timing math doesn't).
+- Drifts in the backoff math between two plugins are easily caught by integration tests that assert metric emission shape (`raytree.connection.recoveries{outcome="succeeded"}` is the contract; how each plugin gets there is its own concern).
+- Public surface stays small: one config record, three meter facade methods. Adding a future plugin (NATS, etc.) requires zero changes to Core.
 
-**Alternative considered**: inline the loop twice. Rejected — the metric emission has six measurement points (disconnect counter, success counter+duration, exhaustion counter+duration, state gauge updates) that would otherwise drift between the two copies.
+**Alternative considered**: extract a shared `internal static ConnectionRetry` helper used via `InternalsVisibleTo`. Rejected — see above. The convenience of one helper is not worth the precedent of plugins reaching into Core internals for non-trivial logic.
+
+**Alternative considered**: extract a `public static ConnectionRetry` helper. Rejected — making it public commits us to a stable retry shape as a Core API. We don't yet know whether plugins will want subtly different shapes (jitter strategies, attempt-count semantics, structured-logging field names). Per-plugin implementations let each plugin evolve their loop independently; if a true common shape emerges over time, we can extract it then.
 
 ### 3. RabbitMQ: observe, don't own
 
@@ -143,7 +149,7 @@ This asymmetry should be explicit in `CLAUDE.md` so future contributors don't tr
 
 ## Migration Plan
 
-1. **Land the core record + helper.** `ConnectionRecoveryOptions` + `ConnectionRetry` static class + four new `RayTreeMeter` instruments. No behaviour change yet.
+1. **Land the core surface.** `ConnectionRecoveryOptions` + four new `RayTreeMeter` instruments with their public facade methods. No behaviour change yet — no plugin consumes them.
 2. **Patch Postgres.** Add `ReconnectAsync` to `NotificationBasedPublisher`. Add `IsConnectionFault` classifier. Integration test against a Testcontainers Postgres that we restart mid-stream.
 3. **Patch Kafka.** Add error-handler-disposes-producer to `KafkaPublisher`. Add poll-thread rebuild to `KafkaConsumer`. Integration tests against a Testcontainers Kafka with simulated fatal error.
 4. **Hook RabbitMQ events.** Subscribe to the three event types in publisher + consumer; emit metrics + logs. No recovery code. Integration test asserts metric emission on broker restart (recovery itself is performed by the library).
@@ -156,4 +162,4 @@ This asymmetry should be explicit in `CLAUDE.md` so future contributors don't tr
 
 - Should `raytree.connection.state` be per `(component, endpoint)` or per `component` only? Current plan: per `(component, endpoint)` so multi-broker deployments are observable. Confirm with operator review.
 - Do we want `ConnectionRecoveryOptions.OnExhausted` callback (or an event) so hosts can react to "we gave up"? Deferring — observability via metrics + logs is enough for v1; callbacks add surface area for an edge case.
-- Should `ConnectionRetry.RunAsync` accept a `TimeProvider` for testability, or is the `[NonParallelizable]` integration-test path sufficient? Current plan: yes, `TimeProvider` parameter (defaults to `TimeProvider.System`) so unit tests can use `FakeTimeProvider` deterministically.
+- ~~Should `ConnectionRetry.RunAsync` accept a `TimeProvider` for testability?~~ Moot — there is no shared retry helper. Each plugin's backoff loop is exercised by its own integration tests.

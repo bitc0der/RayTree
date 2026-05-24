@@ -18,7 +18,7 @@ RayTree has one real connection-recovery bug and one real connection-recovery ga
 
 - No `IExternalResource<TClient>` / `ManagedResource<TClient>` / per-plugin adapters. Two plugins genuinely need recovery code; an abstraction over two call-sites is ceremony, not reuse.
 - No disabling of `RabbitMQ.Client.AutomaticRecoveryEnabled`. The library already does the right thing.
-- No public `IConnectionRecoveryStrategy` interface. The retry shape lives in one internal static helper (`ConnectionRetry.RunAsync`) used by the two call-sites that need it.
+- No shared `ConnectionRetry` helper in Core. The retry loop lives **in each plugin that needs it** (Postgres LISTEN, Kafka publisher/consumer rebuild) as a ~20-line inline backoff loop. This is intentional duplication over leaking Core internals to plugin assemblies: plugins consume Core via its public API only — no new `InternalsVisibleTo` entries are added.
 - No `RedisDeduplicationStore` recovery code. `ConnectionMultiplexer` already recovers; instrumenting RayTree-side adds no value the multiplexer doesn't already expose.
 
 ## Capabilities
@@ -34,19 +34,18 @@ RayTree has one real connection-recovery bug and one real connection-recovery ga
 ## Impact
 
 - **Code (~180 new LoC across the repo)**:
-  - `src/RayTree.Core/Resilience/ConnectionRecoveryOptions.cs` — new public record.
-  - `src/RayTree.Core/Resilience/ConnectionRetry.cs` — new internal static helper (~40 LoC: backoff loop + metric/log emission).
-  - `src/RayTree.Core/Telemetry/RayTreeMeter.cs` — four new instruments + helper methods.
+  - `src/RayTree.Core/Resilience/ConnectionRecoveryOptions.cs` — new public class (pure config, no behaviour).
+  - `src/RayTree.Core/Telemetry/RayTreeMeter.cs` — four new instruments + **public** facade methods `RecordConnectionDisconnect`, `RecordConnectionRecovery`, `RegisterConnectionStateGauge` matching the existing `RecordPublishSuccess` / `RecordPayloadSize` public-facade pattern. Instruments stay internal; emission is public — no IVT exposure to plugins.
   - `src/RayTree.Core/Plugins/Outbox/IOutbox.cs` — three new default-implemented members (`IsConnectionFault`, `ConnectionComponent`, `ConnectionEndpoint`), all returning the no-op default.
   - `src/RayTree.Core/Tracking/OutboxPublisherService.cs` — update the existing batch-error catch block to consult `_outbox.IsConnectionFault`; emit disconnect/recovery metrics; demote log to `Warning` on connection-fault classification; track per-service `_outboxUnhealthy` flag for transition detection (~20 LoC).
-  - `src/RayTree.Plugins.PostgreSQL/Outbox/Notification/NotificationBasedPublisher.cs` — new `ReconnectAsync` (~25 LoC) + `IsConnectionFault` classifier; modify `ListenLoopAsync` catch block to call `ReconnectAsync`; update `FallbackPollingLoopAsync` catch block to consult the classifier per failed outbox and emit metrics (~10 LoC).
+  - `src/RayTree.Plugins.PostgreSQL/Outbox/Notification/NotificationBasedPublisher.cs` — new `ReconnectAsync` with an inline exponential-backoff loop bounded by `_options.ConnectionRecovery` (~25 LoC) + `IsConnectionFault` classifier; modify `ListenLoopAsync` catch block to call `ReconnectAsync`; update `FallbackPollingLoopAsync` catch block to consult the classifier per failed outbox and emit metrics (~10 LoC).
   - `src/RayTree.Plugins.PostgreSQL/Outbox/PostgreSqlOutbox.cs` — override the three new `IOutbox` members; share the connection-fault classifier with `NotificationBasedPublisher` (extract to an internal static helper).
-  - `src/RayTree.Plugins.Kafka/KafkaPublisher.cs` — register `SetErrorHandler`, dispose-on-fatal (~15 LoC).
-  - `src/RayTree.Plugins.Kafka/KafkaConsumer.cs` — fatal-exception catch + rebuild on poll thread (~25 LoC) + `IsConnectionFault` classifier.
+  - `src/RayTree.Plugins.Kafka/KafkaPublisher.cs` — register `SetErrorHandler`, dispose-on-fatal + inline exponential-backoff loop in the lazy build path bounded by `_options.ConnectionRecovery` (~30 LoC).
+  - `src/RayTree.Plugins.Kafka/KafkaConsumer.cs` — fatal-exception catch + inline exponential-backoff rebuild on poll thread bounded by `_options.ConnectionRecovery` (~35 LoC) + `IsConnectionFault` classifier.
   - `src/RayTree.Plugins.RabbitMQ/RabbitMqPublisher.cs` + `RabbitMqConsumer.cs` — subscribe to `RecoverySucceeded` / `ConnectionRecoveryError` / `ConnectionShutdownAsync` events; emit metrics only, no recovery code (~10 LoC each).
 - **Public API**: Additive only — one new type (`ConnectionRecoveryOptions`), one new property on `NotificationBasedPublisherOptions` / `KafkaPublisherOptions` / `KafkaConsumerOptions` (RabbitMQ options unchanged), three default-implemented members on `IOutbox` (no break for existing implementers — `InMemoryOutbox` and any third-party `IOutbox` inherit no-op defaults), four new meter instruments. No removals, no signature changes.
 - **Dependencies**: None added.
 - **Configuration**: Two new bindable sections (`ChangeTracking:Publisher:ConnectionRecovery`, `ChangeTracking:Subscriber:ConnectionRecovery`).
 - **Behavior**: Recovery for the two patched plugins is on by default with sensible backoff (`Enabled = true`, 1 s → 30 s, ×2, ±20% jitter, unlimited attempts). Opt out via `Enabled = false`. RabbitMQ behaviour is unchanged (library default already correct). Redis behaviour is unchanged.
-- **Tests**: New unit tests for `ConnectionRetry` backoff (deterministic via `TimeProvider`); new integration tests for the two patched plugins (Testcontainers — pause/restart the container, assert continuity and metric emission); new metric-event tests for the three RabbitMQ-side hooks (no broker needed — fake event firing).
+- **Tests**: Unit tests for `ConnectionRecoveryOptions` validation; integration tests for the two patched plugins (Testcontainers — pause/restart the container, assert continuity and metric emission); metric-event tests for the three RabbitMQ-side hooks (no broker needed — fake event firing). Backoff math is exercised by plugin integration tests rather than by isolated unit tests against a shared helper (no shared helper exists).
 - **Docs**: Update `CLAUDE.md` plugin descriptions, [docs/opentelemetry-metrics.md](docs/opentelemetry-metrics.md), per-plugin READMEs.
