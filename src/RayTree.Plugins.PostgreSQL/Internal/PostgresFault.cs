@@ -28,12 +28,24 @@ internal static class PostgresFault
         _                                                                       => false,
     };
 
+    // SqlState constants come from Npgsql so the list stays in sync with the
+    // canonical PostgreSQL error catalogue and is grep-friendly by name.
     private static bool IsConnectionLevelSqlState(string? sqlState) => sqlState switch
     {
-        // admin_shutdown / crash_shutdown / cannot_connect_now (server-driven termination)
-        "57P01" or "57P02" or "57P03" => true,
-        // connection_exception family (08xxx) — covers transport / handshake failures
-        "08000" or "08003" or "08006" or "08001" or "08004" or "08007" => true,
+        // Server-driven termination (Class 57 — operator_intervention).
+        PostgresErrorCodes.AdminShutdown      => true,   // 57P01
+        PostgresErrorCodes.CrashShutdown      => true,   // 57P02
+        PostgresErrorCodes.CannotConnectNow   => true,   // 57P03
+
+        // Connection exception family (Class 08) — transport / handshake failures.
+        PostgresErrorCodes.ConnectionException                          => true,   // 08000
+        PostgresErrorCodes.ConnectionDoesNotExist                       => true,   // 08003
+        PostgresErrorCodes.ConnectionFailure                            => true,   // 08006
+        PostgresErrorCodes.SqlClientUnableToEstablishSqlConnection      => true,   // 08001
+        PostgresErrorCodes.SqlServerRejectedEstablishmentOfSqlConnection => true,  // 08004
+        PostgresErrorCodes.TransactionResolutionUnknown                 => true,   // 08007
+        PostgresErrorCodes.ProtocolViolation                            => true,   // 08P01
+
         _ => false,
     };
 }

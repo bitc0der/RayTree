@@ -27,26 +27,29 @@ public class PostgresFaultTests
         Assert.That(PostgresFault.IsConnectionFault(ex), Is.True);
     }
 
-    [TestCase("57P01")]   // admin_shutdown
-    [TestCase("57P02")]   // crash_shutdown
-    [TestCase("57P03")]   // cannot_connect_now
-    [TestCase("08000")]   // connection_exception
-    [TestCase("08003")]   // connection_does_not_exist
-    [TestCase("08006")]   // connection_failure
-    [TestCase("08001")]   // sqlclient_unable_to_establish_sqlconnection
-    [TestCase("08004")]   // sqlserver_rejected_establishment_of_sqlconnection
-    [TestCase("08007")]   // transaction_resolution_unknown
+    // SqlState constants sourced from Npgsql.PostgresErrorCodes; the inline comments
+    // record the underlying SQLSTATE so the test reads grep-friendly against the catalogue.
+    [TestCase(PostgresErrorCodes.AdminShutdown)]                            // 57P01
+    [TestCase(PostgresErrorCodes.CrashShutdown)]                            // 57P02
+    [TestCase(PostgresErrorCodes.CannotConnectNow)]                         // 57P03
+    [TestCase(PostgresErrorCodes.ConnectionException)]                      // 08000
+    [TestCase(PostgresErrorCodes.ConnectionDoesNotExist)]                   // 08003
+    [TestCase(PostgresErrorCodes.ConnectionFailure)]                        // 08006
+    [TestCase(PostgresErrorCodes.SqlClientUnableToEstablishSqlConnection)]  // 08001
+    [TestCase(PostgresErrorCodes.SqlServerRejectedEstablishmentOfSqlConnection)] // 08004
+    [TestCase(PostgresErrorCodes.TransactionResolutionUnknown)]             // 08007
+    [TestCase(PostgresErrorCodes.ProtocolViolation)]                        // 08P01
     public void PostgresException_ConnectionSqlState_IsConnectionFault(string sqlState)
     {
         var ex = MakePostgresException(sqlState);
         Assert.That(PostgresFault.IsConnectionFault(ex), Is.True, $"SqlState {sqlState} should be a connection fault");
     }
 
-    [TestCase("23505")]   // unique_violation — application-level
-    [TestCase("23503")]   // foreign_key_violation
-    [TestCase("42P01")]   // undefined_table
-    [TestCase("42703")]   // undefined_column
-    [TestCase("28000")]   // invalid_authorization_specification
+    [TestCase(PostgresErrorCodes.UniqueViolation)]                          // 23505 — application-level
+    [TestCase(PostgresErrorCodes.ForeignKeyViolation)]                      // 23503
+    [TestCase(PostgresErrorCodes.UndefinedTable)]                           // 42P01
+    [TestCase(PostgresErrorCodes.UndefinedColumn)]                          // 42703
+    [TestCase(PostgresErrorCodes.InvalidAuthorizationSpecification)]        // 28000
     public void PostgresException_ApplicationSqlState_IsNotConnectionFault(string sqlState)
     {
         var ex = MakePostgresException(sqlState);
