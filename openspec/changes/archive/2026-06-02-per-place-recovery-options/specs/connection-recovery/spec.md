@@ -18,7 +18,7 @@ Each plugin that owns a connection-recovery loop SHALL define its **own** public
 #### Scenario: Core exposes no shared recovery-options type
 - **WHEN** a caller inspects `RayTree.Core` (e.g. via reflection or autocomplete)
 - **THEN** no `ConnectionRecoveryOptions` type SHALL be present in the `RayTree.Core.Resilience` namespace
-- **AND** the connection-metric facade (`RayTreeMeter.RecordConnectionDisconnect` / `RecordConnectionRecovery` / `RegisterConnectionStateGauge`) SHALL remain unchanged.
+- **AND** the connection-metric facade (`RayTreeMeter.RecordConnectionDisconnect` / `RecordConnectionRecovery` / `RegisterConnectionStateGauge`) SHALL NOT be present — those methods are removed along with the `raytree.connection.*` instruments.
 
 #### Scenario: Disabled options short-circuit recovery
 - **WHEN** `Enabled = false` AND the owning Postgres or Kafka plugin observes a connection-fault exception
