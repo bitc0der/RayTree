@@ -4,6 +4,39 @@
 
 The system SHALL expose `EntityChangeTracker.BeginSession()` returning a `ChangeSession` that buffers entity changes and is committed or discarded as a unit. `ChangeSession` SHALL implement `IAsyncDisposable`; disposing a session that has not been committed SHALL discard all buffered changes without persisting them.
 
+Example:
+
+```csharp
+// Atomic multi-entity persistence: all rows written, or none.
+await using var session = tracker.BeginSession();
+
+await session.TrackInsertAsync(order);
+await session.TrackInsertAsync(orderLine);
+await session.TrackUpdateAsync(inventory);
+
+await session.CommitAsync(ct);
+// Leaving the `await using` block without CommitAsync discards the buffered changes.
+```
+
+Expected public surface:
+
+```csharp
+public sealed class ChangeSession : IAsyncDisposable
+{
+    public Guid CorrelationId { get; set; }   // defaulted to a new Guid, overridable before first track
+
+    public Task TrackInsertAsync<TEntity>(TEntity entity, CancellationToken ct = default) where TEntity : class;
+    public Task TrackUpdateAsync<TEntity>(TEntity entity, CancellationToken ct = default) where TEntity : class;
+    public Task TrackDeleteAsync<TEntity>(TEntity entity, CancellationToken ct = default) where TEntity : class;
+
+    public Task CommitAsync(CancellationToken ct = default);
+    public ValueTask DisposeAsync();
+}
+
+// on EntityChangeTracker:
+public ChangeSession BeginSession(Guid? correlationId = null);
+```
+
 #### Scenario: Begin a session
 
 - **WHEN** a caller invokes `tracker.BeginSession()`
@@ -43,6 +76,22 @@ On `CommitAsync`, the system SHALL persist all changes buffered during the sessi
 
 A `ChangeSession` SHALL carry a `CorrelationId` that defaults to a newly generated `Guid` and MAY be overridden by the caller before any change is buffered. Every change buffered in the session SHALL be stamped with the session's `CorrelationId`, overriding the per-change default.
 
+Example:
+
+```csharp
+// Option A: supply the correlation id at creation.
+await using var session = tracker.BeginSession(correlationId: command.RequestId);
+
+// Option B: set it before tracking anything.
+await using var session = tracker.BeginSession();
+session.CorrelationId = command.RequestId;
+
+await session.TrackInsertAsync(order);
+await session.TrackUpdateAsync(inventory);
+await session.CommitAsync(ct);
+// → every persisted change carries command.RequestId as its CorrelationId.
+```
+
 #### Scenario: Default correlation is applied to all changes
 
 - **WHEN** a caller buffers multiple changes in a session without overriding the correlation id
@@ -56,6 +105,26 @@ A `ChangeSession` SHALL carry a `CorrelationId` that defaults to a newly generat
 ### Requirement: Session change tracking API
 
 `ChangeSession` SHALL expose `TrackInsertAsync<TEntity>`, `TrackUpdateAsync<TEntity>`, and `TrackDeleteAsync<TEntity>` (each `where TEntity : class`) that buffer the corresponding change without writing to the outbox until `CommitAsync` is called. These methods SHALL derive `EntityType`, `EntityId`, and `State` consistently with the existing `EntityChangeTracker.TrackXxxAsync` methods.
+
+Example (realistic service method):
+
+```csharp
+public async Task PlaceOrderAsync(PlaceOrder cmd, CancellationToken ct)
+{
+    await using var session = tracker.BeginSession(correlationId: cmd.CommandId);
+
+    var order = new Order { Id = cmd.OrderId, CustomerId = cmd.CustomerId, Total = cmd.Total };
+    await session.TrackInsertAsync(order);
+
+    foreach (var line in cmd.Lines)
+        await session.TrackInsertAsync(new OrderLine { Id = line.Id, OrderId = order.Id, Sku = line.Sku });
+
+    var stock = await _inventory.ReserveAsync(cmd.Lines, ct); // user I/O — no DB txn held yet
+    await session.TrackUpdateAsync(stock);
+
+    await session.CommitAsync(ct); // order + lines + inventory committed in one transaction
+}
+```
 
 #### Scenario: Track methods buffer rather than write immediately
 
