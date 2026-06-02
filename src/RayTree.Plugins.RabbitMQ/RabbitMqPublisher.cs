@@ -4,49 +4,35 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Publisher;
-using RayTree.Core.Telemetry;
 
 namespace RayTree.Plugins.RabbitMQ;
 
 public class RabbitMqPublisher : IQueuePublisher, IDisposable
 {
-    private const string ComponentName = "rabbitmq.publisher";
-
     private readonly RabbitMqPublisherOptions _options;
     private readonly ILogger<RabbitMqPublisher> _logger;
-    private readonly RayTreeMeter? _meter;
     private readonly string _endpoint;
     private IConnection? _connection;
     private IChannel? _channel;
 
     private readonly SemaphoreSlim _semaphore = new(initialCount: 1, maxCount: 1);
 
-    // Connection state for the connection.state gauge. Set to true once GetChannelAsync
-    // returns a healthy channel; flipped by the SDK's ConnectionShutdownAsync /
-    // RecoverySucceededAsync events. RabbitMQ.Client owns the actual recovery (we have
-    // AutomaticRecoveryEnabled = true by default); we only observe.
-    private volatile bool _connected;
+    // Timestamp of the last non-Application shutdown, used to compute the recovery
+    // duration printed in the recovery log. RabbitMQ.Client owns the actual recovery
+    // (AutomaticRecoveryEnabled = true by default); we only observe via logs.
     private DateTime _lastShutdownAt = DateTime.MinValue;
-    private readonly IDisposable? _stateGaugeSubscription;
     // Set true from Dispose() before initiating CloseAsync so the shutdown handler can
-    // suppress spurious disconnect metrics even if the SDK reports the shutdown with
+    // suppress spurious disconnect logs even if the SDK reports the shutdown with
     // Initiator=Library (e.g. broker already dead when Dispose ran).
     private volatile bool _disposing;
 
     public RabbitMqPublisher(
         RabbitMqPublisherOptions options,
-        ILoggerFactory?          loggerFactory = null,
-        RayTreeMeter?            meter         = null)
+        ILoggerFactory?          loggerFactory = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger  = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RabbitMqPublisher>();
-        _meter   = meter;
         _endpoint = $"{_options.HostName}:{_options.Port}";
-
-        _stateGaugeSubscription = _meter?.RegisterConnectionStateGauge(
-            component: ComponentName,
-            endpoint:  _endpoint,
-            getState:  () => _connected ? 1 : 0);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -76,9 +62,9 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 
             _connection = await factory.CreateConnectionAsync(cancellationToken: cancellationToken);
 
-            // Hook SDK recovery events for metric/log observability. RabbitMQ.Client owns
-            // the actual recovery via AutomaticRecoveryEnabled = true (library default);
-            // we only emit raytree.connection.* on the transitions.
+            // Hook SDK recovery events for log observability. RabbitMQ.Client owns the
+            // actual recovery via AutomaticRecoveryEnabled = true (library default); we
+            // only emit Warning/Information logs on the transitions.
             _connection.ConnectionShutdownAsync       += OnConnectionShutdownAsync;
             _connection.RecoverySucceededAsync        += OnRecoverySucceededAsync;
             _connection.ConnectionRecoveryErrorAsync  += OnConnectionRecoveryErrorAsync;
@@ -106,7 +92,6 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
                         cancellationToken: cancellationToken
                     );
 
-                _connected = true;
                 return _channel;
             }
             catch
@@ -169,16 +154,14 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
 
     private Task OnConnectionShutdownAsync(object sender, ShutdownEventArgs e)
     {
-        // Suppress metric + log when shutdown is part of our own teardown — either because
+        // Suppress the log when shutdown is part of our own teardown — either because
         // the SDK reports the shutdown with Initiator=Application (clean Close path) OR
         // because Dispose has begun but the broker happened to be dead first so the SDK
         // reports a non-Application initiator. _disposing covers the latter race.
         if (e.Initiator == ShutdownInitiator.Application || _disposing)
             return Task.CompletedTask;
 
-        _connected      = false;
         _lastShutdownAt = DateTime.UtcNow;
-        _meter?.RecordConnectionDisconnect(ComponentName, _endpoint);
         _logger.LogWarning(
             "RabbitMQ publisher connection to {Endpoint} lost (code {ReplyCode}, {ReplyText}); library is recovering",
             _endpoint, e.ReplyCode, e.ReplyText);
@@ -192,9 +175,7 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
         var duration = _lastShutdownAt == DateTime.MinValue
             ? 0
             : Math.Max(0, (DateTime.UtcNow - _lastShutdownAt).TotalSeconds);
-        _connected      = true;
         _lastShutdownAt = DateTime.MinValue;
-        _meter?.RecordConnectionRecovery(ComponentName, _endpoint, outcome: "succeeded", duration);
         _logger.LogInformation(
             "RabbitMQ publisher connection to {Endpoint} recovered after {Duration:F2}s",
             _endpoint, duration);
@@ -204,7 +185,8 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
     private Task OnConnectionRecoveryErrorAsync(object sender, ConnectionRecoveryErrorEventArgs e)
     {
         // The library will keep retrying; this fires once per failed internal attempt.
-        // No metric — only the cycle outcome is counted via RecoverySucceeded/Disconnect.
+        // No log beyond Information — the cycle outcome is reported by
+        // OnConnectionShutdownAsync / OnRecoverySucceededAsync.
         _logger.LogInformation(e.Exception,
             "RabbitMQ publisher recovery attempt failed for {Endpoint}; library will retry",
             _endpoint);
@@ -226,7 +208,6 @@ public class RabbitMqPublisher : IQueuePublisher, IDisposable
             _connection.ConnectionRecoveryErrorAsync  -= OnConnectionRecoveryErrorAsync;
         }
 
-        _stateGaugeSubscription?.Dispose();
         try { _channel?.CloseAsync().GetAwaiter().GetResult();    } catch { /* may already be closed */ }
         try { _connection?.CloseAsync().GetAwaiter().GetResult(); } catch { /* may already be closed */ }
         _channel?.Dispose();

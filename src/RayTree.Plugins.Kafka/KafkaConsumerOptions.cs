@@ -1,5 +1,3 @@
-using RayTree.Core.Resilience;
-
 namespace RayTree.Plugins.Kafka;
 
 public class KafkaConsumerOptions
@@ -101,9 +99,9 @@ public class KafkaConsumerOptions
     /// re-runs the topic-wait probe (when <see cref="WaitForTopic"/> is set), and re-subscribes.
     /// Pending deferred-ack actions referencing the dying consumer are dropped — the broker
     /// will redeliver via the standard at-least-once contract.
-    /// When <see cref="ConnectionRecoveryOptions.Enabled"/> is <c>false</c>, the poll loop
+    /// When <see cref="KafkaConnectionRecoveryOptions.Enabled"/> is <c>false</c>, the poll loop
     /// surfaces the fatal error to <c>ConsumeAsync</c> callers via channel completion (the
     /// pre-change behaviour).
     /// </summary>
-    public ConnectionRecoveryOptions ConnectionRecovery { get; set; } = new();
+    public KafkaConnectionRecoveryOptions ConnectionRecovery { get; set; } = new();
 }

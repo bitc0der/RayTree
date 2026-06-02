@@ -364,10 +364,7 @@ public class OutboxPublisherService : IDisposable
             {
                 var endpoint = outbox.ConnectionEndpoint ?? "<unknown>";
                 if (_unhealthySince is null)
-                {
                     _unhealthySince = DateTime.UtcNow;
-                    _meter.RecordConnectionDisconnect(component, endpoint);
-                }
                 _logger.LogWarning(rootCause,
                     "Outbox connection fault for {EntityType} ({Component} at {Endpoint}); polling will retry on next tick",
                     typeof(TEntity).Name, component, endpoint);
@@ -379,14 +376,13 @@ public class OutboxPublisherService : IDisposable
         }
 
         /// <summary>
-        /// Emits the connection-recovery metric and log entry, then clears the unhealthy flag.
+        /// Emits the connection-recovery log entry, then clears the unhealthy flag.
         /// Called from the polling loop on the first successful batch following a fault.
         /// </summary>
         private void EmitOutboxRecovered()
         {
-            // Always clear the flag — even if metric emission throws or the outbox lookup
-            // fails (shutdown). Otherwise we'd loop emitting the recovery on every
-            // subsequent successful batch.
+            // Always clear the flag — even if the outbox lookup fails (shutdown). Otherwise
+            // we'd loop emitting the recovery log on every subsequent successful batch.
             try
             {
                 var outbox    = _publisher.GetOutbox(typeof(TEntity));
@@ -394,7 +390,6 @@ public class OutboxPublisherService : IDisposable
                 var endpoint  = outbox.ConnectionEndpoint  ?? "<unknown>";
                 // Clamp at zero to defend against backward clock jumps.
                 var duration  = Math.Max(0, (DateTime.UtcNow - _unhealthySince!.Value).TotalSeconds);
-                _meter.RecordConnectionRecovery(component, endpoint, outcome: "succeeded", duration);
                 _logger.LogInformation(
                     "Outbox connection recovered for {EntityType} ({Component} at {Endpoint}) after {Duration:F2}s",
                     typeof(TEntity).Name, component, endpoint, duration);
@@ -402,7 +397,7 @@ public class OutboxPublisherService : IDisposable
             catch (Exception ex)
             {
                 _logger.LogWarning(ex,
-                    "Failed to emit outbox recovery metric for {EntityType}; clearing unhealthy flag anyway",
+                    "Failed to emit outbox recovery log for {EntityType}; clearing unhealthy flag anyway",
                     typeof(TEntity).Name);
             }
             finally

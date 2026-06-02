@@ -67,17 +67,6 @@ public sealed class RayTreeMeter : IDisposable
     internal Histogram<double> SubscriberProcessingDuration { get; }
     internal Histogram<double> SubscriberLagDuration { get; }
 
-    // -------------------------------------------------------------------------
-    // Connection-recovery instruments — emitted by every connection-bearing
-    // plugin. See docs/opentelemetry-metrics.md for tag semantics.
-    // -------------------------------------------------------------------------
-    internal Counter<long>     ConnectionDisconnects { get; }
-    internal Counter<long>     ConnectionRecoveries { get; }
-    internal Histogram<double> ConnectionRecoveryDuration { get; }
-
-    private readonly List<(string Component, string Endpoint, Func<int> GetState)> _connectionStateSources = new();
-    private readonly object _connectionStateGate = new();
-
     /// <summary>Default pending-count gauge cache TTL (10 seconds). Roughly aligns with typical
     /// OTel collection cadence; tunable per-instance via the constructor.</summary>
     public static readonly TimeSpan DefaultPendingCacheTtl = TimeSpan.FromSeconds(10);
@@ -120,16 +109,6 @@ public sealed class RayTreeMeter : IDisposable
             ObservePendingCounts,
             unit: "{messages}",
             description: "Unpublished outbox records per entity type.");
-
-        ConnectionDisconnects      = _meter.CreateCounter<long>   ("raytree.connection.disconnects",       unit: "{disconnects}");
-        ConnectionRecoveries       = _meter.CreateCounter<long>   ("raytree.connection.recoveries",        unit: "{recoveries}");
-        ConnectionRecoveryDuration = _meter.CreateHistogram<double>("raytree.connection.recovery.duration", unit: "s");
-
-        _meter.CreateObservableGauge(
-            "raytree.connection.state",
-            ObserveConnectionStates,
-            unit: "{state}",
-            description: "1 = connected, 0 = disconnected; tagged with component and endpoint.");
     }
 
     /// <summary>
@@ -137,7 +116,7 @@ public sealed class RayTreeMeter : IDisposable
     /// callback is invoked once per OTel collection tick; each tuple yields one measurement
     /// tagged with <c>entity_type</c>.
     /// </summary>
-    public void RegisterPendingGauge(Func<IEnumerable<(Type entityType, IOutbox outbox)>> source)
+    internal void RegisterPendingGauge(Func<IEnumerable<(Type entityType, IOutbox outbox)>> source)
     {
         ArgumentNullException.ThrowIfNull(source);
         lock (_gaugeGate)
@@ -198,10 +177,11 @@ public sealed class RayTreeMeter : IDisposable
     }
 
     // -------------------------------------------------------------------------
-    // Public emission facade — for first-party plugin assemblies that publish
-    // to the outbox but live outside RayTree.Core (e.g. NotificationBasedPublisher
-    // in RayTree.Plugins.PostgreSQL). Raw instrument properties stay internal;
-    // callers interact with named, semantically meaningful methods.
+    // Internal emission facade — for RayTree.Core and first-party plugin
+    // assemblies that publish to the outbox but live outside RayTree.Core
+    // (e.g. NotificationBasedPublisher in RayTree.Plugins.PostgreSQL, which sees
+    // Core internals via InternalsVisibleTo). Metric emission is a Core-internal
+    // concern; observation is the public contract (RayTree.OpenTelemetry).
     // -------------------------------------------------------------------------
 
     /// <summary>
@@ -213,7 +193,7 @@ public sealed class RayTreeMeter : IDisposable
     /// <param name="lagSeconds">Time since the outbox record was written, in seconds.
     /// Clamped to zero if negative (clock skew).</param>
     /// <param name="attempts">Total attempts made — 1 for a first-try success.</param>
-    public void RecordPublishSuccess(
+    internal void RecordPublishSuccess(
         Type entityType, ChangeType changeType,
         double durationSeconds, double lagSeconds,
         int attempts = 1)
@@ -230,7 +210,7 @@ public sealed class RayTreeMeter : IDisposable
     /// Records the duration of a failed publish attempt. The caller is responsible for
     /// reverting the outbox claim so the record can be retried.
     /// </summary>
-    public void RecordPublishFailure(Type entityType, ChangeType changeType, double durationSeconds)
+    internal void RecordPublishFailure(Type entityType, ChangeType changeType, double durationSeconds)
     {
         OutboxPublishDuration.Record(durationSeconds, EntityTag(entityType), ChangeTag(changeType));
     }
@@ -239,7 +219,7 @@ public sealed class RayTreeMeter : IDisposable
     /// Records the compressed payload byte size for one <c>MessageEnvelope</c>.
     /// Call after compression, before handing the envelope to the queue publisher.
     /// </summary>
-    public void RecordPayloadSize(Type entityType, ChangeType changeType, int bytes)
+    internal void RecordPayloadSize(Type entityType, ChangeType changeType, int bytes)
     {
         OutboxPayloadSize.Record(bytes, EntityTag(entityType), ChangeTag(changeType));
     }
@@ -247,89 +227,9 @@ public sealed class RayTreeMeter : IDisposable
     /// <summary>
     /// Records the number of unpublished records retrieved in one outbox poll batch.
     /// </summary>
-    public void RecordBatchSize(Type entityType, int count)
+    internal void RecordBatchSize(Type entityType, int count)
     {
         OutboxBatchSize.Record(count, EntityTag(entityType));
-    }
-
-    /// <summary>
-    /// Increments <c>raytree.connection.disconnects</c> with the supplied
-    /// <c>component</c> and <c>endpoint</c> tags. Called by plugins on the first
-    /// detection of a disconnect within a recovery cycle.
-    /// </summary>
-    public void RecordConnectionDisconnect(string component, string endpoint)
-    {
-        ConnectionDisconnects.Add(1, ComponentTag(component), EndpointTag(endpoint));
-    }
-
-    /// <summary>
-    /// Increments <c>raytree.connection.recoveries</c> and records
-    /// <c>raytree.connection.recovery.duration</c> with the supplied tags.
-    /// <paramref name="outcome"/> SHALL be either <c>"succeeded"</c> or <c>"exhausted"</c>.
-    /// </summary>
-    public void RecordConnectionRecovery(
-        string component, string endpoint, string outcome, double durationSeconds)
-    {
-        var componentTag = ComponentTag(component);
-        var endpointTag  = EndpointTag(endpoint);
-        var outcomeTag   = OutcomeTag(outcome);
-        ConnectionRecoveries.Add(1, componentTag, endpointTag, outcomeTag);
-        ConnectionRecoveryDuration.Record(durationSeconds, componentTag, endpointTag, outcomeTag);
-    }
-
-    /// <summary>
-    /// Registers a per-connection observable-gauge source. Each registration contributes one
-    /// measurement to <c>raytree.connection.state</c> per OTel collection tick. Disposing the
-    /// returned subscription removes the source.
-    /// </summary>
-    public IDisposable RegisterConnectionStateGauge(string component, string endpoint, Func<int> getState)
-    {
-        ArgumentNullException.ThrowIfNull(component);
-        ArgumentNullException.ThrowIfNull(endpoint);
-        ArgumentNullException.ThrowIfNull(getState);
-
-        var entry = (component, endpoint, getState);
-        lock (_connectionStateGate)
-            _connectionStateSources.Add(entry);
-        return new ConnectionStateSubscription(this, entry);
-    }
-
-    private IEnumerable<Measurement<int>> ObserveConnectionStates()
-    {
-        (string Component, string Endpoint, Func<int> GetState)[] snapshot;
-        lock (_connectionStateGate)
-            snapshot = _connectionStateSources.ToArray();
-
-        foreach (var (component, endpoint, getState) in snapshot)
-        {
-            int state;
-            try { state = getState(); }
-            catch { continue; }
-            yield return new Measurement<int>(state, ComponentTag(component), EndpointTag(endpoint));
-        }
-    }
-
-    private sealed class ConnectionStateSubscription : IDisposable
-    {
-        private readonly RayTreeMeter _owner;
-        private (string Component, string Endpoint, Func<int> GetState) _entry;
-        private bool _disposed;
-
-        public ConnectionStateSubscription(
-            RayTreeMeter owner,
-            (string Component, string Endpoint, Func<int> GetState) entry)
-        {
-            _owner = owner;
-            _entry = entry;
-        }
-
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _disposed = true;
-            lock (_owner._connectionStateGate)
-                _owner._connectionStateSources.Remove(_entry);
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -347,15 +247,6 @@ public sealed class RayTreeMeter : IDisposable
 
     internal static KeyValuePair<string, object?> ReasonTag(string reason)
         => new("reason", reason);
-
-    internal static KeyValuePair<string, object?> ComponentTag(string component)
-        => new("component", component);
-
-    internal static KeyValuePair<string, object?> EndpointTag(string endpoint)
-        => new("endpoint", endpoint);
-
-    internal static KeyValuePair<string, object?> OutcomeTag(string outcome)
-        => new("outcome", outcome);
 
     /// <summary>
     /// Resolves the simple class name from a full <c>EntityChange.EntityType</c> string

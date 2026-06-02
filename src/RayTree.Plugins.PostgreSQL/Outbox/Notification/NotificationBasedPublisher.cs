@@ -11,10 +11,10 @@ using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Plugins.Publisher;
 using RayTree.Core.Plugins.Serialization;
-using RayTree.Core.Resilience;
 using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 using RayTree.Plugins.PostgreSQL.Internal;
+using RayTree.Plugins.PostgreSQL.Resilience;
 
 namespace RayTree.Plugins.PostgreSQL.Outbox.Notification;
 
@@ -30,7 +30,6 @@ public class NotificationBasedPublisher : IDisposable
     private Task? _fallbackTask;
     private volatile bool _listenerHealthy;
     private bool _firstFallbackPoll = true;
-    private IDisposable? _stateGaugeSubscription;
 
     // Per-outbox transition state for the fallback polling loop. Keyed by entity type;
     // the value's unhealthy flag flips on the first connection-fault for that outbox and
@@ -65,13 +64,6 @@ public class NotificationBasedPublisher : IDisposable
         // Validate the recovery options eagerly so misconfiguration fails at construction,
         // not on the first disconnect.
         _options.ConnectionRecovery.Validate();
-
-        // Register the connection-state gauge keyed on the LISTEN channel. The closure
-        // captures _listenerHealthy so OTel collection sees the live value.
-        _stateGaugeSubscription = _meter.RegisterConnectionStateGauge(
-            component: ComponentName,
-            endpoint:  _options.ChannelName,
-            getState:  () => _listenerHealthy ? 1 : 0);
     }
 
     public bool IsRunning => _listenTask != null && !_listenTask.IsCompleted;
@@ -104,8 +96,8 @@ public class NotificationBasedPublisher : IDisposable
     /// <summary>
     /// The full LISTEN lifecycle in one loop. Each iteration opens a fresh connection,
     /// issues <c>LISTEN</c>, and waits on notifications until the connection breaks or
-    /// the loop is cancelled. On a classified connection fault the loop emits one
-    /// disconnect metric per cycle, backs off, and tries again — bounded by
+    /// the loop is cancelled. On a classified connection fault the loop logs one
+    /// warning per cycle, backs off, and tries again — bounded by
     /// <c>_options.ConnectionRecovery.MaxAttempts</c>. Non-connection exceptions propagate
     /// out of the loop and surface to the caller of <see cref="StartAsync"/>.
     /// </summary>
@@ -125,11 +117,10 @@ public class NotificationBasedPublisher : IDisposable
                 await using (var listen = new NpgsqlCommand($"LISTEN {_options.ChannelName}", conn))
                     await listen.ExecuteNonQueryAsync(ct);
 
-                // Successful (re)connect. Emit recovery if we were in a fault cycle.
+                // Successful (re)connect. Log recovery if we were in a fault cycle.
                 if (cycleStartedAt is { } start)
                 {
                     var duration = Math.Max(0, (DateTime.UtcNow - start).TotalSeconds);
-                    _meter.RecordConnectionRecovery(ComponentName, _options.ChannelName, outcome: "succeeded", duration);
                     _logger.LogInformation(
                         "PostgreSQL LISTEN connection on {ChannelName} reconnected after {AttemptCount} attempt(s) in {Duration:F2}s",
                         _options.ChannelName, attemptInCycle + 1, duration);
@@ -146,12 +137,11 @@ public class NotificationBasedPublisher : IDisposable
             catch (OperationCanceledException) { return; }
             catch (Exception ex) when (IsConnectionFault(ex))
             {
-                // First detection in this cycle: flip state and emit disconnect metric.
+                // First detection in this cycle: flip state and log the disconnect.
                 if (cycleStartedAt is null)
                 {
                     cycleStartedAt   = DateTime.UtcNow;
                     _listenerHealthy = false;
-                    _meter.RecordConnectionDisconnect(ComponentName, _options.ChannelName);
                     _logger.LogWarning(ex,
                         "PostgreSQL LISTEN connection on {ChannelName} lost, reconnecting",
                         _options.ChannelName);
@@ -162,8 +152,6 @@ public class NotificationBasedPublisher : IDisposable
                 attemptInCycle++;
                 if (_options.ConnectionRecovery.MaxAttempts is int max && attemptInCycle >= max)
                 {
-                    var duration = Math.Max(0, (DateTime.UtcNow - cycleStartedAt.Value).TotalSeconds);
-                    _meter.RecordConnectionRecovery(ComponentName, _options.ChannelName, outcome: "exhausted", duration);
                     _logger.LogError(ex,
                         "PostgreSQL LISTEN reconnect exhausted on {ChannelName} after {AttemptCount} attempts",
                         _options.ChannelName, attemptInCycle);
@@ -185,7 +173,7 @@ public class NotificationBasedPublisher : IDisposable
     // retry helper in Core" for why extracting this would require InternalsVisibleTo
     // to plugin assemblies (architectural smell). Keep the two copies in sync by
     // convention; any change here should be mirrored there.
-    private static TimeSpan ComputeBackoffDelay(ConnectionRecoveryOptions opts, int attemptNum)
+    private static TimeSpan ComputeBackoffDelay(PostgresConnectionRecoveryOptions opts, int attemptNum)
     {
         var baseTicks = opts.InitialDelay.Ticks * Math.Pow(opts.Factor, attemptNum - 1);
         var cappedTicks = Math.Min(baseTicks, opts.MaxDelay.Ticks);
@@ -400,7 +388,6 @@ public class NotificationBasedPublisher : IDisposable
                 // Clamp at zero — backward NTP-driven clock jumps would otherwise feed a
                 // negative value into the duration histogram.
                 var duration = Math.Max(0, (DateTime.UtcNow - state.FirstFailureAt).TotalSeconds);
-                _meter.RecordConnectionRecovery(component, endpoint, outcome: "succeeded", duration);
                 _logger.LogInformation(
                     "Outbox connection recovered for {EntityType} ({Component} at {Endpoint}) after {Duration:F2}s",
                     entityType.Name, component, endpoint, duration);
@@ -412,18 +399,15 @@ public class NotificationBasedPublisher : IDisposable
         {
             // Classify all per-outbox errors HERE so the structured log entries are uniform
             // and the outer FallbackPollingLoopAsync catch only sees infrastructure-level
-            // issues (Task.Delay failures, etc.). Connection-faults emit the disconnect
-            // metric + Warning; everything else logs Error with the entity-type context.
+            // issues (Task.Delay failures, etc.). Connection-faults log a Warning;
+            // everything else logs Error with the entity-type context.
             if (outbox.IsConnectionFault(ex) && outbox.ConnectionComponent is { } component)
             {
                 var endpoint = outbox.ConnectionEndpoint ?? "<unknown>";
                 var state = _fallbackOutboxState.GetOrAdd(entityType,
                     _ => new FallbackOutboxState(Unhealthy: false, FirstFailureAt: DateTime.MinValue));
                 if (!state.Unhealthy)
-                {
                     _fallbackOutboxState[entityType] = new FallbackOutboxState(Unhealthy: true, FirstFailureAt: DateTime.UtcNow);
-                    _meter.RecordConnectionDisconnect(component, endpoint);
-                }
                 _logger.LogWarning(ex,
                     "Outbox connection fault for {EntityType} ({Component} at {Endpoint}); fallback polling will retry",
                     entityType.Name, component, endpoint);
@@ -495,7 +479,6 @@ public class NotificationBasedPublisher : IDisposable
     public void Dispose()
     {
         StopAsync().GetAwaiter().GetResult();
-        _stateGaugeSubscription?.Dispose();
         _cts.Dispose();
         _notificationSemaphore.Dispose();
     }

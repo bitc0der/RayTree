@@ -1,30 +1,22 @@
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Plugins.Publisher;
-using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.RabbitMQ;
 
 public static class RabbitMqBuilderExtensions
 {
-    /// <param name="meter">
-    /// Optional. When supplied, the publisher emits <c>raytree.connection.*</c> metrics on
-    /// the SDK's <c>ConnectionShutdownAsync</c> / <c>RecoverySucceededAsync</c> events. No
-    /// recovery code is added — the RabbitMQ.Client library's <c>AutomaticRecoveryEnabled</c>
-    /// owns the rebuild; we only observe.
-    /// </param>
     public static IChangeTrackingBuilder UseRabbitMq(
         this IChangeTrackingBuilder builder,
         Action<RabbitMqPublisherOptions> configure,
-        ILoggerFactory? loggerFactory = null,
-        RayTreeMeter? meter = null)
+        ILoggerFactory? loggerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(configure);
 
         var options = new RabbitMqPublisherOptions();
         configure(options);
-        return builder.UsePublisher<IQueuePublisher>(_ => new RabbitMqPublisher(options, loggerFactory, meter));
+        return builder.UsePublisher<IQueuePublisher>(_ => new RabbitMqPublisher(options, loggerFactory));
     }
 
     public static RabbitMqPublisherOptions WithExchange(

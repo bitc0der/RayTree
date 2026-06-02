@@ -4,41 +4,22 @@ using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Consumer;
-using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.RabbitMQ;
 
 public class RabbitMqConsumer : IQueueConsumer, IDisposable
 {
-    private const string ComponentName = "rabbitmq.consumer";
-
     private readonly RabbitMqConsumerOptions _options;
-    private readonly RayTreeMeter? _meter;
-    private readonly string _endpoint;
 
     private IConnection? _connection;
     private IChannel? _channel;
 
     private readonly Channel<MessageEnvelope> _buffer = Channel.CreateUnbounded<MessageEnvelope>();
 
-    // Connection state for the gauge — true while a healthy channel is bound. Owned by
-    // the SDK's recovery events (we do NOT implement recovery here).
-    private volatile bool _connected;
-    private volatile bool _disposing;
-    private DateTime _lastShutdownAt = DateTime.MinValue;
-    private readonly IDisposable? _stateGaugeSubscription;
-
-    public RabbitMqConsumer(RabbitMqConsumerOptions options, RayTreeMeter? meter = null)
+    public RabbitMqConsumer(RabbitMqConsumerOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
-        _meter   = meter;
-        _endpoint = $"{_options.HostName}:{_options.Port}";
-
-        _stateGaugeSubscription = _meter?.RegisterConnectionStateGauge(
-            component: ComponentName,
-            endpoint:  _endpoint,
-            getState:  () => _connected ? 1 : 0);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -52,12 +33,6 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         };
 
         _connection = await factory.CreateConnectionAsync(cancellationToken);
-
-        // Subscribe to SDK recovery events for metric observability. No log output here:
-        // RabbitMqConsumer intentionally has no logger (the documented exception to the
-        // logging-placement rule). The metrics still record disconnect / recovery cycles.
-        _connection.ConnectionShutdownAsync += OnConnectionShutdownAsync;
-        _connection.RecoverySucceededAsync  += OnRecoverySucceededAsync;
 
         try
         {
@@ -123,42 +98,12 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
                 consumer: consumer,
                 cancellationToken: cancellationToken
             );
-
-            _connected = true;
         }
         catch
         {
             await CleanupAfterFailedInitAsync();
             throw;
         }
-    }
-
-    private Task OnConnectionShutdownAsync(object sender, ShutdownEventArgs e)
-    {
-        // Suppress when shutdown is part of our own teardown — same race-guard pattern
-        // as the publisher (broker may already be dead when Dispose() runs, in which case
-        // the SDK reports the shutdown with Initiator=Library, not Application).
-        if (e.Initiator == ShutdownInitiator.Application || _disposing)
-            return Task.CompletedTask;
-
-        _connected      = false;
-        _lastShutdownAt = DateTime.UtcNow;
-        _meter?.RecordConnectionDisconnect(ComponentName, _endpoint);
-        // No logger — silent in logs by design; metric tells the story.
-        return Task.CompletedTask;
-    }
-
-    private Task OnRecoverySucceededAsync(object sender, AsyncEventArgs e)
-    {
-        // Clamp at zero — backward NTP-driven clock jumps would otherwise feed a negative
-        // value into the duration histogram.
-        var duration = _lastShutdownAt == DateTime.MinValue
-            ? 0
-            : Math.Max(0, (DateTime.UtcNow - _lastShutdownAt).TotalSeconds);
-        _connected      = true;
-        _lastShutdownAt = DateTime.MinValue;
-        _meter?.RecordConnectionRecovery(ComponentName, _endpoint, outcome: "succeeded", duration);
-        return Task.CompletedTask;
     }
 
     private async Task CleanupAfterFailedInitAsync()
@@ -274,15 +219,6 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
 
     public void Dispose()
     {
-        // Mark before detaching / closing so a non-Application shutdown surfaced during
-        // close (broker already dead) is suppressed by the handler's _disposing guard.
-        _disposing = true;
-        if (_connection is not null)
-        {
-            _connection.ConnectionShutdownAsync -= OnConnectionShutdownAsync;
-            _connection.RecoverySucceededAsync  -= OnRecoverySucceededAsync;
-        }
-        _stateGaugeSubscription?.Dispose();
         _buffer.Writer.TryComplete();
         try { _channel?.CloseAsync().GetAwaiter().GetResult();    } catch { /* may already be closed */ }
         try { _connection?.CloseAsync().GetAwaiter().GetResult(); } catch { /* may already be closed */ }

@@ -1,5 +1,4 @@
 ﻿using RayTree.Core.Models;
-using RayTree.Core.Resilience;
 
 namespace RayTree.Plugins.Kafka;
 
@@ -77,5 +76,5 @@ public class KafkaPublisherOptions
     /// outer backoff; this property controls whether RayTree participates at all
     /// (<c>Enabled = false</c> surfaces the dead producer to callers without rebuilding).
     /// </summary>
-    public ConnectionRecoveryOptions ConnectionRecovery { get; set; } = new();
+    public KafkaConnectionRecoveryOptions ConnectionRecovery { get; set; } = new();
 }

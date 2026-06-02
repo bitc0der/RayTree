@@ -1,18 +1,27 @@
 ## ADDED Requirements
 
 ### Requirement: Connection recovery options shape
-`RayTree.Core` SHALL expose a public `ConnectionRecoveryOptions` record with fields `Enabled` (bool, default `true`), `InitialDelay` (TimeSpan, default `1s`), `MaxDelay` (TimeSpan, default `30s`), `Factor` (double, default `2.0`), `JitterFraction` (double, default `0.2`), and `MaxAttempts` (int?, default `null` — unlimited). The record SHALL validate its values at construction: `InitialDelay > TimeSpan.Zero`, `MaxDelay >= InitialDelay`, `Factor >= 1.0`, `0 <= JitterFraction <= 1`, and `MaxAttempts == null || MaxAttempts > 0`. Invalid values SHALL throw `ArgumentOutOfRangeException`.
+Each plugin that owns a connection-recovery loop SHALL define its **own** public recovery-options type in its own assembly; `RayTree.Core` SHALL NOT define a shared recovery-options type. `RayTree.Plugins.PostgreSQL` SHALL expose `PostgresConnectionRecoveryOptions`; `RayTree.Plugins.Kafka` SHALL expose `KafkaConnectionRecoveryOptions`. Each type SHALL carry the fields `Enabled` (bool, default `true`), `InitialDelay` (TimeSpan, default `1s`), `MaxDelay` (TimeSpan, default `30s`), `Factor` (double, default `2.0`), `JitterFraction` (double, default `0.2`), and `MaxAttempts` (int?, default `null` — unlimited). Each type SHALL validate per-field invariants at init time — `InitialDelay > TimeSpan.Zero`, `Factor >= 1.0`, `0 <= JitterFraction <= 1`, and `MaxAttempts == null || MaxAttempts > 0` — throwing `ArgumentOutOfRangeException`, and SHALL expose a `Validate()` method enforcing the cross-field invariant `MaxDelay >= InitialDelay` (also throwing `ArgumentOutOfRangeException`), which the consuming plugin calls before entering its retry loop.
 
 #### Scenario: Defaults match documented values
-- **WHEN** `new ConnectionRecoveryOptions()` is constructed with no overrides
+- **WHEN** `new PostgresConnectionRecoveryOptions()` or `new KafkaConnectionRecoveryOptions()` is constructed with no overrides
 - **THEN** the field values SHALL be exactly `Enabled = true`, `InitialDelay = 1s`, `MaxDelay = 30s`, `Factor = 2.0`, `JitterFraction = 0.2`, `MaxAttempts = null`.
 
 #### Scenario: Invalid factor is rejected
-- **WHEN** `Factor = 0.5` is supplied
+- **WHEN** `Factor = 0.5` is supplied to either plugin-local options type
 - **THEN** construction SHALL throw `ArgumentOutOfRangeException` with `paramName = "Factor"`.
 
+#### Scenario: Cross-field invariant is rejected on Validate
+- **WHEN** an options instance with `MaxDelay < InitialDelay` is constructed AND `Validate()` is called
+- **THEN** `Validate()` SHALL throw `ArgumentOutOfRangeException` with `paramName = "MaxDelay"`.
+
+#### Scenario: Core exposes no shared recovery-options type
+- **WHEN** a caller inspects `RayTree.Core` (e.g. via reflection or autocomplete)
+- **THEN** no `ConnectionRecoveryOptions` type SHALL be present in the `RayTree.Core.Resilience` namespace
+- **AND** the connection-metric facade (`RayTreeMeter.RecordConnectionDisconnect` / `RecordConnectionRecovery` / `RegisterConnectionStateGauge`) SHALL NOT be present — those methods are removed along with the `raytree.connection.*` instruments.
+
 #### Scenario: Disabled options short-circuit recovery
-- **WHEN** `Enabled = false` AND a Postgres or Kafka plugin observes a connection-fault exception
+- **WHEN** `Enabled = false` AND the owning Postgres or Kafka plugin observes a connection-fault exception
 - **THEN** the plugin SHALL surface the exception on the next caller-facing call (or, for the Kafka consumer poll thread, on the next iteration) — no rebuild attempt SHALL be made.
 
 ### Requirement: PostgreSQL NotificationBasedPublisher reconnects LISTEN
@@ -34,14 +43,16 @@
 
 #### Scenario: Recovery is logged at Information
 - **WHEN** reconnect completes successfully
-- **THEN** the existing `Information` "LISTEN connection on {ChannelName} recovered" log SHALL be emitted (unchanged from current behaviour), accompanied by the `raytree.connection.recoveries{outcome="succeeded"}` metric and duration recording.
+- **THEN** the existing `Information` "LISTEN connection on {ChannelName} recovered" log SHALL be emitted (unchanged from current behaviour)
+- **AND** no connection metric SHALL be recorded (the `raytree.connection.*` instruments no longer exist).
 
 ### Requirement: Kafka publisher rebuilds on fatal error
-`KafkaPublisher` SHALL register `IProducerBuilder.SetErrorHandler` during producer construction. When the handler receives an error with `Error.IsFatal = true`, the publisher SHALL dispose the current `IProducer`, null out the cached reference, and emit the disconnect metric. The next `PublishAsync` call SHALL re-enter the existing lazy `GetProducerAsync` build path — which re-runs the `WaitForTopic` probe when enabled — bounded by `KafkaPublisherOptions.ConnectionRecovery`. Non-fatal errors SHALL NOT trigger rebuild; librdkafka recovers those internally.
+`KafkaPublisher` SHALL register `IProducerBuilder.SetErrorHandler` during producer construction. When the handler receives an error with `Error.IsFatal = true`, the publisher SHALL dispose the current `IProducer` and null out the cached reference. The next `PublishAsync` call SHALL re-enter the existing lazy `GetProducerAsync` build path — which re-runs the `WaitForTopic` probe when enabled — bounded by `KafkaPublisherOptions.ConnectionRecovery`. Non-fatal errors SHALL NOT trigger rebuild; librdkafka recovers those internally. No connection metric SHALL be emitted (the `raytree.connection.*` instruments no longer exist).
 
 #### Scenario: Fatal error disposes the producer
 - **WHEN** the error handler receives an error with `Error.IsFatal = true`
-- **THEN** the cached `IProducer` SHALL be disposed and the cached reference SHALL be set to `null`.
+- **THEN** the cached `IProducer` SHALL be disposed and the cached reference SHALL be set to `null`
+- **AND** no connection metric SHALL be recorded.
 
 #### Scenario: Next publish rebuilds via existing path
 - **WHEN** a subsequent `PublishAsync` is invoked after a fatal-error dispose
@@ -67,128 +78,101 @@
 - **WHEN** `Consume` returns a `ConsumeResult` carrying a non-fatal error (e.g. partition-level transient)
 - **THEN** the existing behaviour SHALL apply — no rebuild, librdkafka recovers internally.
 
-### Requirement: RabbitMQ recovery is observed, not implemented
-The RabbitMQ publisher and consumer SHALL rely on `RabbitMQ.Client.AutomaticRecoveryEnabled = true` and `TopologyRecoveryEnabled = true` (the library defaults) for the actual recovery mechanism. RayTree SHALL NOT disable these flags. The publisher and consumer SHALL subscribe to the SDK's `ConnectionShutdownAsync`, `RecoverySucceededAsync`, and `ConnectionRecoveryErrorAsync` events to emit the `raytree.connection.disconnects` / `raytree.connection.recoveries` / `raytree.connection.recovery.duration` metrics and the documented log entries.
+### Requirement: RabbitMQ recovery is observed via logs, not metrics
+The RabbitMQ publisher and consumer SHALL rely on `RabbitMQ.Client.AutomaticRecoveryEnabled = true` and `TopologyRecoveryEnabled = true` (the library defaults) for the actual recovery mechanism. RayTree SHALL NOT disable these flags.
 
-#### Scenario: ConnectionShutdownAsync records a disconnect
+The `RabbitMqPublisher` SHALL subscribe to the SDK's `ConnectionShutdownAsync`, `RecoverySucceededAsync`, and `ConnectionRecoveryErrorAsync` events to emit the documented log entries (`Warning` on non-application shutdown, `Information` on recovery with elapsed `{Duration}`, `Information` per failed internal recovery attempt). It SHALL NOT emit any connection metric and SHALL NOT accept a `RayTreeMeter` constructor parameter.
+
+The `RabbitMqConsumer` has no logger and therefore SHALL NOT subscribe to any recovery event: with the connection metrics removed, those subscriptions produced no operator-visible signal. The consumer SHALL NOT accept a `RayTreeMeter` constructor parameter.
+
+#### Scenario: Publisher logs a Warning on non-application shutdown
 - **WHEN** the `RabbitMqPublisher`'s `IConnection` raises `ConnectionShutdownAsync` with `Initiator != Application`
-- **THEN** `raytree.connection.disconnects` SHALL be incremented with `component = "rabbitmq.publisher"` and `endpoint = "{HostName}:{Port}"`
-- **AND** a `Warning` log SHALL be emitted with the shutdown reason.
+- **THEN** a `Warning` log SHALL be emitted with the shutdown reason, `{Endpoint}`, `{ReplyCode}`, and `{ReplyText}`
+- **AND** no metric SHALL be recorded.
 
-#### Scenario: RecoverySucceededAsync records a recovery
-- **WHEN** the `IConnection` raises `RecoverySucceededAsync`
-- **THEN** `raytree.connection.recoveries{outcome="succeeded"}` SHALL be incremented
-- **AND** `raytree.connection.recovery.duration` SHALL record the wall-clock seconds elapsed since the most recent `ConnectionShutdownAsync` for this component
-- **AND** an `Information` log SHALL be emitted.
+#### Scenario: Publisher logs Information on recovery
+- **WHEN** the publisher's `IConnection` raises `RecoverySucceededAsync`
+- **THEN** an `Information` log SHALL be emitted with `{Endpoint}` and `{Duration}` (seconds since the most recent non-application shutdown)
+- **AND** no metric SHALL be recorded.
 
-#### Scenario: ConnectionRecoveryErrorAsync logs at Information
-- **WHEN** the `IConnection` raises `ConnectionRecoveryErrorAsync` (a single library-internal retry failed; the library will keep trying)
-- **THEN** an `Information` log SHALL be emitted with the exception
-- **AND** no metric SHALL be incremented (only the *outcome* of the overall recovery cycle is metered, not per-internal-attempt).
-
-#### Scenario: Application-initiated shutdown is not counted
+#### Scenario: Application-initiated shutdown is silent
 - **WHEN** `RabbitMqPublisher.DisposeAsync` is invoked and the resulting shutdown event has `Initiator = Application`
-- **THEN** no disconnect metric SHALL be recorded and no warning SHALL be logged.
+- **THEN** no warning SHALL be logged and no metric SHALL be recorded.
+
+#### Scenario: Consumer does not observe recovery
+- **WHEN** the `RabbitMqConsumer`'s connection shuts down and later recovers
+- **THEN** the consumer SHALL emit neither a log entry nor a metric
+- **AND** the consumer constructor SHALL expose no `RayTreeMeter` parameter.
 
 ### Requirement: Outbox connection-fault observability
-`IOutbox` SHALL expose three default-implemented members so consumers of an arbitrary `IOutbox` can observe transient connection faults without retry code:
+`IOutbox` SHALL expose three default-implemented members so consumers of an arbitrary `IOutbox` can classify transient connection faults without retry code:
 
-- `bool IsConnectionFault(Exception ex)` — default `false`. Concrete implementations override to classify connection-level exceptions (network drop, broker shutdown, transient transport) versus application-level exceptions (constraint violation, malformed SQL, business-rule rejection).
-- `string? ConnectionComponent { get; }` — default `null`. Returns the `component` tag value to use for connection metrics, or `null` when the outbox has no observable external connection (e.g. `InMemoryOutbox`).
-- `string? ConnectionEndpoint { get; }` — default `null`. Returns the `endpoint` tag value.
+- `bool IsConnectionFault(Exception ex)` — default `false`. Concrete implementations override to classify connection-level exceptions versus application-level exceptions.
+- `string? ConnectionComponent { get; }` — default `null`. Returns a stable component identifier used as a structured-log property, or `null` when the outbox has no observable external connection.
+- `string? ConnectionEndpoint { get; }` — default `null`. Returns the endpoint identifier used as a structured-log property.
 
-`PostgreSqlOutbox<TEntity>` SHALL override these: `IsConnectionFault` returns `true` for `NpgsqlException { IsTransient: true }`, `NpgsqlException` with `SocketException`/`IOException` inner, `PostgresException` with `SqlState` in `{"57P01", "57P02", "57P03", "08000", "08003", "08006", "08001", "08004", "08007"}` (admin/crash shutdown, cannot_connect_now, and the `08xxx` connection_exception family), and `ObjectDisposedException`. `ConnectionComponent` returns `"postgres.outbox"`. `ConnectionEndpoint` returns `"{Host}:{Port}"` parsed once from the connection string.
+`PostgreSqlOutbox<TEntity>` SHALL override these: `IsConnectionFault` returns `true` for `NpgsqlException { IsTransient: true }`, `NpgsqlException` with `SocketException`/`IOException` inner, `PostgresException` with `SqlState` in `{"57P01", "57P02", "57P03", "08000", "08003", "08006", "08001", "08004", "08007"}`, and `ObjectDisposedException`. `ConnectionComponent` returns `"postgres.outbox"`. `ConnectionEndpoint` returns `"{Host}:{Port}"`. The classifier used by `PostgreSqlOutbox` SHALL be the same `static bool PostgresFault.IsConnectionFault(Exception)` used by `NotificationBasedPublisher`.
 
-The classifier used by `PostgreSqlOutbox` SHALL be the same set as `NotificationBasedPublisher`'s classifier — both delegate to an internal `static bool PostgresFault.IsConnectionFault(Exception)` so the two stay in sync.
+`OutboxPublisherService.ProcessBatchAsync`'s batch-error catch block SHALL consult `_outbox.IsConnectionFault(ex)` and `_outbox.ConnectionComponent`. When the classifier returns `true` AND `ConnectionComponent` is non-null, the failure SHALL be logged at `Warning` instead of `Error`, with `{Component}` and `{Endpoint}` structured properties, and a per-service `_outboxUnhealthy` flag SHALL be set. On the first subsequent batch that completes without throwing, an `Information` "outbox connection recovered" log SHALL be emitted with `{Duration}` (wall-clock seconds since the first failure) and the flag SHALL be cleared. When the classifier returns `false` OR `ConnectionComponent` is `null`, the existing `Error` log path SHALL be preserved unchanged. No connection metric SHALL be emitted in any of these paths. No retry code is added — the existing polling cadence is the retry.
 
-`OutboxPublisherService.ProcessBatchAsync`'s existing batch-error catch block SHALL consult `_outbox.IsConnectionFault(ex)` and `_outbox.ConnectionComponent`. When the classifier returns `true` AND `ConnectionComponent` is non-null:
-
-1. Emit `raytree.connection.disconnects{component=ConnectionComponent, endpoint=ConnectionEndpoint}` exactly once per transition into the unhealthy state (tracked via a per-service `_outboxUnhealthy` flag).
-2. Log the exception at `Warning` instead of `Error`, with `{Component}` and `{Endpoint}` structured properties.
-3. On the first subsequent batch that completes without throwing, emit `raytree.connection.recoveries{outcome="succeeded"}` plus `raytree.connection.recovery.duration` (wall-clock seconds since the first failure), log `Information` "outbox connection recovered", and clear `_outboxUnhealthy`.
-
-When the classifier returns `false` OR `ConnectionComponent` is `null`, the existing `Error` log path is preserved unchanged. No retry code is added — the existing polling cadence is the retry.
-
-`NotificationBasedPublisher.FallbackPollingLoopAsync` SHALL apply the same pattern: in the existing `ProcessUnpublishedChangesAsync` per-outbox iteration, when an `IOutbox` call throws and `_outbox.IsConnectionFault(ex)` returns `true` AND `_outbox.ConnectionComponent` is non-null, emit the disconnect metric and log `Warning`; on next success per outbox, emit the recovery metric. Per-outbox `_unhealthy` state is tracked in a `ConcurrentDictionary<Type, bool>` keyed by entity type.
-
-#### Scenario: Outbox publisher disconnect metric is emitted once per transition
-- **WHEN** `OutboxPublisherService.ProcessBatchAsync` catches a connection-fault exception for the first time after a healthy period
-- **THEN** `raytree.connection.disconnects{component="postgres.outbox", endpoint="…"}` SHALL be incremented by 1
-- **AND** subsequent consecutive failed batches SHALL NOT increment the counter again (the service is already unhealthy).
+`NotificationBasedPublisher.FallbackPollingLoopAsync` SHALL apply the same `Warning`/`Information` log pattern per outbox, keyed by entity type in a `ConcurrentDictionary<Type, bool>`, with no metric emission.
 
 #### Scenario: Outbox publisher log demotion on connection fault
-- **WHEN** `OutboxPublisherService.ProcessBatchAsync` catches an exception and `_outbox.IsConnectionFault(ex)` returns `true`
-- **THEN** the failure SHALL be logged at `Warning` (not the usual `Error`) with `{Component}` and `{Endpoint}` structured properties.
+- **WHEN** `OutboxPublisherService.ProcessBatchAsync` catches an exception and `_outbox.IsConnectionFault(ex)` returns `true` AND `ConnectionComponent` is non-null
+- **THEN** the failure SHALL be logged at `Warning` (not `Error`) with `{Component}` and `{Endpoint}`
+- **AND** no connection metric SHALL be emitted.
 
-#### Scenario: Outbox publisher recovery metric is emitted on first success after failure
+#### Scenario: Outbox publisher recovery log on first success after failure
 - **WHEN** `OutboxPublisherService.ProcessBatchAsync` completes without throwing AND the service was previously unhealthy
-- **THEN** `raytree.connection.recoveries{outcome="succeeded"}` SHALL be incremented by 1
-- **AND** `raytree.connection.recovery.duration` SHALL record the wall-clock seconds elapsed since the first failure
-- **AND** an `Information` log "outbox connection recovered" SHALL be emitted with `{Duration}`
-- **AND** the internal `_outboxUnhealthy` flag SHALL be cleared.
+- **THEN** an `Information` "outbox connection recovered" log SHALL be emitted with `{Duration}`
+- **AND** the `_outboxUnhealthy` flag SHALL be cleared
+- **AND** no connection metric SHALL be emitted.
 
 #### Scenario: Non-connection-fault exception preserves existing Error log
 - **WHEN** `OutboxPublisherService.ProcessBatchAsync` catches an exception for which `_outbox.IsConnectionFault(ex)` returns `false`
-- **THEN** the existing `Error` log path SHALL be unchanged
-- **AND** no connection metric SHALL be emitted.
-
-#### Scenario: Outbox without ConnectionComponent is unobserved
-- **WHEN** an `IOutbox` implementation leaves `ConnectionComponent` at its default `null` (e.g. `InMemoryOutbox`)
-- **THEN** `OutboxPublisherService` SHALL fall through to the existing `Error` log path even when `IsConnectionFault` is true
-- **AND** no connection metric SHALL be emitted.
-
-#### Scenario: NotificationBasedPublisher fallback polling emits per-outbox metrics
-- **WHEN** `NotificationBasedPublisher.ProcessUnpublishedChangesAsync` calls into an `IOutbox` whose `IsConnectionFault(ex)` returns `true` for the thrown exception
-- **THEN** the disconnect/recovery metric and `Warning`/`Information` log pattern SHALL be applied per outbox (keyed by entity type) using the same transition semantics as `OutboxPublisherService`.
+- **THEN** the existing `Error` log path SHALL be unchanged.
 
 #### Scenario: Write-path exceptions still propagate to the caller
 - **WHEN** a caller invokes `EntityChangeTracker.TrackInsertAsync` and the underlying `PostgreSqlOutbox.WriteAsync` throws a connection-fault exception
 - **THEN** the exception SHALL propagate to the caller unchanged
-- **AND** no automatic retry SHALL be performed by the library at the write path (the caller's transaction context owns retry semantics).
+- **AND** no automatic retry SHALL be performed by the library at the write path.
 
 ### Requirement: Recovery options exposure on plugin options classes
-`NotificationBasedPublisherOptions`, `KafkaPublisherOptions`, and `KafkaConsumerOptions` SHALL each expose a `ConnectionRecovery` property of type `ConnectionRecoveryOptions` initialised to `new ConnectionRecoveryOptions()`. `RabbitMqPublisherOptions` and `RabbitMqConsumerOptions` SHALL NOT expose this property — RabbitMQ recovery is owned by the SDK and is not configurable through RayTree.
+`NotificationBasedPublisherOptions` SHALL expose a `ConnectionRecovery` property of type `PostgresConnectionRecoveryOptions` initialised to `new PostgresConnectionRecoveryOptions()`. `KafkaPublisherOptions` and `KafkaConsumerOptions` SHALL each expose a `ConnectionRecovery` property of type `KafkaConnectionRecoveryOptions` initialised to `new KafkaConnectionRecoveryOptions()`. `RabbitMqPublisherOptions` and `RabbitMqConsumerOptions` SHALL NOT expose this property — RabbitMQ recovery is owned by the SDK and is not configurable through RayTree.
 
 #### Scenario: Default property value is enabled
-- **WHEN** any of the three listed options classes is constructed via its parameterless constructor
+- **WHEN** `NotificationBasedPublisherOptions`, `KafkaPublisherOptions`, or `KafkaConsumerOptions` is constructed via its parameterless constructor
 - **THEN** `ConnectionRecovery.Enabled` SHALL be `true` and the other fields SHALL match the documented defaults.
+
+#### Scenario: Property type is the plugin-local options type
+- **WHEN** a caller reads `KafkaPublisherOptions.ConnectionRecovery`
+- **THEN** the value SHALL be a `KafkaConnectionRecoveryOptions` instance
+- **AND** reading `NotificationBasedPublisherOptions.ConnectionRecovery` SHALL yield a `PostgresConnectionRecoveryOptions` instance.
 
 #### Scenario: RabbitMQ options do not expose ConnectionRecovery
 - **WHEN** a caller inspects `RabbitMqPublisherOptions` / `RabbitMqConsumerOptions` via reflection or autocomplete
 - **THEN** no `ConnectionRecovery` property SHALL be present
 - **AND** the SDK's recovery options (e.g. `NetworkRecoveryInterval`) remain accessible through the underlying `ConnectionFactory` only if the caller constructs one explicitly.
 
-### Requirement: Recovery options bound from configuration
-`RayTree.Hosting.AddChangeTracking` SHALL bind `ConnectionRecoveryOptions` instances from configuration sections `ChangeTracking:Publisher:ConnectionRecovery` and `ChangeTracking:Subscriber:ConnectionRecovery`. The bound values SHALL be applied as the default for any plugin whose own `ConnectionRecovery` property is unchanged from the parameterless-constructor default. Explicit per-plugin overrides SHALL win.
-
-#### Scenario: Bound section sets the default
-- **WHEN** `appsettings.json` contains `"ChangeTracking:Publisher:ConnectionRecovery": { "MaxAttempts": 10 }`
-- **AND** a Kafka publisher is registered without an explicit `ConnectionRecovery` override
-- **THEN** that publisher's reconnect loop SHALL be bounded to 10 attempts.
-
-#### Scenario: Per-plugin override wins
-- **WHEN** the same configuration is set AND a Kafka publisher is registered with `UseKafka(o => o.ConnectionRecovery = new ConnectionRecoveryOptions { MaxAttempts = 3 })`
-- **THEN** the Kafka publisher SHALL use 3 attempts; other publishers SHALL use 10.
-
 ### Requirement: Recovery logs are emitted at documented levels
-Each plugin that participates in connection recovery (whether it implements the recovery itself or merely observes the SDK) SHALL emit the following log entries through its runtime-service `ILogger<T>`:
+Each plugin that participates in connection recovery and owns an `ILogger<T>` SHALL emit the following log entries:
 
-- **First detection of disconnect per recovery cycle**: `Warning`, with the underlying exception, `{Component}`, and `{Endpoint}`.
+- **First detection of disconnect per recovery cycle**: `Warning`, with the underlying exception (where available), `{Component}`, and `{Endpoint}`.
 - **Each retry attempt** (Postgres and Kafka only — the two plugins owning their own retry loop): `Information`, with `{Component}`, `{Endpoint}`, `{AttemptNumber}`, and `{Delay}` (the actually scheduled delay including jitter, in seconds).
-- **Successful recovery**: `Information`, with `{Component}`, `{Endpoint}`, `{AttemptCount}` (for Postgres/Kafka — the count of attempts), and `{Duration}` (wall-clock seconds elapsed since the first detection in this cycle).
+- **Successful recovery**: `Information`, with `{Component}`, `{Endpoint}`, `{AttemptCount}` (for Postgres/Kafka), and `{Duration}` (wall-clock seconds elapsed since the first detection in this cycle).
 - **Exhausted attempts** (Postgres and Kafka only): `Error`, with the most recent exception, `{Component}`, `{Endpoint}`, and `{AttemptCount}`.
 
-`RabbitMqConsumer` has no `ILogger` field (existing exception to the logging-placement rule). Its disconnects and recoveries SHALL still be observable via the metric instruments but SHALL NOT produce log entries.
+No connection metric SHALL accompany any of these logs — the `raytree.connection.*` instruments no longer exist. `RabbitMqConsumer` has no `ILogger` field and SHALL produce neither logs nor metrics for connection recovery.
 
 #### Scenario: First disconnect emits Warning with exception
-- **WHEN** any participating plugin observes the first disconnect of a recovery cycle (Kafka error handler fires, Postgres `WaitAsync` throws a connection fault, RabbitMQ `ConnectionShutdownAsync` fires non-application)
-- **THEN** a `Warning` log SHALL be emitted with `{Component}` and `{Endpoint}` structured properties and the underlying exception attached (where available).
+- **WHEN** a logger-owning participating plugin observes the first disconnect of a recovery cycle (Kafka error handler fires, Postgres `WaitAsync` throws a connection fault, RabbitMQ publisher `ConnectionShutdownAsync` fires non-application)
+- **THEN** a `Warning` log SHALL be emitted with `{Component}` and `{Endpoint}` and the underlying exception attached where available.
 
 #### Scenario: Retry attempt emits Information with delay
 - **WHEN** Postgres or Kafka schedules the Nth retry attempt
 - **THEN** an `Information` log SHALL be emitted with `{AttemptNumber} = N` and `{Delay}` equal to the actually-scheduled delay (including jitter) in seconds.
 
-#### Scenario: RabbitMqConsumer recovery is silent on logs but observable via metrics
+#### Scenario: RabbitMqConsumer recovery is fully silent
 - **WHEN** a recovery cycle runs for `RabbitMqConsumer`
-- **THEN** no log entries SHALL be emitted from the consumer
-- **AND** `raytree.connection.disconnects` and `raytree.connection.recoveries` with `component = "rabbitmq.consumer"` SHALL be recorded as usual.
+- **THEN** no log entries SHALL be emitted
+- **AND** no connection metric SHALL be recorded.
