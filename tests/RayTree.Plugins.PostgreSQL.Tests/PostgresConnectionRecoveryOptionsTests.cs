@@ -1,14 +1,14 @@
-using RayTree.Core.Resilience;
+using RayTree.Plugins.PostgreSQL.Resilience;
 
-namespace RayTree.Core.Tests.Resilience;
+namespace RayTree.Plugins.PostgreSQL.Tests;
 
 [TestFixture]
-public class ConnectionRecoveryOptionsTests
+public class PostgresConnectionRecoveryOptionsTests
 {
     [Test]
     public void Defaults_MatchSpec()
     {
-        var options = new ConnectionRecoveryOptions();
+        var options = new PostgresConnectionRecoveryOptions();
 
         Assert.That(options.Enabled,        Is.True);
         Assert.That(options.InitialDelay,   Is.EqualTo(TimeSpan.FromSeconds(1)));
@@ -21,7 +21,7 @@ public class ConnectionRecoveryOptionsTests
     [Test]
     public void Defaults_ValidateDoesNotThrow()
     {
-        var options = new ConnectionRecoveryOptions();
+        var options = new PostgresConnectionRecoveryOptions();
         Assert.DoesNotThrow(() => options.Validate());
     }
 
@@ -29,7 +29,7 @@ public class ConnectionRecoveryOptionsTests
     public void InitialDelay_Zero_Throws()
     {
         var ex = Assert.Throws<ArgumentOutOfRangeException>(
-            () => _ = new ConnectionRecoveryOptions { InitialDelay = TimeSpan.Zero });
+            () => _ = new PostgresConnectionRecoveryOptions { InitialDelay = TimeSpan.Zero });
         Assert.That(ex!.ParamName, Is.EqualTo("InitialDelay"));
     }
 
@@ -37,21 +37,21 @@ public class ConnectionRecoveryOptionsTests
     public void InitialDelay_Negative_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => _ = new ConnectionRecoveryOptions { InitialDelay = TimeSpan.FromSeconds(-1) });
+            () => _ = new PostgresConnectionRecoveryOptions { InitialDelay = TimeSpan.FromSeconds(-1) });
     }
 
     [Test]
     public void MaxDelay_Zero_Throws()
     {
         var ex = Assert.Throws<ArgumentOutOfRangeException>(
-            () => _ = new ConnectionRecoveryOptions { MaxDelay = TimeSpan.Zero });
+            () => _ = new PostgresConnectionRecoveryOptions { MaxDelay = TimeSpan.Zero });
         Assert.That(ex!.ParamName, Is.EqualTo("MaxDelay"));
     }
 
     [Test]
     public void MaxDelay_LessThanInitialDelay_ValidateThrows()
     {
-        var options = new ConnectionRecoveryOptions
+        var options = new PostgresConnectionRecoveryOptions
         {
             InitialDelay = TimeSpan.FromSeconds(10),
             MaxDelay     = TimeSpan.FromSeconds(5)
@@ -65,21 +65,21 @@ public class ConnectionRecoveryOptionsTests
     public void Factor_LessThanOne_Throws()
     {
         var ex = Assert.Throws<ArgumentOutOfRangeException>(
-            () => _ = new ConnectionRecoveryOptions { Factor = 0.5 });
+            () => _ = new PostgresConnectionRecoveryOptions { Factor = 0.5 });
         Assert.That(ex!.ParamName, Is.EqualTo("Factor"));
     }
 
     [Test]
     public void Factor_Exactly1_Allowed()
     {
-        Assert.DoesNotThrow(() => _ = new ConnectionRecoveryOptions { Factor = 1.0 });
+        Assert.DoesNotThrow(() => _ = new PostgresConnectionRecoveryOptions { Factor = 1.0 });
     }
 
     [Test]
     public void JitterFraction_Negative_Throws()
     {
         var ex = Assert.Throws<ArgumentOutOfRangeException>(
-            () => _ = new ConnectionRecoveryOptions { JitterFraction = -0.1 });
+            () => _ = new PostgresConnectionRecoveryOptions { JitterFraction = -0.1 });
         Assert.That(ex!.ParamName, Is.EqualTo("JitterFraction"));
     }
 
@@ -87,27 +87,27 @@ public class ConnectionRecoveryOptionsTests
     public void JitterFraction_GreaterThanOne_Throws()
     {
         var ex = Assert.Throws<ArgumentOutOfRangeException>(
-            () => _ = new ConnectionRecoveryOptions { JitterFraction = 1.5 });
+            () => _ = new PostgresConnectionRecoveryOptions { JitterFraction = 1.5 });
         Assert.That(ex!.ParamName, Is.EqualTo("JitterFraction"));
     }
 
     [Test]
     public void JitterFraction_Zero_Allowed()
     {
-        Assert.DoesNotThrow(() => _ = new ConnectionRecoveryOptions { JitterFraction = 0.0 });
+        Assert.DoesNotThrow(() => _ = new PostgresConnectionRecoveryOptions { JitterFraction = 0.0 });
     }
 
     [Test]
     public void JitterFraction_One_Allowed()
     {
-        Assert.DoesNotThrow(() => _ = new ConnectionRecoveryOptions { JitterFraction = 1.0 });
+        Assert.DoesNotThrow(() => _ = new PostgresConnectionRecoveryOptions { JitterFraction = 1.0 });
     }
 
     [Test]
     public void MaxAttempts_Zero_Throws()
     {
         var ex = Assert.Throws<ArgumentOutOfRangeException>(
-            () => _ = new ConnectionRecoveryOptions { MaxAttempts = 0 });
+            () => _ = new PostgresConnectionRecoveryOptions { MaxAttempts = 0 });
         Assert.That(ex!.ParamName, Is.EqualTo("MaxAttempts"));
     }
 
@@ -115,19 +115,19 @@ public class ConnectionRecoveryOptionsTests
     public void MaxAttempts_Negative_Throws()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => _ = new ConnectionRecoveryOptions { MaxAttempts = -3 });
+            () => _ = new PostgresConnectionRecoveryOptions { MaxAttempts = -3 });
     }
 
     [Test]
     public void MaxAttempts_Null_Allowed()
     {
-        Assert.DoesNotThrow(() => _ = new ConnectionRecoveryOptions { MaxAttempts = null });
+        Assert.DoesNotThrow(() => _ = new PostgresConnectionRecoveryOptions { MaxAttempts = null });
     }
 
     [Test]
     public void MaxAttempts_Positive_Allowed()
     {
-        var options = new ConnectionRecoveryOptions { MaxAttempts = 5 };
+        var options = new PostgresConnectionRecoveryOptions { MaxAttempts = 5 };
         Assert.That(options.MaxAttempts, Is.EqualTo(5));
     }
 }

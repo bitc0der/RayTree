@@ -1,4 +1,4 @@
-﻿using RayTree.Core.Resilience;
+﻿using RayTree.Plugins.PostgreSQL.Resilience;
 
 namespace RayTree.Plugins.PostgreSQL.Outbox.Notification;
 
@@ -19,9 +19,9 @@ public class NotificationBasedPublisherOptions
     /// <summary>
     /// Tunes the LISTEN-connection reconnect policy. The publisher detects a connection fault
     /// via <see cref="ListenLoopAsync"/>'s catch block, then runs an inline exponential-backoff
-    /// loop bounded by these options. When <see cref="ConnectionRecoveryOptions.Enabled"/> is
+    /// loop bounded by these options. When <see cref="PostgresConnectionRecoveryOptions.Enabled"/> is
     /// <c>false</c>, the loop exits on the first failure and recovery falls entirely to the
     /// fallback polling path.
     /// </summary>
-    public ConnectionRecoveryOptions ConnectionRecovery { get; set; } = new();
+    public PostgresConnectionRecoveryOptions ConnectionRecovery { get; set; } = new();
 }

@@ -1,23 +1,24 @@
-using System.Diagnostics.Metrics;
 using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using RayTree.Core.Models;
-using RayTree.Core.Resilience;
-using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 using RayTree.Plugins.Compressors.Gzip;
 using RayTree.Plugins.InMemory;
 using RayTree.Plugins.PostgreSQL.Outbox;
 using RayTree.Plugins.PostgreSQL.Outbox.Notification;
+using RayTree.Plugins.PostgreSQL.Resilience;
 using RayTree.Plugins.Serializers.Json;
 
 namespace RayTree.Plugins.PostgreSQL.Tests;
 
 /// <summary>
 /// Integration tests for the LISTEN-connection reconnect path in <see cref="NotificationBasedPublisher"/>
-/// and the outbox-side observability hooks in <see cref="RayTree.Core.Distribution.OutboxPublisherService"/>.
-/// Each test owns its own container so a permanent-kill negative case doesn't leak into the next test.
+/// and the outbox-side connection-fault classification used by
+/// <see cref="RayTree.Core.Distribution.OutboxPublisherService"/>. Connection metrics were removed;
+/// these tests assert recovery <i>behavior</i> (delivery continues, the listen loop exits when
+/// recovery is disabled/exhausted, the outbox classifies connection faults). Each test owns its
+/// own container so a permanent-kill negative case doesn't leak into the next test.
 /// </summary>
 [NonParallelizable]
 public class NotificationBasedPublisherRecoveryTests
@@ -29,8 +30,6 @@ public class NotificationBasedPublisherRecoveryTests
     /// </summary>
     private IContainer _postgres = null!;
     private string _connectionString = null!;
-    private RayTreeMeter _meter = null!;
-    private CapturingMeterListener _capture = null!;
 
     private const string OutboxTable = "recovery_test_outbox";
 
@@ -40,21 +39,16 @@ public class NotificationBasedPublisherRecoveryTests
         _postgres = PostgresContainerFactory.Create();
         await _postgres.StartAsync();
         _connectionString = ((Testcontainers.PostgreSql.PostgreSqlContainer)_postgres).GetConnectionString();
-
-        _meter = new RayTreeMeter();
-        _capture = new CapturingMeterListener(_meter);
     }
 
     [TearDown]
     public async Task TearDown()
     {
-        _capture.Dispose();
-        _meter.Dispose();
         try { await _postgres.DisposeAsync(); } catch { /* may already be stopped */ }
     }
 
     [Test]
-    public async Task ListenConnectionKilled_DuringPublisherRunning_EmitsDisconnectThenRecovery_AndContinuesDelivering()
+    public async Task ListenConnectionKilled_DuringPublisherRunning_ContinuesDelivering()
     {
         // Arrange — kill the LISTEN connection from the Postgres side via pg_terminate_backend
         // rather than stop/restart the container. This is deterministic: the LISTEN session
@@ -62,7 +56,7 @@ public class NotificationBasedPublisherRecoveryTests
         // and the test is not at the mercy of Docker stop/start timing.
         var channel = $"channel_kill_{Guid.NewGuid():N}";
         await using var ctx = await BuildPublisherAsync(channel,
-            recovery: new ConnectionRecoveryOptions
+            recovery: new PostgresConnectionRecoveryOptions
             {
                 InitialDelay   = TimeSpan.FromMilliseconds(200),
                 MaxDelay       = TimeSpan.FromSeconds(2),
@@ -74,36 +68,19 @@ public class NotificationBasedPublisherRecoveryTests
         await ctx.Outbox.WriteAsync(SampleChange(1));
         await ctx.Publisher.StartAsync();
 
-        // Drain the pre-kill message so the post-recovery assertion is unambiguous.
+        // Drain the pre-kill message so the post-recovery assertion is unambiguous. Receiving it
+        // also proves the publisher is up and delivering before we kill the LISTEN backend.
         using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
             await ctx.Queue.Reader.ReadAsync(cts.Token);
-
-        // Wait until the state gauge reports 1 (LISTEN successfully attached). Polling
-        // is deterministic and exits as soon as ListenLoopAsync flips _listenerHealthy.
-        await WaitForAsync(
-            () => { _capture.RecordObservableInstruments();
-                    return _capture.LatestGaugeOf("raytree.connection.state", "postgres.notification") == 1; },
-            TimeSpan.FromSeconds(5),
-            "LISTEN session attached (gauge reports 1)");
 
         // Act — terminate the listener's backend process. pg_terminate_backend kills the
         // backend and closes the TCP connection so WaitAsync surfaces the drop on the next
         // network read (typically within a few hundred ms).
         await TerminateListenBackendsAsync(channel);
 
-        await WaitForAsync(
-            () => _capture.SumOf("raytree.connection.disconnects", "postgres.notification") >= 1,
-            TimeSpan.FromSeconds(15),
-            "disconnect metric on LISTEN drop");
-
-        await WaitForAsync(
-            () => _capture.SumOf("raytree.connection.recoveries", "postgres.notification", outcome: "succeeded") >= 1,
-            TimeSpan.FromSeconds(15),
-            "succeeded recovery after LISTEN reconnect");
-
         // Assert — a post-recovery message is delivered (NOTIFY fast-path or fallback poll).
         await ctx.Outbox.WriteAsync(SampleChange(2));
-        using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
+        using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
         {
             var received = await ctx.Queue.Reader.ReadAsync(cts.Token);
             Assert.That(received.EntityId, Is.EqualTo("2"));
@@ -147,11 +124,11 @@ public class NotificationBasedPublisherRecoveryTests
     }
 
     [Test]
-    public async Task PermanentKill_WithMaxAttempts2_EmitsExhaustedRecovery_AndExitsListenLoop()
+    public async Task PermanentKill_WithMaxAttempts2_ExitsListenLoop()
     {
         var channel = $"channel_exhaust_{Guid.NewGuid():N}";
         await using var ctx = await BuildPublisherAsync(channel,
-            recovery: new ConnectionRecoveryOptions
+            recovery: new PostgresConnectionRecoveryOptions
             {
                 InitialDelay   = TimeSpan.FromMilliseconds(100),
                 MaxDelay       = TimeSpan.FromMilliseconds(200),
@@ -165,16 +142,11 @@ public class NotificationBasedPublisherRecoveryTests
         // Kill the container permanently — DisposeAsync removes it entirely.
         await _postgres.DisposeAsync();
 
-        // The disconnect should fire (LISTEN breaks), then two reconnect attempts both fail,
-        // then the exhausted recovery is emitted and the listen loop exits.
+        // The LISTEN breaks, two reconnect attempts both fail, then the listen loop exits.
         await WaitForAsync(
-            () => _capture.SumOf("raytree.connection.recoveries", "postgres.notification", outcome: "exhausted") >= 1,
+            () => !ctx.Publisher.IsRunning,
             TimeSpan.FromSeconds(30),
-            "exhausted recovery after MaxAttempts=2");
-
-        Assert.That(_capture.SumOf("raytree.connection.disconnects", "postgres.notification"),
-            Is.GreaterThanOrEqualTo(1),
-            "disconnect must precede exhausted recovery");
+            "ListenLoopAsync to exit after MaxAttempts=2 exhausted");
 
         await ctx.Publisher.StopAsync();
     }
@@ -188,45 +160,33 @@ public class NotificationBasedPublisherRecoveryTests
         // process restart, by design.
         var channel = $"channel_disabled_{Guid.NewGuid():N}";
         await using var ctx = await BuildPublisherAsync(channel,
-            recovery: new ConnectionRecoveryOptions { Enabled = false });
+            recovery: new PostgresConnectionRecoveryOptions { Enabled = false });
 
+        await ctx.Outbox.WriteAsync(SampleChange(1));
         await ctx.Publisher.StartAsync();
 
-        // Poll until LISTEN attaches (gauge = 1) instead of a fixed warm-up delay.
-        await WaitForAsync(
-            () => { _capture.RecordObservableInstruments();
-                    return _capture.LatestGaugeOf("raytree.connection.state", "postgres.notification") == 1; },
-            TimeSpan.FromSeconds(5),
-            "LISTEN session attached");
+        // Receiving the first message proves the publisher is up and delivering.
+        using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            await ctx.Queue.Reader.ReadAsync(cts.Token);
 
         await TerminateListenBackendsAsync(channel);
 
         // With Enabled = false, ListenLoopAsync exits on the first fault. Wait until the
-        // task is done — at that point we have a strong invariant that no further
-        // recovery metrics CAN fire. Replaces a 2s blind delay with a polling check that
-        // exits as soon as the loop is provably done (typically within a few hundred ms).
+        // listen task is done — at that point the LISTEN fast-path is provably cold.
         await WaitForAsync(
             () => !ctx.Publisher.IsRunning,
             TimeSpan.FromSeconds(10),
             "ListenLoopAsync to exit (Enabled = false short-circuits reconnect)");
 
-        // Assert: disconnect fired, no recovery (succeeded or exhausted) was attempted.
-        Assert.That(_capture.SumOf("raytree.connection.disconnects", "postgres.notification"), Is.GreaterThanOrEqualTo(1),
-            "disconnect SHALL still be observed even with recovery disabled");
-        Assert.That(_capture.SumOf("raytree.connection.recoveries", "postgres.notification", outcome: "succeeded"),
-            Is.EqualTo(0), "Enabled = false SHALL skip reconnect — no succeeded recovery");
-        Assert.That(_capture.SumOf("raytree.connection.recoveries", "postgres.notification", outcome: "exhausted"),
-            Is.EqualTo(0), "Enabled = false SHALL skip reconnect — no exhausted recovery");
-
         await ctx.Publisher.StopAsync();
     }
 
     [Test]
-    public async Task OutboxOperations_DuringContainerStop_EmitPostgresOutboxDisconnect_ThenRecoveryOnRestart()
+    public async Task OutboxOperations_DuringContainerStop_ClassifiesConnectionFault()
     {
-        // 4b.5: cover the postgres.outbox observability path independently of postgres.notification.
-        // We exercise it directly via PostgreSqlOutbox calls (which is what OutboxPublisherService
-        // does internally) so the test is deterministic without standing up a full tracker.
+        // Cover the postgres.outbox connection-fault classification independently of
+        // postgres.notification. OutboxPublisherService relies on IsConnectionFault to demote
+        // its batch-error log from Error to Warning — verify the classifier here directly.
         var outbox = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
         {
             ConnectionString = _connectionString,
@@ -238,9 +198,8 @@ public class NotificationBasedPublisherRecoveryTests
         Assert.That(outbox.ConnectionComponent, Is.EqualTo("postgres.outbox"));
         Assert.That(outbox.ConnectionEndpoint,  Is.Not.Null.And.Contains(":"));
 
-        // Healthy call — no metric expected because we haven't simulated a fault.
+        // Healthy call — must not throw.
         await outbox.WriteAsync(SampleChange(1));
-        Assert.That(_capture.SumOf("raytree.connection.disconnects", "postgres.outbox"), Is.EqualTo(0));
 
         // Stop the container; the next outbox call should fail with a connection-classified exception.
         await _postgres.StopAsync();
@@ -252,12 +211,12 @@ public class NotificationBasedPublisherRecoveryTests
         Assert.That(thrown, Is.Not.Null, "Outbox write should throw when Postgres is stopped");
         Assert.That(outbox.IsConnectionFault(thrown!), Is.True,
             "The thrown exception SHALL be classified as a connection fault — that's the contract " +
-            "OutboxPublisherService relies on to emit the postgres.outbox disconnect metric.");
+            "OutboxPublisherService relies on to demote its batch-error log.");
     }
 
     // ---- helpers --------------------------------------------------------
 
-    private async Task<PublisherContext> BuildPublisherAsync(string channel, ConnectionRecoveryOptions recovery)
+    private async Task<PublisherContext> BuildPublisherAsync(string channel, PostgresConnectionRecoveryOptions recovery)
     {
         var queue = new InMemoryQueue();
         var outbox = new PostgreSqlOutbox<TestEntity>(new PostgreSqlOutboxOptions
@@ -270,7 +229,6 @@ public class NotificationBasedPublisherRecoveryTests
         await outbox.InitializeAsync();
 
         var tracker = EntityChangeTracker.Create()
-            .UseMeter(_meter)
             .ForEntity<TestEntity>(e => e
                 .UseOutbox(outbox)
                 .UsePublisher(queue)
@@ -332,69 +290,5 @@ public class NotificationBasedPublisherRecoveryTests
             Publisher.Dispose();
             Tracker.Dispose();
         }
-    }
-
-    /// <summary>
-    /// Filtered MeterListener — capture lives in-process for the duration of one test and tags
-    /// every measurement with its `component` / `outcome` tags so the assertions read like prose.
-    /// </summary>
-    private sealed class CapturingMeterListener : IDisposable
-    {
-        private readonly MeterListener _listener;
-        private readonly List<Recorded> _measurements = new();
-        private readonly object _gate = new();
-
-        public CapturingMeterListener(RayTreeMeter meter)
-        {
-            var owner = meter.InternalMeter;
-            _listener = new MeterListener
-            {
-                InstrumentPublished = (instrument, l) =>
-                {
-                    if (ReferenceEquals(instrument.Meter, owner)) l.EnableMeasurementEvents(instrument);
-                }
-            };
-            _listener.SetMeasurementEventCallback<long>  ((i, v, t, _) => Append(i, v, t));
-            _listener.SetMeasurementEventCallback<int>   ((i, v, t, _) => Append(i, v, t));
-            _listener.SetMeasurementEventCallback<double>((i, v, t, _) => Append(i, v, t));
-            _listener.Start();
-        }
-
-        private void Append(Instrument instrument, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags)
-        {
-            string? component = null, outcome = null;
-            foreach (var kv in tags)
-            {
-                if (kv.Key == "component") component = kv.Value as string;
-                else if (kv.Key == "outcome")   outcome   = kv.Value as string;
-            }
-            lock (_gate) _measurements.Add(new Recorded(instrument.Name, value, component, outcome));
-        }
-
-        public double SumOf(string instrumentName, string component, string? outcome = null)
-        {
-            lock (_gate)
-                return _measurements
-                    .Where(m => m.Name == instrumentName && m.Component == component
-                                && (outcome is null || m.Outcome == outcome))
-                    .Sum(m => m.Value);
-        }
-
-        /// <summary>Forces the observable gauges to emit. Used to deterministically sample the
-        /// connection-state gauge inside a polling helper instead of relying on a sleep.</summary>
-        public void RecordObservableInstruments() => _listener.RecordObservableInstruments();
-
-        public double? LatestGaugeOf(string instrumentName, string component)
-        {
-            lock (_gate)
-            {
-                var hit = _measurements.LastOrDefault(m => m.Name == instrumentName && m.Component == component);
-                return hit.Name is null ? null : hit.Value;
-            }
-        }
-
-        public void Dispose() => _listener.Dispose();
-
-        private readonly record struct Recorded(string Name, double Value, string? Component, string? Outcome);
     }
 }

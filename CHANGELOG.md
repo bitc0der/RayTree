@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.19-pre-release]
+
+### Removed — BREAKING
+- `ConnectionRecoveryOptions` (`RayTree.Core.Resilience`) and `ChangeTrackingRecoveryKeys` (`RayTree.Hosting`) are removed, along with the `ChangeTracking:Publisher:ConnectionRecovery` / `:Subscriber:ConnectionRecovery` config binding in `AddChangeTracking`. Each recovery-owning plugin now defines its own options type with identical field names, defaults, and validation: `PostgresConnectionRecoveryOptions` (`RayTree.Plugins.PostgreSQL.Resilience`) and `KafkaConnectionRecoveryOptions` (`RayTree.Plugins.Kafka`). The `ConnectionRecovery` property on `NotificationBasedPublisherOptions`, `KafkaPublisherOptions`, and `KafkaConsumerOptions` now returns the plugin-local type.
+- All four `raytree.connection.*` metric instruments (`disconnects`, `recoveries`, `recovery.duration`, `state`) are removed, along with the `RayTreeMeter` facade methods `RecordConnectionDisconnect`, `RecordConnectionRecovery`, and `RegisterConnectionStateGauge`. **Disconnect/recovery visibility is now log-only** (Postgres/Kafka retry + recovery + exhaustion logs; RabbitMQ publisher `Warning`/`Information`). The RabbitMQ consumer no longer observes recovery at all (no logger, no metrics). Dashboards/alerts built on any `raytree.connection.*` series break silently — a removed series produces no error, just a flat-lined chart.
+
+### Changed — BREAKING
+- `RayTreeMeter` exposes **no public metric-emission API**. `RecordPublishSuccess`, `RecordPublishFailure`, `RecordPayloadSize`, `RecordBatchSize`, and `RegisterPendingGauge` are now `internal` (all callers — Core and the IVT-privileged `NotificationBasedPublisher` — already see Core internals). The public surface collapses to `MeterName`, the constructors, `DefaultPendingCacheTtl`, and `Dispose()` — construct-and-observe only. Metric observation remains public via the `"RayTree"` meter name and `RayTree.OpenTelemetry`'s `AddRayTreeMetrics`.
+- `RabbitMqPublisher` and `RabbitMqConsumer` constructors no longer take a `RayTreeMeter?` parameter; `KafkaPublisher` and `KafkaConsumer` likewise drop their `RayTreeMeter?` parameter. The RabbitMQ/Kafka builder + subscriber extensions no longer forward a meter. Most callers go through the builder extensions and are unaffected; direct constructor callers drop the argument.
+
+### Migration
+- Recovery options — rename the type at the use site; field names and JSON keys below the section parent are unchanged:
+
+  ```csharp
+  // Before
+  builder.UseKafka(o => o.ConnectionRecovery = new RayTree.Core.Resilience.ConnectionRecoveryOptions { MaxAttempts = 5 });
+  // After
+  builder.UseKafka(o => o.ConnectionRecovery = new KafkaConnectionRecoveryOptions { MaxAttempts = 5 });
+  ```
+
+  The former host-bound `ChangeTracking:*:ConnectionRecovery` sections never auto-applied (callers had to merge them by hand); set recovery in the `UseKafka` / `UsePostgreSqlOutbox` configure lambda instead, reading your own bound section if desired.
+- Observability — drop any `raytree.connection.*` series from dashboards/alerts and switch to the recovery log signal.
+
+---
+
 ## [0.0.18-pre-release]
 
 ### Added

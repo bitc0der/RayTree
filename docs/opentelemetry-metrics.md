@@ -72,25 +72,7 @@ All instruments are tagged with `entity_type`. Counters and histograms tied to a
 
 ### Connection recovery
 
-Emitted by every connection-bearing plugin to make broker / database connection state observable. Tagged with `component` (one of `"rabbitmq.publisher"`, `"rabbitmq.consumer"`, `"kafka.publisher"`, `"kafka.consumer"`, `"postgres.notification"`, `"postgres.outbox"`) and `endpoint` (broker host:port or LISTEN channel name — never caller-supplied data).
-
-| Instrument | Kind | Unit | Tags | Source |
-|---|---|---|---|---|
-| `raytree.connection.disconnects` | counter | `{disconnects}` | `component`, `endpoint` | Each new fault cycle. RabbitMQ: `ConnectionShutdownAsync` with non-`Application` initiator. Kafka publisher: producer error handler with `Error.IsFatal`. Kafka consumer: fatal `KafkaException` from `Consume`. Postgres LISTEN: `WaitAsync` throws a classified connection fault. Postgres outbox: `OutboxPublisherService.ProcessBatchAsync` catches an exception classified by `IOutbox.IsConnectionFault`. |
-| `raytree.connection.recoveries` | counter | `{recoveries}` | `component`, `endpoint`, `outcome` (`"succeeded"` \| `"exhausted"`) | One per completed recovery cycle. RabbitMQ: `RecoverySucceededAsync` event (always `"succeeded"`). Kafka / Postgres: emitted when the plugin's rebuild loop completes or exhausts `ConnectionRecovery.MaxAttempts`. Postgres outbox: emitted on the first successful batch after a fault. |
-| `raytree.connection.recovery.duration` | histogram | `s` | `component`, `endpoint`, `outcome` | Wall-clock seconds from first detection to recovery completion (success or exhaustion). |
-| `raytree.connection.state` | observable gauge | `{state}` | `component`, `endpoint` | `1` while connected, `0` while in a fault cycle. Sampled per OTel collection tick. |
-
-#### Postgres has two components
-
-Postgres emits two distinct `component` values because they observe different code paths with different recovery shapes:
-
-- **`postgres.notification`** — the long-lived LISTEN connection inside `NotificationBasedPublisher.ListenLoopAsync`. Recovery is **active**: the plugin reconnects with exponential backoff bounded by `NotificationBasedPublisherOptions.ConnectionRecovery`.
-- **`postgres.outbox`** — the short-lived pooled connections used by `PostgreSqlOutbox` operations called from `OutboxPublisherService` and `NotificationBasedPublisher.FallbackPollingLoopAsync`. Recovery is **passive observation only**: the polling loop already retries naturally on the next tick; we just emit metrics + demote the per-batch `Error` log to `Warning` so a transient Postgres blip looks like one fault cycle, not a stream of unrelated errors.
-
-#### RabbitMQ recovery owned by the SDK
-
-RabbitMQ recovery is performed by `RabbitMQ.Client`'s built-in `AutomaticRecoveryEnabled = true`. RayTree subscribes to the SDK's `ConnectionShutdownAsync` / `RecoverySucceededAsync` events for metric emission only — no recovery code lives in RayTree. The library's `NetworkRecoveryInterval` controls timing; RayTree's `ConnectionRecoveryOptions` does not apply to RabbitMQ.
+Connection recovery is **not** exposed as metrics. The reconnect loops (Postgres LISTEN, Kafka publisher/consumer rebuild) and the outbox connection-fault log demotion all remain, but disconnect/recovery visibility is **log-only**: Postgres/Kafka emit retry, recovery, and exhaustion logs at `Information`/`Error`; the RabbitMQ publisher logs `Warning` on shutdown and `Information` on recovery (the RabbitMQ consumer has no logger and is silent for recovery). Each recovery-owning plugin tunes its loop via its own options type — `PostgresConnectionRecoveryOptions` (PostgreSQL) and `KafkaConnectionRecoveryOptions` (Kafka). RabbitMQ recovery is owned by `RabbitMQ.Client`'s `AutomaticRecoveryEnabled` (library default) and has no RayTree options.
 
 ## Conventions
 
@@ -116,7 +98,6 @@ Defaults from OTel's histogram aggregation are tuned for HTTP latencies. For Ray
 .AddView("raytree.outbox.publish.attempts",     new ExplicitBucketHistogramConfiguration { Boundaries = new[] { 1d, 2, 3, 5, 10 } })
 .AddView("raytree.subscriber.handler.attempts", new ExplicitBucketHistogramConfiguration { Boundaries = new[] { 1d, 2, 3, 5, 10 } })
 .AddView("raytree.outbox.payload.size",         new ExplicitBucketHistogramConfiguration { Boundaries = new[] { 256d, 1024, 4096, 16384, 65536, 262144, 1048576 } })
-.AddView("raytree.connection.recovery.duration", new ExplicitBucketHistogramConfiguration { Boundaries = new[] { 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120 } })
 ```
 
 ## Sample dashboards
@@ -129,9 +110,8 @@ Typical queries against the published metric names:
 - **Failure ratio**: `rate(raytree_outbox_messages_failed_total[5m]) / rate(raytree_outbox_writes_total[5m])`
 - **Outbox backlog alert**: `raytree_outbox_pending > 10000 for 5m`
 - **Retry shape**: `histogram_quantile(0.99, sum by (le) (rate(raytree_subscriber_handler_attempts_bucket[5m])))` — values > 1 indicate handlers are retrying
-- **Currently disconnected**: `raytree_connection_state == 0` — alert on `for: 1m` to allow normal in-flight recoveries to complete before paging
-- **Recovery flapping**: `rate(raytree_connection_recoveries_total{outcome="succeeded"}[15m]) > 0.1` — more than 6 recoveries per hour suggests a broker / network issue
-- **Recovery exhausted**: `increase(raytree_connection_recoveries_total{outcome="exhausted"}[1h]) > 0` — paging-grade alert; the plugin gave up
+
+Connection disconnect/recovery is no longer exposed as metrics — observe it through the plugin recovery logs (Postgres/Kafka retry + recovery, RabbitMQ publisher `Warning`/`Information`).
 
 ## Custom meter injection
 

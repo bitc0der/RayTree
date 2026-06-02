@@ -5,16 +5,12 @@ using Confluent.Kafka;
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Consumer;
-using RayTree.Core.Resilience;
-using RayTree.Core.Telemetry;
 using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.Kafka;
 
 public class KafkaConsumer : IQueueConsumer, IDisposable
 {
-    private const string ComponentName = "kafka.consumer";
-
     /// <summary>
     /// Discriminator for the post-handler action the poll thread must perform on a
     /// <see cref="ConsumeResult{TKey, TValue}"/> handed back by the subscriber.
@@ -29,13 +25,10 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
     private readonly KafkaConsumerOptions _options;
     private readonly ILogger<KafkaConsumer> _logger;
-    private readonly RayTreeMeter? _meter;
     private readonly CancellationTokenSource _disposeCts = new();
     private IConsumer<string, byte[]>? _consumer;
     private Task? _pollTask;
     private volatile bool _assigned;
-    private volatile bool _connected;
-    private readonly IDisposable? _stateGaugeSubscription;
 
     // When AckAfterHandler = true, the subscriber posts the original ConsumeResult here
     // and the poll thread drains the channel each iteration and calls Commit/Seek on its
@@ -56,20 +49,13 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
     public KafkaConsumer(
         KafkaConsumerOptions options,
-        ILoggerFactory       loggerFactory,
-        RayTreeMeter?        meter = null)
+        ILoggerFactory       loggerFactory)
     {
         _options = options       ?? throw new ArgumentNullException(nameof(options));
         _logger  = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
                        .CreateLogger<KafkaConsumer>();
-        _meter   = meter;
 
         _options.ConnectionRecovery.Validate();
-
-        _stateGaugeSubscription = _meter?.RegisterConnectionStateGauge(
-            component: ComponentName,
-            endpoint:  _options.BootstrapServers,
-            getState:  () => _connected ? 1 : 0);
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -103,7 +89,6 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
         _consumer = new ConsumerBuilder<string, byte[]>(config).Build();
         _consumer.Subscribe(_options.Topic);
-        _connected = true;
     }
 
     /// <summary>
@@ -177,8 +162,6 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                         // same poll thread. Pending deferred-ack actions reference the dying
                         // consumer and must be dropped — the broker will redeliver via the
                         // standard at-least-once contract once the new consumer joins.
-                        _connected = false;
-                        _meter?.RecordConnectionDisconnect(ComponentName, _options.BootstrapServers);
                         _logger.LogWarning(ex,
                             "Kafka consumer fatal error on topic {Topic}, rebuilding", _options.Topic);
 
@@ -290,12 +273,9 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                 }
 
                 _consumer = BuildConsumer();
-                _connected = true;
 
                 // Clamp at zero — backward NTP clock jump between disconnect and recovery.
                 var duration = Math.Max(0, (DateTime.UtcNow - startedAt).TotalSeconds);
-                _meter?.RecordConnectionRecovery(ComponentName, _options.BootstrapServers,
-                    outcome: "succeeded", duration);
                 _logger.LogInformation(
                     "Kafka consumer rebuilt for topic {Topic} after {AttemptCount} attempt(s) in {Duration:F2}s",
                     _options.Topic, attempt, duration);
@@ -306,9 +286,6 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
             {
                 if (recovery.MaxAttempts is int max && attempt >= max)
                 {
-                    var duration = Math.Max(0, (DateTime.UtcNow - startedAt).TotalSeconds);
-                    _meter?.RecordConnectionRecovery(ComponentName, _options.BootstrapServers,
-                        outcome: "exhausted", duration);
                     _logger.LogError(ex,
                         "Kafka consumer rebuild exhausted on topic {Topic} after {AttemptCount} attempts",
                         _options.Topic, attempt);
@@ -332,7 +309,7 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
     // the design.md decision "No shared retry helper in Core" for why extracting this
     // would require InternalsVisibleTo to plugin assemblies (architectural smell).
     // Keep the two copies in sync by convention; any change here should be mirrored there.
-    private static TimeSpan ComputeBackoffDelay(ConnectionRecoveryOptions opts, int attemptNum)
+    private static TimeSpan ComputeBackoffDelay(KafkaConnectionRecoveryOptions opts, int attemptNum)
     {
         var baseTicks = opts.InitialDelay.Ticks * Math.Pow(opts.Factor, attemptNum - 1);
         var cappedTicks = Math.Min(baseTicks, opts.MaxDelay.Ticks);
@@ -469,7 +446,6 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
         var waitMs = _options.PollTimeoutMs * 2 + 200;
         _pollTask?.Wait(TimeSpan.FromMilliseconds(waitMs));
 
-        _stateGaugeSubscription?.Dispose();
         _consumer?.Close();
         _consumer?.Dispose();
         _disposeCts.Dispose();

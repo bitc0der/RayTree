@@ -4,23 +4,18 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Publisher;
-using RayTree.Core.Telemetry;
 
 namespace RayTree.Plugins.Kafka;
 
 public class KafkaPublisher : IQueuePublisher, IDisposable
 {
-    private const string ComponentName = "kafka.publisher";
-
     private readonly KafkaPublisherOptions _options;
     private readonly ILogger<KafkaPublisher> _logger;
-    private readonly RayTreeMeter? _meter;
     private readonly SemaphoreSlim _buildLock = new(initialCount: 1, maxCount: 1);
-    private readonly IDisposable? _stateGaugeSubscription;
 
-    // volatile so the connection-state gauge callback (foreign thread, no lock) sees the
-    // latest reference rather than a JIT-cached read. Assignments under _buildLock provide
-    // a release barrier; the gauge does a Volatile.Read for the matching acquire.
+    // volatile so the librdkafka error callback (foreign thread, no lock) sees the latest
+    // reference rather than a JIT-cached read. Assignments under _buildLock provide a
+    // release barrier.
     private volatile IProducer<string, byte[]>? _producer;
 
     // 0 means "healthy". Any other value is the UTC ticks of the first fatal error in the
@@ -33,19 +28,12 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
 
     public KafkaPublisher(
         KafkaPublisherOptions options,
-        ILoggerFactory?       loggerFactory = null,
-        RayTreeMeter?         meter         = null)
+        ILoggerFactory?       loggerFactory = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger  = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<KafkaPublisher>();
-        _meter   = meter;
 
         _options.ConnectionRecovery.Validate();
-
-        _stateGaugeSubscription = _meter?.RegisterConnectionStateGauge(
-            component: ComponentName,
-            endpoint:  _options.BootstrapServers,
-            getState:  () => _producer is not null && Interlocked.Read(ref _faultTicks) == 0 ? 1 : 0);
     }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -93,18 +81,16 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
                 .SetErrorHandler(OnError)
                 .Build();
 
-            // Emit recovery metric if this build closed a fault cycle. Interlocked.Exchange
-            // clears the flag and reads the original timestamp in one operation, so a
-            // concurrent error handler can't lose the next disconnect event.
+            // Log recovery if this build closed a fault cycle. Interlocked.Exchange clears
+            // the flag and reads the original timestamp in one operation, so a concurrent
+            // error handler can't lose the next disconnect event.
             var faultTicks = Interlocked.Exchange(ref _faultTicks, 0);
             if (faultTicks != 0)
             {
                 // Clamp at 0 to defend against NTP-driven backward clock jumps between the
-                // fault stamp and rebuild — keeps the histogram from recording negatives.
+                // fault stamp and rebuild.
                 var duration = Math.Max(0,
                     (DateTime.UtcNow - new DateTime(faultTicks, DateTimeKind.Utc)).TotalSeconds);
-                _meter?.RecordConnectionRecovery(ComponentName, _options.BootstrapServers,
-                    outcome: "succeeded", duration);
                 _logger.LogInformation(
                     "Kafka producer rebuilt for {BootstrapServers} after {Duration:F2}s",
                     _options.BootstrapServers, duration);
@@ -138,7 +124,7 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
 
     /// <summary>
     /// librdkafka error callback. Runs on a foreign thread; does NO locking and NO disposal —
-    /// only atomic flag + metric + log. The real rebuild work happens on the next
+    /// only atomic flag + log. The real rebuild work happens on the next
     /// <see cref="GetProducerAsync"/> call where a normal call thread holds <see cref="_buildLock"/>.
     /// </summary>
     private void OnError(IProducer<string, byte[]> producer, Error error)
@@ -160,11 +146,10 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
             return;
         }
 
-        // First fatal in this cycle: stamp the timestamp and emit the disconnect metric.
+        // First fatal in this cycle: stamp the timestamp and log the disconnect.
         // Subsequent fatals during the same cycle (before rebuild) are no-ops.
         if (Interlocked.CompareExchange(ref _faultTicks, DateTime.UtcNow.Ticks, 0) == 0)
         {
-            _meter?.RecordConnectionDisconnect(ComponentName, _options.BootstrapServers);
             _logger.LogWarning(
                 "Kafka producer fatal error: {Reason} (code={Code}); will rebuild on next publish",
                 error.Reason, error.Code);
@@ -198,7 +183,6 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
         if (_disposed) return;
         _disposed = true;
 
-        _stateGaugeSubscription?.Dispose();
         _producer?.Dispose();
         _buildLock.Dispose();
     }

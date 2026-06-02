@@ -99,10 +99,10 @@ A single long-lived `NpgsqlConnection`. When `WaitAsync` throws an exception cla
 internal `PostgresFault` helper (transient `NpgsqlException`, `SocketException` / `IOException`
 inner, `08xxx` / `57P0x` SQL state, or `ObjectDisposedException`), the loop:
 
-1. Emits `raytree.connection.disconnects{component="postgres.notification", endpoint={ChannelName}}` once per fault cycle, logs `Warning`.
-2. Runs an inline exponential-backoff loop bounded by `NotificationBasedPublisherOptions.ConnectionRecovery` — disposes the broken connection, opens a fresh one, re-attaches the `Notification` handler, re-issues `LISTEN`.
-3. On success emits `raytree.connection.recoveries{outcome="succeeded"}` + duration, flips `_listenerHealthy = true` on the next `WaitAsync` wake.
-4. On `MaxAttempts` exhaustion emits `raytree.connection.recoveries{outcome="exhausted"}` and exits the LISTEN loop (fallback polling continues).
+1. Logs a `Warning` once per fault cycle.
+2. Runs an inline exponential-backoff loop bounded by `NotificationBasedPublisherOptions.ConnectionRecovery` (a `PostgresConnectionRecoveryOptions`) — disposes the broken connection, opens a fresh one, re-attaches the `Notification` handler, re-issues `LISTEN`.
+3. On success logs `Information` (with reconnect duration), flips `_listenerHealthy = true` on the next `WaitAsync` wake.
+4. On `MaxAttempts` exhaustion logs `Error` and exits the LISTEN loop (fallback polling continues).
 
 The fallback polling loop continues running throughout, providing best-effort delivery during the
 reconnect window. `TryClaimForPublishingAsync` prevents double-publish races between the two paths.
@@ -114,9 +114,8 @@ handles transient TCP errors, and the polling cadence is the retry. Instead, the
 classify each batch failure via `IOutbox.IsConnectionFault` (which `PostgreSqlOutbox` overrides
 to delegate to `PostgresFault`) and:
 
-- Emit `raytree.connection.disconnects{component="postgres.outbox"}` once per transition.
 - Demote the per-batch `Error` log to `Warning` so a transient Postgres blip looks like one fault cycle.
-- On the first subsequent successful batch, emit `raytree.connection.recoveries{outcome="succeeded"}` + duration.
+- On the first subsequent successful batch, log an `Information` "outbox connection recovered" entry (with duration).
 
 Non-connection-fault exceptions (e.g. unique-violation `23505`, syntax errors) bypass this path
 entirely — they still log at `Error` and surface to operators as application bugs.
@@ -135,7 +134,7 @@ write-side retry.
 | `PostgreSqlOutboxOptions.UseNotificationChannel` | `false` | Enable NOTIFY trigger |
 | `PostgreSqlOutboxOptions.NotificationChannel` | `null` | Channel name for NOTIFY |
 | `PostgreSqlOutboxOptions.FallbackPollingInterval` | `null` | Polling interval when LISTEN is down |
-| `NotificationBasedPublisherOptions.ConnectionRecovery` | `new()` (Enabled, 1s→30s, ×2, ±20% jitter, unlimited) | Tunes LISTEN reconnect backoff. Set `Enabled = false` to skip reconnect and rely on fallback polling only. |
+| `NotificationBasedPublisherOptions.ConnectionRecovery` | `new PostgresConnectionRecoveryOptions()` (Enabled, 1s→30s, ×2, ±20% jitter, unlimited) | Tunes LISTEN reconnect backoff. Set `Enabled = false` to skip reconnect and rely on fallback polling only. |
 | `PostgreSqlOutboxOptions.CleanupBatchSize` | `1000` | Rows per cleanup batch |
 | `PostgreSqlRepositoryOptions.ConnectionString` | `""` | PostgreSQL connection string |
 | `PostgreSqlRepositoryOptions.TableName` | `"{entity}_source"` | Source table name |

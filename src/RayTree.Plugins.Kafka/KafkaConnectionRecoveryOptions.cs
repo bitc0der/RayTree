@@ -1,21 +1,21 @@
-namespace RayTree.Core.Resilience;
+namespace RayTree.Plugins.Kafka;
 
 /// <summary>
-/// Tunes the connection-recovery retry shape for plugins that own their own reconnect loop
-/// (Postgres LISTEN, Kafka fatal-error rebuild). The values describe an exponential-backoff
-/// schedule: the Nth retry waits <c>min(InitialDelay × Factor^(N-1), MaxDelay)</c> seconds,
-/// jittered by <c>±JitterFraction</c>. RabbitMQ does not consume these options — the
-/// RabbitMQ.Client SDK owns its own recovery policy.
+/// Tunes the connection-recovery retry shape for the Kafka fatal-error rebuild loops owned by
+/// <c>KafkaPublisher</c> (producer rebuild on <c>SetErrorHandler</c> fault) and <c>KafkaConsumer</c>
+/// (consumer rebuild on a fatal <c>KafkaException</c> on the poll thread). The values describe an
+/// exponential-backoff schedule: the Nth retry waits <c>min(InitialDelay × Factor^(N-1), MaxDelay)</c>
+/// seconds, jittered by <c>±JitterFraction</c>.
 /// <para>
 /// <b>Validation timing:</b> per-field invariants (positive delays, factor &gt;= 1, jitter
 /// in [0, 1], positive MaxAttempts) are enforced at init time — they throw from object
 /// initializers before construction completes. Cross-field invariants
 /// (<c>MaxDelay &gt;= InitialDelay</c>) cannot be checked at init time because
 /// object-initializer assignment order is undefined; they're checked by <see cref="Validate"/>,
-/// which plugins call on first use before entering their retry loop.
+/// which the publisher/consumer call on first use before entering their rebuild loop.
 /// </para>
 /// </summary>
-public sealed class ConnectionRecoveryOptions
+public sealed class KafkaConnectionRecoveryOptions
 {
     private readonly TimeSpan _initialDelay = TimeSpan.FromSeconds(1);
     private readonly TimeSpan _maxDelay = TimeSpan.FromSeconds(30);
@@ -24,8 +24,8 @@ public sealed class ConnectionRecoveryOptions
     private readonly int? _maxAttempts;
 
     /// <summary>
-    /// Master switch. When <c>false</c>, plugins SHALL surface connection-fault exceptions
-    /// to the caller without attempting any reconnect.
+    /// Master switch. When <c>false</c>, the publisher/consumer SHALL surface connection-fault
+    /// exceptions to the caller without attempting any rebuild.
     /// </summary>
     public bool Enabled { get; init; } = true;
 
@@ -99,8 +99,8 @@ public sealed class ConnectionRecoveryOptions
     /// <summary>
     /// Validates cross-field invariants (e.g. <c>MaxDelay &gt;= InitialDelay</c>). Per-field
     /// invariants are enforced at init time; this method catches combinations that the init
-    /// accessors cannot see because object-initializer ordering is undefined. Plugins SHALL
-    /// call this before entering their retry loop.
+    /// accessors cannot see because object-initializer ordering is undefined. The publisher/consumer
+    /// SHALL call this before entering their rebuild loop.
     /// </summary>
     public void Validate()
     {

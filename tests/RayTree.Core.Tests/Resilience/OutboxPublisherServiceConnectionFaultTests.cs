@@ -17,10 +17,10 @@ using RayTree.Plugins.Serializers.Json;
 namespace RayTree.Core.Tests.Resilience;
 
 /// <summary>
-/// Covers the outbox connection-fault observability hooks added to
-/// <see cref="OutboxPublisherService"/> — disconnect/recovery metric emission, per-transition
-/// gating, and log-level demotion when <see cref="IOutbox.IsConnectionFault"/> classifies
-/// the batch failure as a connection-level fault.
+/// Covers the outbox connection-fault observability hooks on
+/// <see cref="OutboxPublisherService"/> — per-transition gating and log-level demotion when
+/// <see cref="IOutbox.IsConnectionFault"/> classifies the batch failure as a connection-level
+/// fault. Connection metrics were removed; recovery is now observed via logs only.
 /// </summary>
 [TestFixture]
 public class OutboxPublisherServiceConnectionFaultTests
@@ -150,7 +150,7 @@ public class OutboxPublisherServiceConnectionFaultTests
     }
 
     [Test]
-    public async Task ConnectionFault_FirstFailure_EmitsDisconnect_AndLogsWarningNotError()
+    public async Task ConnectionFault_FirstFailure_LogsWarningNotError()
     {
         var outbox = new StubOutbox { IsFault = true, Component = "postgres.outbox", Endpoint = "host:5432" };
         var (publisher, meter, collector, logs, factory) = Build(outbox);
@@ -158,14 +158,8 @@ public class OutboxPublisherServiceConnectionFaultTests
 
         using var svc = new OutboxPublisherService(publisher, typeof(Sample), FastPolling, factory, meter);
         await svc.StartAsync();
-        await WaitForAsync(() => collector.Sum("raytree.connection.disconnects") >= 1, TimeSpan.FromSeconds(3));
+        await WaitForAsync(() => logs.Contains(LogLevel.Warning, "Outbox connection fault"), TimeSpan.FromSeconds(3));
         await svc.StopAsync();
-
-        Assert.That(collector.Sum("raytree.connection.disconnects"), Is.EqualTo(1),
-            "Disconnect counter should fire exactly once across multiple failed batches");
-        var disconnect = collector.Get("raytree.connection.disconnects")[0];
-        Assert.That(disconnect.Tags["component"], Is.EqualTo("postgres.outbox"));
-        Assert.That(disconnect.Tags["endpoint"],  Is.EqualTo("host:5432"));
 
         Assert.That(logs.Contains(LogLevel.Warning, "Outbox connection fault"), Is.True);
         // The Error log path for batch errors must NOT fire on connection faults.
@@ -174,7 +168,7 @@ public class OutboxPublisherServiceConnectionFaultTests
     }
 
     [Test]
-    public async Task ConnectionFault_RecoversOnNextSuccessfulBatch_EmitsRecoveryMetric_AndInfoLog()
+    public async Task ConnectionFault_RecoversOnNextSuccessfulBatch_LogsInfo()
     {
         var outbox = new StubOutbox { IsFault = true, Component = "postgres.outbox", Endpoint = "h:5432", HealAfter = 2 };
         var (publisher, meter, collector, logs, factory) = Build(outbox);
@@ -183,21 +177,17 @@ public class OutboxPublisherServiceConnectionFaultTests
         using var svc = new OutboxPublisherService(publisher, typeof(Sample), FastPolling, factory, meter);
         await svc.StartAsync();
         await WaitForAsync(() =>
-            collector.Sum("raytree.connection.recoveries") >= 1, TimeSpan.FromSeconds(5));
+            logs.Contains(LogLevel.Information, "Outbox connection recovered"), TimeSpan.FromSeconds(5));
         await svc.StopAsync();
 
-        var recovery = collector.Get("raytree.connection.recoveries")[0];
-        Assert.That(recovery.Tags["component"], Is.EqualTo("postgres.outbox"));
-        Assert.That(recovery.Tags["outcome"],   Is.EqualTo("succeeded"));
-        Assert.That(collector.Get("raytree.connection.recovery.duration"), Has.Count.GreaterThanOrEqualTo(1));
         Assert.That(logs.Contains(LogLevel.Information, "Outbox connection recovered"), Is.True);
     }
 
     [Test]
-    public async Task NonConnectionFault_EmitsNoMetric_AndPreservesErrorLog()
+    public async Task NonConnectionFault_PreservesErrorLog()
     {
         // IsFault = false: outbox classifies the exception as non-connection. The existing
-        // Error log path SHALL be preserved and no connection metric SHALL be emitted.
+        // Error log path SHALL be preserved.
         var outbox = new StubOutbox { IsFault = false, Component = "postgres.outbox" };
         var (publisher, meter, collector, logs, factory) = Build(outbox);
         using var _ = meter; using var __ = collector; using var ___ = publisher; using var ____ = factory;
@@ -207,18 +197,15 @@ public class OutboxPublisherServiceConnectionFaultTests
         await WaitForAsync(() => logs.Count(LogLevel.Error) >= 1, TimeSpan.FromSeconds(3));
         await svc.StopAsync();
 
-        Assert.That(collector.Sum("raytree.connection.disconnects"), Is.EqualTo(0),
-            "Non-fault exceptions must not emit the connection-disconnect metric");
         Assert.That(logs.Contains(LogLevel.Error, "Error processing outbox batch"), Is.True,
             "Non-fault exceptions must preserve the Error log path");
     }
 
     [Test]
-    public async Task ConnectionComponentNull_FallsThroughToErrorPath_NoMetric()
+    public async Task ConnectionComponentNull_FallsThroughToErrorPath()
     {
         // Even when IsFault = true, a null ConnectionComponent means the outbox declines
-        // to participate in connection observability. Fall through to the Error path,
-        // no metric emission.
+        // to participate in connection observability. Fall through to the Error path.
         var outbox = new StubOutbox { IsFault = true, Component = null };
         var (publisher, meter, collector, logs, factory) = Build(outbox);
         using var _ = meter; using var __ = collector; using var ___ = publisher; using var ____ = factory;
@@ -228,7 +215,6 @@ public class OutboxPublisherServiceConnectionFaultTests
         await WaitForAsync(() => logs.Count(LogLevel.Error) >= 1, TimeSpan.FromSeconds(3));
         await svc.StopAsync();
 
-        Assert.That(collector.Sum("raytree.connection.disconnects"), Is.EqualTo(0));
         Assert.That(logs.Contains(LogLevel.Error, "Error processing outbox batch"), Is.True);
     }
 
