@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.20-pre-release]
+
+- Minor cleanup on `IOutbox`
+
+---
+
 ## [0.0.19-pre-release]
 
 ### Removed — BREAKING

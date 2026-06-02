@@ -22,7 +22,7 @@ internal sealed class EntityBuilder<TEntity> : IEntityBuilder<TEntity>
     where TEntity : class
 {
     private readonly ChangeSubscriberBuilder _subscriberBuilder;
-    private readonly EntityPublisherBuilder<TEntity> _pubBuilder;
+    private readonly IEntityPublisherBuilder<TEntity> _pubBuilder;
     private readonly EntitySubscriberBuilder<TEntity> _subBuilder;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<EntityBuilder<TEntity>> _logger;

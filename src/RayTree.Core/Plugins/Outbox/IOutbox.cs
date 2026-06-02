@@ -1,5 +1,4 @@
 using RayTree.Core.Models;
-using RayTree.Core.Tracking;
 
 namespace RayTree.Core.Plugins.Outbox;
 
@@ -12,13 +11,6 @@ public interface IOutbox
 
     Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(
         int batchSize,
-        CancellationToken cancellationToken = default)
-        where TEntity : class;
-
-    Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(
-        ChangeType? changeType = null,
-        DateTime? since = null,
-        int batchSize = 100,
         CancellationToken cancellationToken = default)
         where TEntity : class;
 

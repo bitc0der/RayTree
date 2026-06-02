@@ -1,7 +1,6 @@
 using RayTree.Core.Models;
 using RayTree.Core.Plugins.Outbox;
 using RayTree.Core.Telemetry;
-using RayTree.Core.Tracking;
 using RayTree.Plugins.InMemory;
 
 namespace RayTree.Core.Tests.Telemetry;
@@ -28,8 +27,6 @@ public class RayTreeMeterPendingGaugeCacheTests
             => _inner.WriteAsync(change, ct);
         public Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(int batchSize, CancellationToken ct = default) where TEntity : class
             => _inner.GetUnpublishedAsync<TEntity>(batchSize, ct);
-        public Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(ChangeType? changeType, DateTime? since, int batchSize, CancellationToken ct = default) where TEntity : class
-            => _inner.GetUnpublishedAsync<TEntity>(changeType, since, batchSize, ct);
         public Task MarkPublishedAsync(long id, CancellationToken ct = default) => _inner.MarkPublishedAsync(id, ct);
         public Task<bool> TryClaimForPublishingAsync(long id, CancellationToken ct = default) => _inner.TryClaimForPublishingAsync(id, ct);
         public Task RevertClaimAsync(long id, CancellationToken ct = default) => _inner.RevertClaimAsync(id, ct);

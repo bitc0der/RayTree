@@ -202,48 +202,6 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         return changes;
     }
 
-    public async Task<IReadOnlyList<EntityChange<T>>> GetUnpublishedAsync<T>(
-        ChangeType? changeType = null,
-        DateTime? since = null,
-        int batchSize = 100,
-        CancellationToken cancellationToken = default)
-        where T : class
-    {
-        if (typeof(T) != typeof(TEntity))
-            throw new InvalidOperationException($"This outbox handles {typeof(TEntity).Name}, not {typeof(T).Name}");
-
-        var changes = new List<EntityChange<T>>();
-
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-
-        var sql = $"""
-                   SELECT {_selectColumns}
-                   FROM {_options.OutboxTableName}
-                   WHERE published = FALSE AND entity_type = @EntityType
-                   """;
-
-        if (changeType.HasValue)
-            sql += " AND change_type = @ChangeType";
-        if (since.HasValue)
-            sql += " AND timestamp >= @Since";
-        sql += " ORDER BY timestamp LIMIT @BatchSize";
-
-        await using var cmd = new NpgsqlCommand(sql, conn);
-        cmd.Parameters.Add(new("EntityType", typeof(TEntity).FullName!));
-        cmd.Parameters.Add(new("BatchSize", batchSize));
-        if (changeType.HasValue)
-            cmd.Parameters.Add(new("ChangeType", changeType.Value.ToString()));
-        if (since.HasValue)
-            cmd.Parameters.Add(new("Since", since.Value));
-
-        await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-            changes.Add((EntityChange<T>)(object)ReadEntityChange(reader));
-
-        return changes;
-    }
-
     public Task MarkPublishedAsync(long id, CancellationToken cancellationToken = default)
         => ExecuteNonQueryAsync($"""
                                  UPDATE {_options.OutboxTableName}

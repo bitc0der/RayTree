@@ -57,22 +57,6 @@ public class InMemoryOutboxTests
     }
 
     [Test]
-    public async Task GetUnpublishedAsync_WithChangeTypeFilter_ReturnsMatchingChanges()
-    {
-        var outbox = new InMemoryOutbox();
-        var change1 = new EntityChange<TestEntity> { EntityType = typeof(TestEntity).FullName!, EntityId = "1", ChangeType = ChangeType.Insert, State = new TestEntity { Id = 1 } };
-        var change2 = new EntityChange<TestEntity> { EntityType = typeof(TestEntity).FullName!, EntityId = "2", ChangeType = ChangeType.Delete, State = new TestEntity { Id = 2 } };
-
-        await outbox.WriteAsync(change1);
-        await outbox.WriteAsync(change2);
-
-        var filtered = await outbox.GetUnpublishedAsync<TestEntity>(changeType: ChangeType.Insert, batchSize: 10);
-
-        Assert.That(filtered, Has.Count.EqualTo(1));
-        Assert.That(filtered[0].ChangeType, Is.EqualTo(ChangeType.Insert));
-    }
-
-    [Test]
     public async Task CleanupPublishedAsync_RemovesOldPublishedChanges()
     {
         var outbox = new InMemoryOutbox();

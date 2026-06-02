@@ -85,27 +85,6 @@ public class PostgreSqlOutboxIntegrationTests : IAsyncDisposable
     }
 
     [Test]
-    public async Task GetUnpublishedAsync_WithChangeTypeFilter_ReturnsMatchingChanges()
-    {
-        await _outbox.WriteAsync(CreateTestChange(changeType: ChangeType.Insert));
-        await _outbox.WriteAsync(CreateTestChange(changeType: ChangeType.Delete));
-
-        var filtered = await _outbox.GetUnpublishedAsync<TestEntity>(changeType: ChangeType.Insert, batchSize: 10);
-        Assert.That(filtered, Has.Count.EqualTo(1));
-        Assert.That(filtered[0].ChangeType, Is.EqualTo(ChangeType.Insert));
-    }
-
-    [Test]
-    public async Task GetUnpublishedAsync_WithSinceFilter_ReturnsMatchingChanges()
-    {
-        await _outbox.WriteAsync(CreateTestChange(timestamp: DateTime.UtcNow.AddHours(-2)));
-        await _outbox.WriteAsync(CreateTestChange(timestamp: DateTime.UtcNow));
-
-        var filtered = await _outbox.GetUnpublishedAsync<TestEntity>(since: DateTime.UtcNow.AddMinutes(-30), batchSize: 10);
-        Assert.That(filtered, Has.Count.EqualTo(1));
-    }
-
-    [Test]
     public async Task GetByIdAsync_WithNonExistentId_ReturnsNull()
     {
         var result = await _outbox.GetByIdAsync<TestEntity>(999);

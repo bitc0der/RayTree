@@ -37,25 +37,6 @@ public class InMemoryOutbox : IOutbox
         return Task.FromResult<IReadOnlyList<EntityChange<TEntity>>>(changes);
     }
 
-    public Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(
-        ChangeType? changeType = null,
-        DateTime? since = null,
-        int batchSize = 100,
-        CancellationToken cancellationToken = default)
-        where TEntity : class
-    {
-        var changes = _store.Values
-            .OfType<EntityChange<TEntity>>()
-            .Where(c => !c.Published)
-            .Where(c => !changeType.HasValue || c.ChangeType == changeType.Value)
-            .Where(c => !since.HasValue || c.Timestamp >= since.Value)
-            .OrderBy(c => c.Timestamp)
-            .Take(batchSize)
-            .ToList();
-
-        return Task.FromResult<IReadOnlyList<EntityChange<TEntity>>>(changes);
-    }
-
     public Task MarkPublishedAsync(long id, CancellationToken cancellationToken = default)
     {
         if (_store.TryGetValue(id, out var change))
