@@ -57,7 +57,18 @@ The connection-recovery metrics were the *second* piece of Core that plugins rea
 
 **Alternative considered:** keep the instruments but stop emitting (no-op). Rejected — dead instruments on the public meter mislead operators into thinking the series exist; a clean removal is honest and shrinks `RayTreeMeter`. **Alternative considered:** move the metrics per-plugin (each plugin owns its own meter). Rejected — the user's intent is removal, not relocation, and per-plugin meters would fragment the single `"RayTree"` meter that the OTel integration deliberately exposes.
 
-### 5. Test relocation
+### 5. Narrow RayTreeMeter's public emit surface to internal
+
+Removing the connection facade exposes a latent simplification. `RayTreeMeter` had three categories of public method: the connection facade (now removed), and the publisher-side emit/register methods (`RecordPublishSuccess`, `RecordPublishFailure`, `RecordPayloadSize`, `RecordBatchSize`, `RegisterPendingGauge`). The connection facade was public **out of necessity** — Kafka and RabbitMQ plugins have no `InternalsVisibleTo` and could only reach it through the public API. The other five were public only by association; their actual callers are:
+
+- Core itself (`OutboxPublisherService`, `ChangeSubscriber`, `EntityChangeTracker`, `ChangeTrackingBuilder`), and
+- `NotificationBasedPublisher` in `RayTree.Plugins.PostgreSQL` (the NOTIFY fast-path emits the same publish metrics) — which **is** an `InternalsVisibleTo`-privileged assembly (`RayTree.Core.csproj` grants it, alongside `RayTree.EntityFrameworkCore` and the test projects).
+
+So all five can become `internal` with no loss of reachability: every caller already sees Core internals. Kafka/RabbitMQ never call them (their publish metrics are emitted by Core's `OutboxPublisherService` on their behalf). The net result is that **`RayTreeMeter` exposes no public way to emit a metric** — its public surface is `MeterName`, the two constructors, `DefaultPendingCacheTtl`, and `Dispose()`. It becomes a construct-it / let-Core-fill-it / observe-via-OTel type. This is the correct shape: metric *emission* is a Core-internal implementation concern; metric *observation* is the public contract, and that lives in `RayTree.OpenTelemetry` (`AddRayTreeMetrics`) and the `"RayTree"` meter name, both untouched.
+
+**Why fold it in now rather than later:** the visibility change is only *safe and obvious* once the connection facade is gone — while that facade existed, "all emit methods are internal" was false, so the narrowing had no clean line to draw. Doing both in one change leaves the type in a coherent end state instead of a half-public one. **Alternative considered:** leave them public for hypothetical caller "custom instrumentation." Rejected — these methods take RayTree-internal shapes (`ChangeType`, entity `Type`, lag seconds) that only Core can meaningfully populate; they were never a usable public extension point. A caller wanting custom metrics uses their own `Meter`, not RayTree's emit methods.
+
+### 6. Test relocation
 
 `ConnectionRecoveryOptionsTests` (validation/defaults) splits into the PostgreSQL and Kafka test projects, asserting against the plugin-local type. `ConnectionRecoveryConfigurationTests` (Hosting binding) is removed — the binding it tested is gone. `NotificationBasedPublisherRecoveryTests` and the Kafka recovery tests update the referenced type name only.
 

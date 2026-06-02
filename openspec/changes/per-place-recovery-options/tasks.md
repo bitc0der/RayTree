@@ -21,8 +21,9 @@
 ## 4. Remove connection-recovery metrics from RayTreeMeter
 
 - [ ] 4.1 In `src/RayTree.Core/Telemetry/RayTreeMeter.cs` remove the four `raytree.connection.*` instruments (`ConnectionDisconnects`, `ConnectionRecoveries`, `ConnectionRecoveryDuration`, the `raytree.connection.state` observable gauge), their `CreateCounter`/`CreateHistogram`/`CreateObservableGauge` registrations, the `_connectionStateSources` list, the `_connectionStateGate` lock, the `ObserveConnectionStates` callback, and the nested `ConnectionStateSubscription` type.
-- [ ] 4.2 Remove the three public facade methods `RecordConnectionDisconnect`, `RecordConnectionRecovery`, and `RegisterConnectionStateGauge`. Leave all other instruments and the `ComponentTag`/`EndpointTag`/`OutcomeTag` helpers only if still used elsewhere; otherwise remove the now-orphaned tag helpers.
-- [ ] 4.3 Build `dotnet build src/RayTree.Core -c Release` to surface every plugin/test call site of the removed members.
+- [ ] 4.2 Remove the three public facade methods `RecordConnectionDisconnect`, `RecordConnectionRecovery`, and `RegisterConnectionStateGauge`. Remove the now-orphaned `ComponentTag`/`EndpointTag`/`OutcomeTag` helpers if nothing else uses them.
+- [ ] 4.3 Narrow the remaining emit/register methods to `internal`: `RecordPublishSuccess`, `RecordPublishFailure`, `RecordPayloadSize`, `RecordBatchSize`, `RegisterPendingGauge`. Verify `RayTreeMeter`'s public surface is now only `MeterName`, the constructors, `DefaultPendingCacheTtl`, and `Dispose()`.
+- [ ] 4.4 Build `dotnet build src/RayTree.Core -c Release`, then `dotnet build src/RayTree.Plugins.PostgreSQL -c Release` to confirm the PostgreSQL plugin (IVT-privileged) still compiles against the internalized members; surface any remaining call sites of the removed connection facade.
 
 ## 5. Remove metric emission at all call sites
 
@@ -40,11 +41,12 @@
 - [ ] 6.2 Delete `tests/RayTree.Core.Tests/Resilience/ConnectionRecoveryConfigurationTests.cs` (host binding removed) and `tests/RayTree.Core.Tests/Resilience/RecoveryMetricsTests.cs` (instruments removed).
 - [ ] 6.3 Delete `tests/RayTree.Plugins.RabbitMQ.Tests/RabbitMqRecoveryMetricsTests.cs` (RabbitMQ recovery metrics removed).
 - [ ] 6.4 Strip metric assertions from `tests/RayTree.Plugins.Kafka.Tests/KafkaRecoveryMetricsTests.cs`, `tests/RayTree.Core.Tests/Resilience/OutboxPublisherServiceConnectionFaultTests.cs`, and `tests/RayTree.Plugins.PostgreSQL.Tests/NotificationBasedPublisherRecoveryTests.cs`; retarget the plugin-local option types and keep the log/behavior assertions.
-- [ ] 6.5 Run `dotnet test tests/RayTree.Core.Tests`, the PostgreSQL/Kafka/RabbitMQ test projects (unit-only filter where Docker is unavailable); all green.
+- [ ] 6.5 Confirm tests still compile against the internalized emit methods (test projects have `InternalsVisibleTo`); any test that called a now-`internal` method as "public" needs no change beyond the build passing. If a test asserted on the removed public facade, delete that assertion.
+- [ ] 6.6 Run `dotnet test tests/RayTree.Core.Tests`, the PostgreSQL/Kafka/RabbitMQ test projects (unit-only filter where Docker is unavailable); all green.
 
 ## 7. Docs and changelog
 
-- [ ] 7.1 Update `CLAUDE.md` (Connection recovery section + the `RayTreeMeter` "18 instruments" count and the four shared connection instruments paragraph) and `AGENTS.md`: describe the per-plugin options types, the removed Hosting binding, and the removed connection metrics (recovery is log-only).
+- [ ] 7.1 Update `CLAUDE.md` (Connection recovery section + the `RayTreeMeter` "18 instruments" count and the four shared connection instruments paragraph; note that emit methods are now `internal` and the public surface is construct-and-observe only) and `AGENTS.md`: describe the per-plugin options types, the removed Hosting binding, the removed connection metrics (recovery is log-only), and the narrowed `RayTreeMeter` public surface.
 - [ ] 7.2 Update `docs/opentelemetry-metrics.md` (remove the four `raytree.connection.*` rows and bucket guidance), and the plugin READMEs (`src/RayTree.Plugins.RabbitMQ/README.md`, `src/RayTree.Plugins.PostgreSQL/README.md`, `src/RayTree.Plugins.Kafka/README.md`) where they reference the Core type, the bound config sections, or the connection metrics.
 - [ ] 7.3 Add a `CHANGELOG.md` entry under a new version: BREAKING — `ConnectionRecoveryOptions` + `ChangeTrackingRecoveryKeys` removed (replaced by `PostgresConnectionRecoveryOptions` / `KafkaConnectionRecoveryOptions`); all `raytree.connection.*` metrics + `RayTreeMeter.RecordConnection*`/`RegisterConnectionStateGauge` removed; RabbitMQ publisher/consumer constructors no longer take `RayTreeMeter`. Include the before/after migration snippet and the metrics-removal observability note.
 - [ ] 7.4 Final full `dotnet build RayTree.slnx -c Release` + run the non-Docker unit-test suite; confirm clean.

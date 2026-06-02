@@ -22,6 +22,10 @@
 - **Behavior and logs are otherwise unchanged.** All reconnect loops (Postgres LISTEN, Kafka rebuild), the `IOutbox` connection-fault classification (`IsConnectionFault` / `ConnectionComponent` / `ConnectionEndpoint`), the `Error→Warning` outbox log demotion, and every recovery log entry are retained. This change removes observability-via-metrics only.
 - RabbitMQ still exposes no recovery options (SDK-owned).
 
+### Narrow the RayTreeMeter public surface
+
+- The connection facade was the **only** metric-emission API that had to be public (Kafka/RabbitMQ plugins have no `InternalsVisibleTo`). With it gone, the remaining emit/register methods — `RecordPublishSuccess`, `RecordPublishFailure`, `RecordPayloadSize`, `RecordBatchSize`, `RegisterPendingGauge` — are called only from Core and from the PostgreSQL plugin/tests, all of which already see Core internals via `InternalsVisibleTo`. Make these five methods `internal`. `RayTreeMeter`'s public surface collapses to `MeterName`, its constructors, `DefaultPendingCacheTtl`, and `Dispose()` — a construct-and-observe type with **all metric emission internal**.
+
 ## Capabilities
 
 ### New Capabilities
@@ -36,6 +40,7 @@
 - **Public API (breaking):**
   - Removed: `RayTree.Core.Resilience.ConnectionRecoveryOptions`, `RayTree.Hosting.ChangeTrackingRecoveryKeys`, and the `ChangeTracking:*:ConnectionRecovery` configuration binding.
   - Removed: `RayTreeMeter.RecordConnectionDisconnect`, `RecordConnectionRecovery`, `RegisterConnectionStateGauge`, and the four `raytree.connection.*` instruments.
+  - Narrowed to `internal`: `RayTreeMeter.RecordPublishSuccess`, `RecordPublishFailure`, `RecordPayloadSize`, `RecordBatchSize`, `RegisterPendingGauge` (no longer part of the public API; callers all have `InternalsVisibleTo`).
   - Removed: the `RayTreeMeter?` constructor parameter on `RabbitMqConsumer` and `RabbitMqPublisher` (and the corresponding meter forwarding in the RabbitMQ builder/subscriber extensions).
   - Added: `PostgresConnectionRecoveryOptions` (PostgreSQL plugin), `KafkaConnectionRecoveryOptions` (Kafka plugin).
   - Changed property types: `ConnectionRecovery` on the three plugin options classes now returns the plugin-local type.
