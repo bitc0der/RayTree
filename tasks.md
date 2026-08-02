@@ -47,7 +47,7 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
   `AddKeyParameters`/`MapEntity` use raw `PropertyInfo.GetValue`/`SetValue`, even though `EntityColumnMapper.SetValue` (compiled delegate cache) already exists and is used by `PostgreSqlOutbox.ReadEntityChange`.
   Fix: route through the same `EntityColumnMapper` helper.
 
-- [ ] **9. `Enum.Parse<ChangeType>` on 3 hot paths**
+- [x] **9. `Enum.Parse<ChangeType>` on 3 hot paths**
   [src/RayTree.Plugins.Kafka/KafkaConsumer.cs:431](src/RayTree.Plugins.Kafka/KafkaConsumer.cs#L431), [src/RayTree.Plugins.RabbitMQ/RabbitMqConsumer.cs:212](src/RayTree.Plugins.RabbitMQ/RabbitMqConsumer.cs#L212), [src/RayTree.Plugins.PostgreSQL/Outbox/PostgreSqlOutbox.cs:329](src/RayTree.Plugins.PostgreSQL/Outbox/PostgreSqlOutbox.cs#L329)
   Same class of issue already fixed for `RayTreeMeter.ChangeTag` — reflection-based parse per message/row.
   Fix: replace with a `switch`.

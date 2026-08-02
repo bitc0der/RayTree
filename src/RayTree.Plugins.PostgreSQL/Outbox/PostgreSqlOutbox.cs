@@ -320,7 +320,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         {
             Id = reader.GetInt64(0),
             EntityId = reader.GetString(1),
-            ChangeType = Enum.Parse<ChangeType>(reader.GetString(2)),
+            ChangeType = ParseChangeType(reader.GetString(2)),
             Timestamp = reader.GetDateTime(3),
             Version = reader.GetInt32(4),
             CorrelationId = reader.GetGuid(5),
@@ -347,6 +347,15 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
         return change;
     }
+
+    // Enum.Parse is reflection-based; a switch avoids that on every row read.
+    private static ChangeType ParseChangeType(string value) => value switch
+    {
+        nameof(ChangeType.Insert) => ChangeType.Insert,
+        nameof(ChangeType.Update) => ChangeType.Update,
+        nameof(ChangeType.Delete) => ChangeType.Delete,
+        _ => Enum.Parse<ChangeType>(value)
+    };
 
     private async Task ExecuteNonQueryAsync(string sql, NpgsqlParameter parameter, CancellationToken cancellationToken)
     {

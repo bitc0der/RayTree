@@ -209,7 +209,7 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         {
             EntityType = GetHeader(headers, "entity_type"),
             EntityId = GetHeader(headers, "entity_id"),
-            ChangeType = Enum.Parse<ChangeType>(GetHeader(headers, "change_type")),
+            ChangeType = ParseChangeType(GetHeader(headers, "change_type")),
             Version = int.TryParse(GetHeader(headers, "version"), out var v) ? v : 0,
             CorrelationId = Guid.TryParse(props.MessageId, out var g) ? g : Guid.Empty,
             Timestamp = props.Timestamp.UnixTime > 0
@@ -218,6 +218,15 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
             Payload = body
         };
     }
+
+    // Enum.Parse is reflection-based; a switch avoids that on every message.
+    private static ChangeType ParseChangeType(string value) => value switch
+    {
+        nameof(ChangeType.Insert) => ChangeType.Insert,
+        nameof(ChangeType.Update) => ChangeType.Update,
+        nameof(ChangeType.Delete) => ChangeType.Delete,
+        _ => Enum.Parse<ChangeType>(value)
+    };
 
     private static string GetHeader(IDictionary<string, object?> headers, string key)
     {

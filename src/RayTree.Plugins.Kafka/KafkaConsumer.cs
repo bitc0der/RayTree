@@ -428,7 +428,7 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
         {
             EntityType    = GetHeader(message.Headers, "entity_type"),
             EntityId      = GetHeader(message.Headers, "entity_id"),
-            ChangeType    = Enum.Parse<ChangeType>(GetHeader(message.Headers, "change_type")),
+            ChangeType    = ParseChangeType(GetHeader(message.Headers, "change_type")),
             CorrelationId = TryParseGuid(GetHeaderBytes(message.Headers, "correlation_id")),
             Version       = int.TryParse(GetHeader(message.Headers, "version"), out var v) ? v : 0,
             Timestamp     = DateTime.TryParse(GetHeader(message.Headers, "timestamp"), out var ts)
@@ -436,6 +436,15 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
             Payload       = message.Value
         };
     }
+
+    // Enum.Parse is reflection-based; a switch avoids that on every message.
+    private static ChangeType ParseChangeType(string value) => value switch
+    {
+        nameof(ChangeType.Insert) => ChangeType.Insert,
+        nameof(ChangeType.Update) => ChangeType.Update,
+        nameof(ChangeType.Delete) => ChangeType.Delete,
+        _ => Enum.Parse<ChangeType>(value)
+    };
 
     private static string GetHeader(Headers headers, string key)
     {
