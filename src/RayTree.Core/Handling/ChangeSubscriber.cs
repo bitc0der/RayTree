@@ -388,11 +388,7 @@ public class ChangeSubscriber : IDisposable
             return;
         }
 
-        var matchingHandlers = handlers
-            .Where(h => h.ChangeType == envelope.ChangeType)
-            .ToList();
-
-        if (matchingHandlers.Count == 0)
+        if (!HasMatchingHandler(handlers, envelope.ChangeType))
         {
             _meter.SubscriberSkipped.Add(1, entityTag, changeTag, RayTreeMeter.ReasonTag("no_handler"));
             _logger.LogDebug("No handlers matched change type {ChangeType} for {EntityType}, skipping",
@@ -408,8 +404,11 @@ public class ChangeSubscriber : IDisposable
 
         try
         {
-            foreach (var registration in matchingHandlers)
+            foreach (var registration in handlers)
+            {
+                if (registration.ChangeType != envelope.ChangeType) continue;
                 await InvokeWithRetryAsync(registration, change, options, entityTag, changeTag, cancellationToken);
+            }
         }
         catch
         {
@@ -474,11 +473,7 @@ public class ChangeSubscriber : IDisposable
             return;
         }
 
-        var matchingHandlers = allHandlers
-            .Where(h => h.ChangeType == envelope.ChangeType)
-            .ToList();
-
-        if (matchingHandlers.Count == 0)
+        if (!HasMatchingHandler(allHandlers, envelope.ChangeType))
         {
             _meter.SubscriberSkipped.Add(1, entityTag, changeTag, RayTreeMeter.ReasonTag("no_handler"));
             _logger.LogDebug(
@@ -491,8 +486,11 @@ public class ChangeSubscriber : IDisposable
 
         try
         {
-            foreach (var registration in matchingHandlers)
+            foreach (var registration in allHandlers)
+            {
+                if (registration.ChangeType != envelope.ChangeType) continue;
                 await InvokeWithRetryAsync(registration, change, effectiveOptions, entityTag, changeTag, cancellationToken);
+            }
         }
         catch
         {
@@ -678,6 +676,16 @@ public class ChangeSubscriber : IDisposable
 
         _resolvedTypeCache[typeName] = t;
         return t;
+    }
+
+    // Plain for-loop instead of `handlers.Where(...).Any()`/`.ToList()` — avoids both the
+    // per-message closure/delegate allocation and the intermediate list allocation on the
+    // hottest path in the subscriber (called once per message, twice per dispatch site).
+    private static bool HasMatchingHandler(List<HandlerRegistration> handlers, ChangeType changeType)
+    {
+        foreach (var h in handlers)
+            if (h.ChangeType == changeType) return true;
+        return false;
     }
 
     public void Dispose()

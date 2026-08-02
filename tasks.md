@@ -35,7 +35,7 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
   `foreach` with `await WriteTypedAsync` one at a time — a `SaveChanges` touching 20 entities across several types does 20 sequential DB round trips (compounds with #3).
   Fix: write in parallel (`Task.WhenAll`), at minimum across distinct entity types.
 
-- [ ] **7. Per-message allocation in `ChangeSubscriber` dispatch**
+- [x] **7. Per-message allocation in `ChangeSubscriber` dispatch**
   [src/RayTree.Core/Handling/ChangeSubscriber.cs:390-392,476-478](src/RayTree.Core/Handling/ChangeSubscriber.cs#L390-L392)
   `handlers.Where(h => h.ChangeType == envelope.ChangeType).ToList()` in both shared and isolated mode — allocates an iterator + `List<>` on every single message processed.
   Fix: a `for` loop into a reused buffer, or group handlers by `ChangeType` at registration time (`Dictionary<ChangeType, List<HandlerRegistration>>`).
