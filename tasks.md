@@ -25,7 +25,7 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
   `ChangePublisher.InitializeAsync` initializes repositories → outboxes → publishers with a sequential `foreach + await`, and each entity type's `OutboxPublisherService.StartAsync` is also started one at a time. `ChangeSubscriber.InitializeAsync` is documented (CLAUDE.md) as deliberately parallelized via `Task.WhenAll` so one slow consumer doesn't block the others. The publisher side has the identical problem un-fixed: one slow Postgres schema migration for one entity type (e.g. a locking `ALTER TABLE`) delays startup for every other entity type.
   Fix: apply the same `Task.WhenAll` pattern already used on the subscriber side.
 
-- [ ] **5. `_trackedEntityTypes.Contains(entityType)` — O(n) scan per tracked entry per `SaveChanges`**
+- [x] **5. `_trackedEntityTypes.Contains(entityType)` — O(n) scan per tracked entry per `SaveChanges`**
   [src/RayTree.EntityFrameworkCore/Interceptors/EntityChangeInterceptor.cs:14,84](src/RayTree.EntityFrameworkCore/Interceptors/EntityChangeInterceptor.cs#L84)
   Field is `IEnumerable<Type>`; `.Contains()` linearly scans it for every `ChangeTracker.Entries()` row on every `SaveChanges`.
   Fix: `HashSet<Type>`.

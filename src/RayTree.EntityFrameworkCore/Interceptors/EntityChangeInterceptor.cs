@@ -13,7 +13,7 @@ namespace RayTree.EntityFrameworkCore.Interceptors;
 public class EntityChangeInterceptor : SaveChangesInterceptor
 {
     private readonly EntityChangeTracker _tracker;
-    private readonly IEnumerable<Type> _trackedEntityTypes;
+    private readonly HashSet<Type> _trackedEntityTypes;
 
     private static readonly MethodInfo WriteTypedMethod = typeof(EntityChangeInterceptor)
         .GetMethod(nameof(WriteTypedAsyncCore), BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -27,7 +27,9 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
     public EntityChangeInterceptor(EntityChangeTracker tracker, IEnumerable<Type> trackedEntityTypes)
     {
         _tracker = tracker;
-        _trackedEntityTypes = trackedEntityTypes;
+        // CaptureChanges does a Contains() lookup per ChangeTracker entry on every
+        // SaveChanges — a HashSet makes that O(1) instead of a linear IEnumerable scan.
+        _trackedEntityTypes = trackedEntityTypes as HashSet<Type> ?? new HashSet<Type>(trackedEntityTypes);
     }
 
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
