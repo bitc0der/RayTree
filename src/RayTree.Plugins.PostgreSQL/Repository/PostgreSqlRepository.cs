@@ -18,6 +18,10 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     private readonly Dictionary<string, PropertyInfo> _columnToProperty;
     private readonly ILogger<PostgreSqlRepository<TEntity>> _logger;
 
+    // One pooled data source per repository instance instead of `new NpgsqlConnection` +
+    // OpenAsync per call — see PostgreSqlOutbox for the same treatment.
+    private readonly NpgsqlDataSource _dataSource;
+
     public PostgreSqlRepository(PostgreSqlRepositoryOptions options, ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -36,6 +40,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
         _insertSql = BuildInsertSql();
         _whereClause = BuildWhereClause();
         _columnToProperty = allEntityColumns.ToDictionary(c => c.ColumnName, c => c.Property);
+        _dataSource = NpgsqlDataSource.Create(options.ConnectionString);
     }
 
     private string BuildInsertSql()
@@ -119,10 +124,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     {
         ArgumentNullException.ThrowIfNull(entity);
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-
-        await using var cmd = new NpgsqlCommand(_insertSql, conn);
+        await using var cmd = _dataSource.CreateCommand(_insertSql);
         AddKeyParameters(cmd, entity);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -131,11 +133,8 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     {
         ArgumentNullException.ThrowIfNull(entity);
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-
-        await using var cmd = new NpgsqlCommand(
-            $"UPDATE {_options.TableName} SET updated_at = NOW() WHERE {_whereClause}", conn);
+        await using var cmd = _dataSource.CreateCommand(
+            $"UPDATE {_options.TableName} SET updated_at = NOW() WHERE {_whereClause}");
         AddKeyParameters(cmd, entity);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -144,11 +143,8 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     {
         ArgumentNullException.ThrowIfNull(entity);
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-
-        await using var cmd = new NpgsqlCommand(
-            $"DELETE FROM {_options.TableName} WHERE {_whereClause}", conn);
+        await using var cmd = _dataSource.CreateCommand(
+            $"DELETE FROM {_options.TableName} WHERE {_whereClause}");
         AddKeyParameters(cmd, entity);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -162,11 +158,8 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
                 $"Expected {_keyColumns.Count} key value(s) for {typeof(TEntity).Name}, got {keyValues.Length}.",
                 nameof(keyValues));
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-
-        await using var cmd = new NpgsqlCommand(
-            $"SELECT * FROM {_options.TableName} WHERE {_whereClause}", conn);
+        await using var cmd = _dataSource.CreateCommand(
+            $"SELECT * FROM {_options.TableName} WHERE {_whereClause}");
         for (var i = 0; i < keyValues.Length; i++)
             cmd.Parameters.AddWithValue($"K{i}", keyValues[i] ?? DBNull.Value);
 

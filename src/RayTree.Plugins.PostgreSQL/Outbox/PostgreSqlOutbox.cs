@@ -20,6 +20,11 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
     private readonly ILogger<PostgreSqlOutbox<TEntity>> _logger;
     private readonly string _endpoint;
 
+    // One pooled data source per outbox instance instead of `new NpgsqlConnection` +
+    // OpenAsync per call — avoids re-parsing/re-resolving the connection string on every
+    // write/read and lets Npgsql reuse prepared-statement state across calls.
+    private readonly NpgsqlDataSource _dataSource;
+
     public PostgreSqlOutbox(PostgreSqlOutboxOptions options, ILoggerFactory loggerFactory)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -34,6 +39,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         _insertSql = BuildInsertSql();
         _selectColumns = BuildSelectColumns();
         _endpoint = ParseEndpoint(options.ConnectionString);
+        _dataSource = NpgsqlDataSource.Create(options.ConnectionString);
     }
 
     /// <inheritdoc/>
@@ -153,10 +159,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
         var typedChange = (EntityChange<TEntity>)(object)change;
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-
-        await using var cmd = new NpgsqlCommand(_insertSql, conn);
+        await using var cmd = _dataSource.CreateCommand(_insertSql);
         cmd.Parameters.AddWithValue("EntityId", change.EntityId);
         cmd.Parameters.AddWithValue("ChangeType", change.ChangeType.ToString());
         cmd.Parameters.AddWithValue("Timestamp", change.Timestamp);
@@ -184,16 +187,14 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
         var changes = new List<EntityChange<T>>();
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-
-        await using var cmd = new NpgsqlCommand($"""
+        await using var cmd = _dataSource.CreateCommand($"""
                                                  SELECT {_selectColumns}
                                                  FROM {_options.OutboxTableName}
                                                  WHERE published = FALSE
                                                  ORDER BY timestamp
                                                  LIMIT @BatchSize
-                                                 """, conn) { Parameters = { new("BatchSize", batchSize) } };
+                                                 """);
+        cmd.Parameters.Add(new("BatchSize", batchSize));
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -213,26 +214,22 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
     {
         if (ids.Count == 0) return;
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand($"""
+        await using var cmd = _dataSource.CreateCommand($"""
                                                  UPDATE {_options.OutboxTableName}
                                                  SET published = TRUE
                                                  WHERE id = ANY(@Ids)
-                                                 """, conn);
+                                                 """);
         cmd.Parameters.Add(new NpgsqlParameter("Ids", ids.ToArray()));
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<bool> TryClaimForPublishingAsync(long id, CancellationToken cancellationToken = default)
     {
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand($"""
+        await using var cmd = _dataSource.CreateCommand($"""
                                                  UPDATE {_options.OutboxTableName}
                                                  SET published = TRUE
                                                  WHERE id = @Id AND published = FALSE
-                                                 """, conn);
+                                                 """);
         cmd.Parameters.Add(new NpgsqlParameter("Id", id));
         return await cmd.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
@@ -257,9 +254,10 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         var total = 0;
         int deleted;
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-
+        // Executed in a loop below (possibly many times) — open one connection up front
+        // instead of letting an unbound command check a fresh one out of the pool per
+        // ExecuteNonQueryAsync call.
+        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
         await using var cmd = new NpgsqlCommand($"""
                                                  DELETE FROM {_options.OutboxTableName}
                                                  WHERE id IN (
@@ -288,13 +286,11 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         if (entityType != typeof(TEntity))
             throw new InvalidOperationException($"This outbox handles {typeof(TEntity).Name}, not {entityType.Name}");
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand($"""
+        await using var cmd = _dataSource.CreateCommand($"""
                                                  SELECT count(*)
                                                  FROM {_options.OutboxTableName}
                                                  WHERE published = FALSE
-                                                 """, conn);
+                                                 """);
         var result = await cmd.ExecuteScalarAsync(cancellationToken);
         return result is null or DBNull ? 0 : Convert.ToInt64(result);
     }
@@ -305,14 +301,12 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
         if (typeof(T) != typeof(TEntity))
             throw new InvalidOperationException($"This outbox handles {typeof(TEntity).Name}, not {typeof(T).Name}");
 
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-
-        await using var cmd = new NpgsqlCommand($"""
+        await using var cmd = _dataSource.CreateCommand($"""
                                                  SELECT {_selectColumns}
                                                  FROM {_options.OutboxTableName}
                                                  WHERE id = @Id
-                                                 """, conn) { Parameters = { new("Id", id) } };
+                                                 """);
+        cmd.Parameters.Add(new("Id", id));
 
         await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
@@ -356,9 +350,7 @@ public class PostgreSqlOutbox<TEntity> : IOutbox
 
     private async Task ExecuteNonQueryAsync(string sql, NpgsqlParameter parameter, CancellationToken cancellationToken)
     {
-        await using var conn = new NpgsqlConnection(_options.ConnectionString);
-        await conn.OpenAsync(cancellationToken);
-        await using var cmd = new NpgsqlCommand(sql, conn);
+        await using var cmd = _dataSource.CreateCommand(sql);
         cmd.Parameters.Add(parameter);
         await cmd.ExecuteNonQueryAsync(cancellationToken);
     }
