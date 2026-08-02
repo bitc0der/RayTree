@@ -52,7 +52,7 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
   Same class of issue already fixed for `RayTreeMeter.ChangeTag` — reflection-based parse per message/row.
   Fix: replace with a `switch`.
 
-- [ ] **10. LZ4 compressor still double-buffers**
+- [x] **10. LZ4 compressor still double-buffers** (partially — see commit)
   [src/RayTree.Plugins.Compressors.Lz4/Lz4CompressorPlugin.cs:12-14,29-31](src/RayTree.Plugins.Compressors.Lz4/Lz4CompressorPlugin.cs#L12-L14)
   Unlike Gzip/Brotli (stream directly), LZ4 fully buffers `source` into a `MemoryStream` + `ToArray()` first. K4os supports a streaming `LZ4Stream` API. (The earlier fix addressed the oversized decompress buffer only, not this double-buffering.)
   Fix: use `LZ4Stream` to stream directly against the caller's streams.
