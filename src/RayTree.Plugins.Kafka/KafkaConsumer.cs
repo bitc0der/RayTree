@@ -11,6 +11,9 @@ namespace RayTree.Plugins.Kafka;
 
 public class KafkaConsumer : IQueueConsumer, IDisposable
 {
+    // Bounds the per-ConsumeAsync buffer between the poll thread and the subscriber.
+    private const int ChannelCapacity = 1000;
+
     /// <summary>
     /// Discriminator for the post-handler action the poll thread must perform on a
     /// <see cref="ConsumeResult{TKey, TValue}"/> handed back by the subscriber.
@@ -124,8 +127,16 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
         var linkedToken = linkedCts.Token;
 
-        var channel = Channel.CreateUnbounded<MessageEnvelope>(
-            new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+        // Bounded so a subscriber that falls behind applies backpressure to the poll loop
+        // (via the blocking WriteAsync below) instead of letting this buffer grow without
+        // bound while Kafka keeps handing over messages faster than they're processed.
+        var channel = Channel.CreateBounded<MessageEnvelope>(
+            new BoundedChannelOptions(ChannelCapacity)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode     = BoundedChannelFullMode.Wait
+            });
 
         // When the post-handler queue is non-empty, drop the poll timeout to zero so we
         // process pending Commits/Seeks immediately instead of waiting up to PollTimeoutMs.
@@ -212,7 +223,15 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                         // At-most-once (legacy default): commit before handing off.
                         _consumer!.Commit(result);
                     }
-                    channel.Writer.TryWrite(envelope);
+                    // Blocking (not TryWrite): with a bounded channel, TryWrite silently drops
+                    // the message when full instead of applying backpressure. Sync-over-async
+                    // is safe here — same justification as the rebuild/probe calls below, this
+                    // poll thread has no SynchronizationContext to deadlock against.
+                    try
+                    {
+                        channel.Writer.WriteAsync(envelope, linkedToken).AsTask().GetAwaiter().GetResult();
+                    }
+                    catch (OperationCanceledException) { break; }
                 }
 
                 // Final drain — flush any commits / seeks pending at shutdown so we don't

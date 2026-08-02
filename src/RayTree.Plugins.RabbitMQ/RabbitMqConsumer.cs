@@ -15,11 +15,24 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
     private IConnection? _connection;
     private IChannel? _channel;
 
-    private readonly Channel<MessageEnvelope> _buffer = Channel.CreateUnbounded<MessageEnvelope>();
+    private readonly Channel<MessageEnvelope> _buffer;
 
     public RabbitMqConsumer(RabbitMqConsumerOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+
+        // Bounded by PrefetchCount — the existing broker-side backpressure knob — so a slow
+        // subscriber applies backpressure to OnMessageReceived (which awaits WriteAsync)
+        // instead of growing this buffer unbounded in memory. PrefetchCount = 0 is the AMQP
+        // "no limit" sentinel, so it keeps the channel unbounded too, matching that intent.
+        _buffer = _options.PrefetchCount == 0
+            ? Channel.CreateUnbounded<MessageEnvelope>()
+            : Channel.CreateBounded<MessageEnvelope>(
+                new BoundedChannelOptions(_options.PrefetchCount)
+                {
+                    SingleReader = true,
+                    FullMode     = BoundedChannelFullMode.Wait
+                });
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)

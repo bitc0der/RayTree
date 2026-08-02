@@ -326,7 +326,7 @@ The delivery tag is broker-private state — `ChangeSubscriber` shouldn't know a
 
 - **`PrefetchCount`** controls the maximum number of in-flight unacked messages per channel. With `AckAfterHandler = true`, this directly caps the at-risk window: if the process crashes, at most `PrefetchCount` messages will be redelivered.
 - **`SubscriberOptions.MaxDegreeOfParallelism`** controls how many envelopes `ChangeSubscriber` processes concurrently from the buffer. Combine with `PrefetchCount` for end-to-end backpressure.
-- The internal `Channel<MessageEnvelope>` is **unbounded** — if your subscriber falls behind, RAM grows. Set `PrefetchCount` to bound it from the broker side.
+- The internal `Channel<MessageEnvelope>` is bounded to `PrefetchCount` (`0` keeps it unbounded, matching the AMQP "no limit" sentinel). If your subscriber falls behind, `OnMessageReceived` blocks on `WriteAsync` instead of buffering unboundedly in memory.
 
 ---
 

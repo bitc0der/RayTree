@@ -17,6 +17,10 @@ public class Lz4CompressorPlugin : IChangeCompressor
         var compressed = new byte[maxCompressedSize];
         var compressedLength = LZ4Codec.Encode(input, 0, input.Length, compressed, 0, maxCompressedSize);
 
+        // Prefix with the original (uncompressed) length so DecompressAsync can size its
+        // output buffer exactly, instead of guessing via a worst-case multiplier that could
+        // over-allocate by 255x for a small payload.
+        await destination.WriteAsync(BitConverter.GetBytes(input.Length), cancellationToken);
         await destination.WriteAsync(compressed.AsMemory(0, compressedLength), cancellationToken);
     }
 
@@ -26,9 +30,9 @@ public class Lz4CompressorPlugin : IChangeCompressor
         await source.CopyToAsync(ms, cancellationToken);
         var input = ms.ToArray();
 
-        var maxDecompressedSize = input.Length * 255;
-        var decompressed = new byte[maxDecompressedSize];
-        var decompressedLength = LZ4Codec.Decode(input, 0, input.Length, decompressed, 0, maxDecompressedSize);
+        var originalLength = BitConverter.ToInt32(input, 0);
+        var decompressed = new byte[originalLength];
+        var decompressedLength = LZ4Codec.Decode(input, sizeof(int), input.Length - sizeof(int), decompressed, 0, originalLength);
 
         await destination.WriteAsync(decompressed.AsMemory(0, decompressedLength), cancellationToken);
     }

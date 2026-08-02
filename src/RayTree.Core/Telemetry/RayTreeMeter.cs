@@ -242,8 +242,19 @@ public sealed class RayTreeMeter : IDisposable
     internal static KeyValuePair<string, object?> EntityTag(string entityTypeName)
         => new("entity_type", SimpleTypeName(entityTypeName));
 
-    internal static KeyValuePair<string, object?> ChangeTag(ChangeType changeType)
-        => new("change_type", changeType.ToString());
+    // ChangeType.ToString() is not free (enum name lookup); precompute the 3 known values
+    // once instead of paying that cost on every publish/subscribe metric emission.
+    private static readonly KeyValuePair<string, object?> InsertChangeTag = new("change_type", nameof(ChangeType.Insert));
+    private static readonly KeyValuePair<string, object?> UpdateChangeTag = new("change_type", nameof(ChangeType.Update));
+    private static readonly KeyValuePair<string, object?> DeleteChangeTag = new("change_type", nameof(ChangeType.Delete));
+
+    internal static KeyValuePair<string, object?> ChangeTag(ChangeType changeType) => changeType switch
+    {
+        ChangeType.Insert => InsertChangeTag,
+        ChangeType.Update => UpdateChangeTag,
+        ChangeType.Delete => DeleteChangeTag,
+        _ => new("change_type", changeType.ToString())
+    };
 
     internal static KeyValuePair<string, object?> ReasonTag(string reason)
         => new("reason", reason);
