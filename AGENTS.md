@@ -218,6 +218,7 @@ dotnet test tests/RayTree.Core.Tests --filter "FullyQualifiedName~<TestName>"
 dotnet test tests/RayTree.Plugins.PostgreSQL.Tests
 dotnet test tests/RayTree.Plugins.RabbitMQ.Tests
 dotnet test tests/RayTree.Plugins.Kafka.Tests
+dotnet test tests/RayTree.Plugins.Deduplication.Redis.Tests
 ```
 
 **Always build and run the relevant unit tests before considering a task complete.**
