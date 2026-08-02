@@ -36,6 +36,12 @@ public class NotificationBasedPublisher : IDisposable
     // back to false on the first subsequent successful batch.
     private readonly ConcurrentDictionary<Type, FallbackOutboxState> _fallbackOutboxState = new();
 
+    // Tracks the fire-and-forget Task.Run started by OnNotification per delivery, so
+    // StopAsync can wait for them before Dispose() tears down _notificationSemaphore —
+    // without this, a task still in flight at Dispose time throws ObjectDisposedException
+    // from its `finally { _notificationSemaphore.Release(); }` into an unobserved task.
+    private readonly ConcurrentDictionary<Task, byte> _inFlightNotifications = new();
+
     private const string ComponentName = "postgres.notification";
 
     private static readonly MethodInfo GetByIdMethod = typeof(NotificationBasedPublisher)
@@ -87,6 +93,13 @@ public class NotificationBasedPublisher : IDisposable
 
         if (_fallbackTask is not null)
             await Task.WhenAny(_fallbackTask, Task.Delay(5000, cancellationToken));
+
+        // Wait for any OnNotification handlers still in flight — they observe _cts.Token
+        // internally so they should unwind promptly, but Dispose() must not free
+        // _notificationSemaphore while one could still call Release() on it.
+        var pending = _inFlightNotifications.Keys.ToArray();
+        if (pending.Length > 0)
+            await Task.WhenAny(Task.WhenAll(pending), Task.Delay(5000, cancellationToken));
 
         // The connection is a local in ListenLoopAsync — `await using` cleans it up when
         // the loop exits, which also implicitly drops the LISTEN registration on the wire.
@@ -227,7 +240,7 @@ public class NotificationBasedPublisher : IDisposable
             return;
         }
 
-        Task.Run(async () =>
+        var task = Task.Run(async () =>
         {
             IOutbox? outbox = null;
             var claimed = false;
@@ -297,6 +310,11 @@ public class NotificationBasedPublisher : IDisposable
                 _notificationSemaphore.Release();
             }
         });
+
+        _inFlightNotifications[task] = 0;
+        // ContinueWith also observes the antecedent task's exception, so a task that
+        // somehow still throws past its own try/catch doesn't surface as unobserved.
+        task.ContinueWith(t => _inFlightNotifications.TryRemove(t, out _), TaskScheduler.Default);
     }
 
     private async Task PublishChangeAsync(

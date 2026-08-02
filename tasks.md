@@ -4,12 +4,12 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
 
 ## Critical
 
-- [ ] **1. `EntityChangeInterceptor.CreateChange` — fully uncached reflection per changed entity per `SaveChanges`**
+- [x] **1. `EntityChangeInterceptor.CreateChange` — fully uncached reflection per changed entity per `SaveChanges`**
   [src/RayTree.EntityFrameworkCore/Interceptors/EntityChangeInterceptor.cs:104-110](src/RayTree.EntityFrameworkCore/Interceptors/EntityChangeInterceptor.cs#L104-L110)
   On every `SaveChanges`/`SaveChangesAsync`, for every changed entity: `typeof(EntityChange<>).MakeGenericType(entityType)` + `Activator.CreateInstance` + `GetProperty("State")!.SetValue(...)`. Hottest reflection cost for EF Core users; not even the `MethodInfo` is cached here, unlike every other reflection-dispatch site in the codebase.
   Fix: cache a compiled factory delegate per entity type, e.g. `ConcurrentDictionary<Type, Func<EntityEntry, ChangeType, EntityChange>>` built via `Expression.Lambda`.
 
-- [ ] **2. Shutdown race in `NotificationBasedPublisher` — `ObjectDisposedException` in an unobserved background task**
+- [x] **2. Shutdown race in `NotificationBasedPublisher` — `ObjectDisposedException` in an unobserved background task**
   [src/RayTree.Plugins.PostgreSQL/Outbox/Notification/NotificationBasedPublisher.cs:230-299](src/RayTree.Plugins.PostgreSQL/Outbox/Notification/NotificationBasedPublisher.cs#L230-L299)
   `OnNotification` fires `Task.Run(async () => {...})` per notification, never tracked or awaited. `StopAsync` (lines 81-94) only awaits `_listenTask`/`_fallbackTask`; `Dispose()` (lines 479-484) then disposes `_notificationSemaphore` immediately after. An in-flight notification task's `finally { _notificationSemaphore.Release(); }` throws `ObjectDisposedException` into an unobserved task if it's still running at that point — silent in .NET Core (no process crash) but a real bug: nondeterministic log noise / lost diagnostics during graceful shutdown under load (rolling restarts).
   Fix: track in-flight notification tasks (e.g. a counter + `SemaphoreSlim` barrier, or a `ConcurrentDictionary<Task>` drained via `Task.WhenAll`) and await them in `StopAsync` before disposing the semaphore.
