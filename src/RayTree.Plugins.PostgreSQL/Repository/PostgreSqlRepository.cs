@@ -170,7 +170,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
     private void AddKeyParameters(NpgsqlCommand cmd, TEntity entity)
     {
         for (var i = 0; i < _keyColumns.Count; i++)
-            cmd.Parameters.AddWithValue($"K{i}", _keyColumns[i].Property.GetValue(entity) ?? DBNull.Value);
+            cmd.Parameters.AddWithValue($"K{i}", EntityColumnMapper.GetValue(_keyColumns[i].Property, entity) ?? DBNull.Value);
     }
 
     protected virtual TEntity MapEntity(NpgsqlDataReader reader)
@@ -185,7 +185,7 @@ public class PostgreSqlRepository<TEntity> : IRepository<TEntity>
 
             var value = reader.GetValue(i);
             var targetType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
-            prop.SetValue(entity, EntityColumnMapper.ConvertFromDb(value, targetType));
+            EntityColumnMapper.SetValue(prop, entity, EntityColumnMapper.ConvertFromDb(value, targetType));
         }
 
         return entity;

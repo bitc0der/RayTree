@@ -42,7 +42,7 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
 
 ## Medium
 
-- [ ] **8. `PostgreSqlRepository` doesn't reuse the existing compiled-setter cache**
+- [x] **8. `PostgreSqlRepository` doesn't reuse the existing compiled-setter cache**
   [src/RayTree.Plugins.PostgreSQL/Repository/PostgreSqlRepository.cs:180,195](src/RayTree.Plugins.PostgreSQL/Repository/PostgreSqlRepository.cs#L180)
   `AddKeyParameters`/`MapEntity` use raw `PropertyInfo.GetValue`/`SetValue`, even though `EntityColumnMapper.SetValue` (compiled delegate cache) already exists and is used by `PostgreSqlOutbox.ReadEntityChange`.
   Fix: route through the same `EntityColumnMapper` helper.
