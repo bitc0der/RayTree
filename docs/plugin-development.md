@@ -21,19 +21,28 @@ public interface IOutbox
         CancellationToken cancellationToken = default)
         where TEntity : class;
 
-    Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(
-        ChangeType? changeType = null,
-        DateTime? since = null,
-        int batchSize = 100,
-        CancellationToken cancellationToken = default)
-        where TEntity : class;
-
     Task MarkPublishedAsync(long id, CancellationToken cancellationToken = default);
+
+    // Default-implemented — override only for a batched UPDATE (one round-trip per publish batch instead of one per message)
+    Task MarkPublishedBatchAsync(IReadOnlyCollection<long> ids, CancellationToken cancellationToken = default);
+
+    Task<bool> TryClaimForPublishingAsync(long id, CancellationToken cancellationToken = default);
+
+    Task RevertClaimAsync(long id, CancellationToken cancellationToken = default);
 
     Task<int> CleanupPublishedAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken = default);
 
+    Task<int> CleanupStaleUnpublishedAsync(TimeSpan staleThreshold, CancellationToken cancellationToken = default);
+
+    Task<long> GetPendingCountAsync(Type entityType, CancellationToken cancellationToken = default);
+
     Task<EntityChange<TEntity>?> GetByIdAsync<TEntity>(long id, CancellationToken cancellationToken = default)
         where TEntity : class;
+
+    // Default-implemented (return false / null) — override only if this outbox has an observable external connection
+    bool IsConnectionFault(Exception ex);
+    string? ConnectionComponent { get; }
+    string? ConnectionEndpoint { get; }
 }
 ```
 
@@ -41,7 +50,13 @@ public interface IOutbox
 - `WriteAsync` should set `change.Id` to the auto-generated row ID (use `RETURNING id` in PostgreSQL)
 - `GetUnpublishedAsync` returns entries ordered by `Timestamp`, limited by `batchSize`
 - `MarkPublishedAsync` sets `Published = true` for the given ID
+- `MarkPublishedBatchAsync` is default-implemented as a per-id loop over `MarkPublishedAsync` — existing implementations keep compiling unchanged. Override with a single `WHERE id = ANY(@ids)`-style statement for the throughput benefit (see the XML doc on `IOutbox.MarkPublishedBatchAsync`)
+- `TryClaimForPublishingAsync` atomically flips a record from unpublished to published, returning `true` only if this caller won the claim; used to prevent duplicate publishing when multiple paths (e.g. NOTIFY fast-path + polling fallback) race for the same record
+- `RevertClaimAsync` undoes a claim after a failed publish so the record is retried
 - `CleanupPublishedAsync` deletes published rows older than `retentionPeriod` and returns the count deleted
+- `CleanupStaleUnpublishedAsync` deletes unpublished rows older than `staleThreshold` (opt-in, for stuck-queue cleanup) and returns the count deleted
+- `GetPendingCountAsync` returns the unpublished row count for `entityType`; feeds the `raytree.outbox.pending` observable gauge — keep it a cheap, indexed lookup
+- `IsConnectionFault` / `ConnectionComponent` / `ConnectionEndpoint` are default-implemented as `false` / `null` / `null`. Override only if this outbox has an observable external connection (e.g. a Postgres-backed outbox) — the framework uses them to demote per-batch error logs to warnings on connection faults
 
 ### IRepository
 
