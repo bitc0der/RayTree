@@ -89,6 +89,42 @@ services.UsePostgreSqlOutbox<Order>(options => ...)
 The `NotificationBasedPublisher` can be started/stopped via `StartAsync` / `StopAsync`. It integrates with
 `EntityChangeTracker.Publisher` for serialization, compression, and queue publishing.
 
+## Connection recovery
+
+The plugin observes two distinct Postgres connection surfaces, with different recovery shapes:
+
+**`postgres.notification` — LISTEN connection** (`NotificationBasedPublisher.ListenLoopAsync`)
+
+A single long-lived `NpgsqlConnection`. When `WaitAsync` throws an exception classified by the
+internal `PostgresFault` helper (transient `NpgsqlException`, `SocketException` / `IOException`
+inner, `08xxx` / `57P0x` SQL state, or `ObjectDisposedException`), the loop:
+
+1. Logs a `Warning` once per fault cycle.
+2. Runs an inline exponential-backoff loop bounded by `NotificationBasedPublisherOptions.ConnectionRecovery` (a `PostgresConnectionRecoveryOptions`) — disposes the broken connection, opens a fresh one, re-attaches the `Notification` handler, re-issues `LISTEN`.
+3. On success logs `Information` (with reconnect duration), flips `_listenerHealthy = true` on the next `WaitAsync` wake.
+4. On `MaxAttempts` exhaustion logs `Error` and exits the LISTEN loop (fallback polling continues).
+
+The fallback polling loop continues running throughout, providing best-effort delivery during the
+reconnect window. `TryClaimForPublishingAsync` prevents double-publish races between the two paths.
+
+**`postgres.outbox` — pooled outbox connections** (`OutboxPublisherService.ProcessBatchAsync`, `NotificationBasedPublisher.FallbackPollingLoopAsync`)
+
+Short-lived per-call `NpgsqlConnection` from the pool. **No reconnect code** — Npgsql's pool
+handles transient TCP errors, and the polling cadence is the retry. Instead, the consumers
+classify each batch failure via `IOutbox.IsConnectionFault` (which `PostgreSqlOutbox` overrides
+to delegate to `PostgresFault`) and:
+
+- Demote the per-batch `Error` log to `Warning` so a transient Postgres blip looks like one fault cycle.
+- On the first subsequent successful batch, log an `Information` "outbox connection recovered" entry (with duration).
+
+Non-connection-fault exceptions (e.g. unique-violation `23505`, syntax errors) bypass this path
+entirely — they still log at `Error` and surface to operators as application bugs.
+
+**Write paths (`WriteAsync`, `PostgreSqlRepository`)** are unchanged: exceptions propagate to the
+caller. Outbox writes typically run inside the caller's EF Core transaction; the library cannot
+retry just the outbox row without breaking transaction atomicity. The caller's unit-of-work owns
+write-side retry.
+
 ## Options
 
 | Option | Default | Description |
@@ -98,6 +134,7 @@ The `NotificationBasedPublisher` can be started/stopped via `StartAsync` / `Stop
 | `PostgreSqlOutboxOptions.UseNotificationChannel` | `false` | Enable NOTIFY trigger |
 | `PostgreSqlOutboxOptions.NotificationChannel` | `null` | Channel name for NOTIFY |
 | `PostgreSqlOutboxOptions.FallbackPollingInterval` | `null` | Polling interval when LISTEN is down |
+| `NotificationBasedPublisherOptions.ConnectionRecovery` | `new PostgresConnectionRecoveryOptions()` (Enabled, 1s→30s, ×2, ±20% jitter, unlimited) | Tunes LISTEN reconnect backoff. Set `Enabled = false` to skip reconnect and rely on fallback polling only. |
 | `PostgreSqlOutboxOptions.CleanupBatchSize` | `1000` | Rows per cleanup batch |
 | `PostgreSqlRepositoryOptions.ConnectionString` | `""` | PostgreSQL connection string |
 | `PostgreSqlRepositoryOptions.TableName` | `"{entity}_source"` | Source table name |

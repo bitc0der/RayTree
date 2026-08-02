@@ -140,3 +140,17 @@ The extension SHALL be a thin pass-through that does not configure exporters, vi
 #### Scenario: All durations use seconds
 - **WHEN** any `*.duration` histogram is created on the `"RayTree"` meter
 - **THEN** its `unit` property is the string `"s"` per OTel semantic conventions
+
+
+### Requirement: Metric emission is not part of the public API
+`RayTreeMeter` SHALL expose no public method for emitting or registering a metric. All emit/register members (`RecordPublishSuccess`, `RecordPublishFailure`, `RecordPayloadSize`, `RecordBatchSize`, `RegisterPendingGauge`) SHALL be `internal`, consumed only by `RayTree.Core` and by assemblies granted `InternalsVisibleTo` (`RayTree.Plugins.PostgreSQL`, `RayTree.EntityFrameworkCore`, and the test projects). `RayTreeMeter`'s public surface SHALL consist of `MeterName`, its constructors, `DefaultPendingCacheTtl`, and `Dispose()`. Metric *observation* SHALL remain public via the `"RayTree"` meter name and `RayTree.OpenTelemetry.AddRayTreeMetrics`.
+
+#### Scenario: No public emit method exists
+- **WHEN** a consumer outside Core and without `InternalsVisibleTo` references `RayTreeMeter`
+- **THEN** no metric-emitting or gauge-registering method SHALL be accessible
+- **AND** only `MeterName`, the constructors, `DefaultPendingCacheTtl`, and `Dispose()` SHALL be available.
+
+#### Scenario: Privileged assemblies still emit internally
+- **WHEN** `NotificationBasedPublisher` (in `RayTree.Plugins.PostgreSQL`, an `InternalsVisibleTo`-granted assembly) emits publish metrics on the NOTIFY fast-path
+- **THEN** it SHALL call the `internal` `RecordPublishSuccess` / `RecordPublishFailure` / `RecordPayloadSize` / `RecordBatchSize` members
+- **AND** the emitted instruments SHALL remain observable via `AddRayTreeMetrics`.

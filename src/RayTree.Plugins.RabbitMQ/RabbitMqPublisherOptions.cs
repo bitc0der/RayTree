@@ -1,4 +1,5 @@
 using RayTree.Core.Models;
+using RayTree.Core.Tracking;
 
 namespace RayTree.Plugins.RabbitMQ;
 
@@ -66,6 +67,17 @@ public class RabbitMqPublisherOptions
     public RabbitMqPublisherOptions()
     {
         RoutingKeySelector = envelope =>
-            $"{RoutingKey}.{envelope.EntityType}.{envelope.ChangeType.ToString().ToLower()}";
+            $"{RoutingKey}.{envelope.EntityType}.{ChangeTypeSegment(envelope.ChangeType)}";
     }
+
+    // ToString() + ToLower() allocated twice per publish and ToLower() was culture-sensitive
+    // with no StringComparison. A switch over the 3 known values avoids both; ToLowerInvariant()
+    // is the fallback for any future enum value.
+    private static string ChangeTypeSegment(ChangeType changeType) => changeType switch
+    {
+        ChangeType.Insert => "insert",
+        ChangeType.Update => "update",
+        ChangeType.Delete => "delete",
+        _ => changeType.ToString().ToLowerInvariant()
+    };
 }

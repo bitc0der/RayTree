@@ -67,4 +67,14 @@ public class KafkaPublisherOptions
     /// </para>
     /// </summary>
     public TimeSpan? TopicWaitTimeout { get; set; }
+
+    /// <summary>
+    /// Tunes the producer-rebuild policy on fatal native errors. When librdkafka surfaces an
+    /// <c>Error.IsFatal == true</c> via the producer's error handler, the publisher disposes
+    /// the current <c>IProducer</c> and lets the existing lazy <c>GetProducerAsync</c> path
+    /// rebuild on the next <c>PublishAsync</c>. The outbox-publisher retry loop provides the
+    /// outer backoff; this property controls whether RayTree participates at all
+    /// (<c>Enabled = false</c> surfaces the dead producer to callers without rebuilding).
+    /// </summary>
+    public KafkaConnectionRecoveryOptions ConnectionRecovery { get; set; } = new();
 }

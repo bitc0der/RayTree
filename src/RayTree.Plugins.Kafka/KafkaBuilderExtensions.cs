@@ -6,6 +6,9 @@ namespace RayTree.Plugins.Kafka;
 
 public static class KafkaBuilderExtensions
 {
+    /// <summary>
+    /// Registers <see cref="KafkaPublisher"/> as the queue publisher for every entity type.
+    /// </summary>
     public static IChangeTrackingBuilder UseKafka(
         this IChangeTrackingBuilder builder,
         Action<KafkaPublisherOptions> configure,

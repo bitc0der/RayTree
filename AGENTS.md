@@ -135,6 +135,16 @@ See `CLAUDE.md` for deep architecture documentation, plugin contracts, and key d
   `NullLoggerFactory` produces zero allocations and zero output.
 - See [docs/configuration.md#what-gets-logged](docs/configuration.md#what-gets-logged) for the full per-class log
   inventory (level, trigger, structured properties).
+- **Connection-recovery is log-only** — there are **no** connection metrics. The recovery logs live in the runtime
+  service classes that own the connection (`NotificationBasedPublisher`, `OutboxPublisherService`, `KafkaPublisher`,
+  `KafkaConsumer`, `RabbitMqPublisher`) and use those classes' existing non-nullable `ILogger<T>`. **Exception:**
+  `RabbitMqConsumer` has no logger field (pre-existing exception to the logging-placement rule — message-receive errors
+  silently NACK + requeue with no useful context to log). With the metrics removed it no longer subscribes to the SDK
+  recovery events at all, so its connection disconnect/recovery is **not observable** — accepted, consistent with its
+  no-logger posture. Each recovery-owning plugin tunes its loop via its own options type — `PostgresConnectionRecoveryOptions`
+  (PostgreSQL) and `KafkaConnectionRecoveryOptions` (Kafka); there is no shared Core options type and no Hosting binding.
+  `RayTreeMeter` exposes **no public metric-emission API** — all emit methods are `internal` and reachable only by Core
+  and IVT-privileged assemblies (`NotificationBasedPublisher`); its public surface is construct-and-observe only.
 
 ### Testing Conventions
 

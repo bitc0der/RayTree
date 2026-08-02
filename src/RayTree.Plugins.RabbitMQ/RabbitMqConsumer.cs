@@ -15,11 +15,24 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
     private IConnection? _connection;
     private IChannel? _channel;
 
-    private readonly Channel<MessageEnvelope> _buffer = Channel.CreateUnbounded<MessageEnvelope>();
+    private readonly Channel<MessageEnvelope> _buffer;
 
     public RabbitMqConsumer(RabbitMqConsumerOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+
+        // Bounded by PrefetchCount — the existing broker-side backpressure knob — so a slow
+        // subscriber applies backpressure to OnMessageReceived (which awaits WriteAsync)
+        // instead of growing this buffer unbounded in memory. PrefetchCount = 0 is the AMQP
+        // "no limit" sentinel, so it keeps the channel unbounded too, matching that intent.
+        _buffer = _options.PrefetchCount == 0
+            ? Channel.CreateUnbounded<MessageEnvelope>()
+            : Channel.CreateBounded<MessageEnvelope>(
+                new BoundedChannelOptions(_options.PrefetchCount)
+                {
+                    SingleReader = true,
+                    FullMode     = BoundedChannelFullMode.Wait
+                });
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -196,7 +209,7 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
         {
             EntityType = GetHeader(headers, "entity_type"),
             EntityId = GetHeader(headers, "entity_id"),
-            ChangeType = Enum.Parse<ChangeType>(GetHeader(headers, "change_type")),
+            ChangeType = ParseChangeType(GetHeader(headers, "change_type")),
             Version = int.TryParse(GetHeader(headers, "version"), out var v) ? v : 0,
             CorrelationId = Guid.TryParse(props.MessageId, out var g) ? g : Guid.Empty,
             Timestamp = props.Timestamp.UnixTime > 0
@@ -205,6 +218,15 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
             Payload = body
         };
     }
+
+    // Enum.Parse is reflection-based; a switch avoids that on every message.
+    private static ChangeType ParseChangeType(string value) => value switch
+    {
+        nameof(ChangeType.Insert) => ChangeType.Insert,
+        nameof(ChangeType.Update) => ChangeType.Update,
+        nameof(ChangeType.Delete) => ChangeType.Delete,
+        _ => Enum.Parse<ChangeType>(value)
+    };
 
     private static string GetHeader(IDictionary<string, object?> headers, string key)
     {
@@ -220,8 +242,8 @@ public class RabbitMqConsumer : IQueueConsumer, IDisposable
     public void Dispose()
     {
         _buffer.Writer.TryComplete();
-        _channel?.CloseAsync().GetAwaiter().GetResult();
-        _connection?.CloseAsync().GetAwaiter().GetResult();
+        try { _channel?.CloseAsync().GetAwaiter().GetResult();    } catch { /* may already be closed */ }
+        try { _connection?.CloseAsync().GetAwaiter().GetResult(); } catch { /* may already be closed */ }
         _channel?.Dispose();
         _connection?.Dispose();
     }

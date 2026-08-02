@@ -2,11 +2,9 @@
 using RayTree.Core.Distribution;
 using RayTree.Core.Telemetry;
 using RayTree.Core.Models;
-using RayTree.Core.Plugins;
 using RayTree.Core.Plugins.Compression;
 using RayTree.Core.Plugins.Serialization;
 using RayTree.Core.Tracking;
-using RayTree.Plugins;
 using RayTree.Plugins.Compressors.Brotli;
 using RayTree.Plugins.Compressors.Gzip;
 using RayTree.Plugins.Compressors.Lz4;
@@ -224,22 +222,6 @@ public class OutboxTypedStatePersistenceTests
         Assert.That(retrieved, Is.Not.Null);
         Assert.That(retrieved!.State!.Name, Is.EqualTo("TechCo"));
     }
-
-    [Test]
-    public async Task InMemoryOutbox_FilterByChangeType_ReturnsMatchingTypedChanges()
-    {
-        var outbox = new InMemoryOutbox();
-        var c1 = new Customer { Id = 1, Name = "A" };
-        var c2 = new Customer { Id = 2, Name = "B" };
-
-        await outbox.WriteAsync(new EntityChange<Customer> { EntityType = typeof(Customer).FullName!, EntityId = "1", ChangeType = ChangeType.Insert, State = c1 });
-        await outbox.WriteAsync(new EntityChange<Customer> { EntityType = typeof(Customer).FullName!, EntityId = "2", ChangeType = ChangeType.Delete, State = c2 });
-
-        var inserts = await outbox.GetUnpublishedAsync<Customer>(changeType: ChangeType.Insert, batchSize: 10);
-        Assert.That(inserts, Has.Count.EqualTo(1));
-        Assert.That(inserts[0].State!.Name, Is.EqualTo("A"));
-    }
-
 }
 
 /// <summary>Shared test entity — must be public so code-generation-based serializers (e.g. MessagePack) can access it.</summary>

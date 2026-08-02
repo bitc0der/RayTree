@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -11,15 +13,23 @@ namespace RayTree.EntityFrameworkCore.Interceptors;
 public class EntityChangeInterceptor : SaveChangesInterceptor
 {
     private readonly EntityChangeTracker _tracker;
-    private readonly IEnumerable<Type> _trackedEntityTypes;
+    private readonly HashSet<Type> _trackedEntityTypes;
 
     private static readonly MethodInfo WriteTypedMethod = typeof(EntityChangeInterceptor)
         .GetMethod(nameof(WriteTypedAsyncCore), BindingFlags.NonPublic | BindingFlags.Static)!;
 
+    // CreateChange used to do MakeGenericType + Activator.CreateInstance + reflective
+    // property SetValue on every changed entity, every SaveChanges call. Compiling a
+    // factory delegate once per entity type (via Expression.Lambda, cached here) turns
+    // that into a cheap delegate invocation on the hot path.
+    private static readonly ConcurrentDictionary<Type, Func<object, EntityChange>> ChangeFactories = new();
+
     public EntityChangeInterceptor(EntityChangeTracker tracker, IEnumerable<Type> trackedEntityTypes)
     {
         _tracker = tracker;
-        _trackedEntityTypes = trackedEntityTypes;
+        // CaptureChanges does a Contains() lookup per ChangeTracker entry on every
+        // SaveChanges — a HashSet makes that O(1) instead of a linear IEnumerable scan.
+        _trackedEntityTypes = trackedEntityTypes as HashSet<Type> ?? new HashSet<Type>(trackedEntityTypes);
     }
 
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
@@ -101,14 +111,31 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
 
     private static EntityChange CreateChange(EntityEntry entry, Type entityType, ChangeType changeType)
     {
-        var genericChangeType = typeof(EntityChange<>).MakeGenericType(entityType);
-        var change = (EntityChange)Activator.CreateInstance(genericChangeType)!;
+        var factory = ChangeFactories.GetOrAdd(entityType, CompileChangeFactory);
+        var change = factory(entry.Entity);
         change.EntityType = entityType.AssemblyQualifiedName ?? entityType.FullName ?? entityType.Name;
         change.EntityId = entry.Property("Id").CurrentValue?.ToString() ?? Guid.NewGuid().ToString();
         change.ChangeType = changeType;
         change.Timestamp = DateTime.UtcNow;
-        genericChangeType.GetProperty("State")!.SetValue(change, entry.Entity);
         return change;
+    }
+
+    // Builds `entity => (EntityChange)new EntityChange<TEntity> { State = (TEntity)entity }`
+    // once per entity type, compiled to IL instead of interpreted via MakeGenericType/SetValue.
+    private static Func<object, EntityChange> CompileChangeFactory(Type entityType)
+    {
+        var genericChangeType = typeof(EntityChange<>).MakeGenericType(entityType);
+        var stateProperty = genericChangeType.GetProperty(nameof(EntityChange<object>.State))!;
+
+        var entityParam = Expression.Parameter(typeof(object), "entity");
+        var changeVar = Expression.Variable(genericChangeType, "change");
+        var body = Expression.Block(
+            [changeVar],
+            Expression.Assign(changeVar, Expression.New(genericChangeType)),
+            Expression.Call(changeVar, stateProperty.SetMethod!, Expression.Convert(entityParam, entityType)),
+            Expression.Convert(changeVar, typeof(EntityChange)));
+
+        return Expression.Lambda<Func<object, EntityChange>>(body, entityParam).Compile();
     }
 
     private async Task WriteOutboxAsync(DbContext? dbContext, CancellationToken cancellationToken)
@@ -120,6 +147,10 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
         if (changes.Count == 0)
             return;
 
+        // Write all changed entities' outbox rows in parallel instead of one DB round
+        // trip at a time — a SaveChanges touching N entities (of one or several types)
+        // no longer pays N sequential round trips.
+        var writes = new List<Task>(changes.Count);
         foreach (var change in changes)
         {
             var entityType = Type.GetType(change.EntityType);
@@ -127,9 +158,10 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
                 continue;
 
             var outbox = _tracker.GetOutbox(entityType);
-
-            await WriteTypedAsync(outbox, change, entityType, cancellationToken);
+            writes.Add(WriteTypedAsync(outbox, change, entityType, cancellationToken));
         }
+
+        await Task.WhenAll(writes);
 
         ChangeContext.Clear(dbContext);
     }

@@ -91,4 +91,17 @@ public class KafkaConsumerOptions
     /// </para>
     /// </summary>
     public TimeSpan? TopicWaitTimeout { get; set; }
+
+    /// <summary>
+    /// Tunes the rebuild policy when the poll thread observes a fatal <see cref="Confluent.Kafka.KafkaException"/>
+    /// (<c>Error.IsFatal == true</c>). The consumer disposes the current handle, then runs an inline
+    /// exponential-backoff loop on the same poll thread that builds a fresh <c>IConsumer</c>,
+    /// re-runs the topic-wait probe (when <see cref="WaitForTopic"/> is set), and re-subscribes.
+    /// Pending deferred-ack actions referencing the dying consumer are dropped — the broker
+    /// will redeliver via the standard at-least-once contract.
+    /// When <see cref="KafkaConnectionRecoveryOptions.Enabled"/> is <c>false</c>, the poll loop
+    /// surfaces the fatal error to <c>ConsumeAsync</c> callers via channel completion (the
+    /// pre-change behaviour).
+    /// </summary>
+    public KafkaConnectionRecoveryOptions ConnectionRecovery { get; set; } = new();
 }

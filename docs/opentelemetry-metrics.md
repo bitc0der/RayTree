@@ -70,6 +70,10 @@ All instruments are tagged with `entity_type`. Counters and histograms tied to a
 | `raytree.subscriber.processing.duration` | histogram | `s` | `entity_type`, `change_type` | Each handler attempt (success or fail) |
 | `raytree.subscriber.lag.duration` | histogram | `s` | `entity_type`, `change_type` | `(now - envelope.Timestamp)` for each successfully dispatched message |
 
+### Connection recovery
+
+Connection recovery is **not** exposed as metrics. The reconnect loops (Postgres LISTEN, Kafka publisher/consumer rebuild) and the outbox connection-fault log demotion all remain, but disconnect/recovery visibility is **log-only**: Postgres/Kafka emit retry, recovery, and exhaustion logs at `Information`/`Error`; the RabbitMQ publisher logs `Warning` on shutdown and `Information` on recovery (the RabbitMQ consumer has no logger and is silent for recovery). Each recovery-owning plugin tunes its loop via its own options type — `PostgresConnectionRecoveryOptions` (PostgreSQL) and `KafkaConnectionRecoveryOptions` (Kafka). RabbitMQ recovery is owned by `RabbitMQ.Client`'s `AutomaticRecoveryEnabled` (library default) and has no RayTree options.
+
 ## Conventions
 
 - **All durations are seconds** (`s`), per OTel semantic conventions. Use OTel views to convert to milliseconds at export time if your backend prefers.
@@ -106,6 +110,8 @@ Typical queries against the published metric names:
 - **Failure ratio**: `rate(raytree_outbox_messages_failed_total[5m]) / rate(raytree_outbox_writes_total[5m])`
 - **Outbox backlog alert**: `raytree_outbox_pending > 10000 for 5m`
 - **Retry shape**: `histogram_quantile(0.99, sum by (le) (rate(raytree_subscriber_handler_attempts_bucket[5m])))` — values > 1 indicate handlers are retrying
+
+Connection disconnect/recovery is no longer exposed as metrics — observe it through the plugin recovery logs (Postgres/Kafka retry + recovery, RabbitMQ publisher `Warning`/`Information`).
 
 ## Custom meter injection
 

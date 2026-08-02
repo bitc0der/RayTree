@@ -319,14 +319,14 @@ The delivery tag is broker-private state — `ChangeSubscriber` shouldn't know a
 | Situation | Behaviour |
 |---|---|
 | `ParseEnvelope` throws (malformed message) | `BasicNack(requeue: true)` — broker requeues; **no log** (acknowledged exception to the project's logging-placement rule: no useful context is available inside the RabbitMQ delivery callback, and NACK/requeue is the only correct recovery) |
-| Broker connection drops | The `IConnection` is closed; unacknowledged messages are returned to the queue automatically. A new connection must be established (typically by recreating the consumer) |
+| Broker connection drops | `RabbitMQ.Client.AutomaticRecoveryEnabled` (library default — RayTree does **not** disable it) transparently rebuilds the connection, channel, topology, and consumer registration. The publisher subscribes to the SDK's `ConnectionShutdownAsync` / `RecoverySucceededAsync` events to log a `Warning` on shutdown and `Information` (with duration) on recovery; the consumer has no logger and is silent for recovery. No connection metrics are emitted. The library's `NetworkRecoveryInterval` controls retry timing; RabbitMQ has no RayTree recovery options. Unacknowledged messages are returned to the queue automatically per AMQP semantics. |
 | `RabbitMqConsumer.Dispose` | Closes channel + connection synchronously; any in-flight unacked deliveries are requeued by the broker |
 
 ### Tuning notes
 
 - **`PrefetchCount`** controls the maximum number of in-flight unacked messages per channel. With `AckAfterHandler = true`, this directly caps the at-risk window: if the process crashes, at most `PrefetchCount` messages will be redelivered.
 - **`SubscriberOptions.MaxDegreeOfParallelism`** controls how many envelopes `ChangeSubscriber` processes concurrently from the buffer. Combine with `PrefetchCount` for end-to-end backpressure.
-- The internal `Channel<MessageEnvelope>` is **unbounded** — if your subscriber falls behind, RAM grows. Set `PrefetchCount` to bound it from the broker side.
+- The internal `Channel<MessageEnvelope>` is bounded to `PrefetchCount` (`0` keeps it unbounded, matching the AMQP "no limit" sentinel). If your subscriber falls behind, `OnMessageReceived` blocks on `WriteAsync` instead of buffering unboundedly in memory.
 
 ---
 

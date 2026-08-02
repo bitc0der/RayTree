@@ -6,1332 +6,304 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.21-pre-release]
+
+### Changed — BREAKING (wire format)
+- `RayTree.Plugins.Serializers.MessagePack` switches from `MessagePackSerializer.Typeless` to `ContractlessStandardResolver`. Typeless embedded and reflectively resolved a runtime type name on every call; `TEntity` is already known statically at both call sites. Messages already serialized with Typeless (sitting unpublished in an outbox, or in-flight in a broker) will not deserialize with this resolver — drain or flush before upgrading a live system that uses this serializer.
+
+### Added
+- `IOutbox.MarkPublishedBatchAsync(IReadOnlyCollection<long>, …)` — default-implemented as a per-id loop for existing implementations; `PostgreSqlOutbox<TEntity>` overrides it with a single `UPDATE … WHERE id = ANY(@Ids)`. `OutboxPublisherService` now flushes one batched mark-published call per poll batch instead of one call per message.
+- `EntityColumnMapper.GetValue(PropertyInfo, object)` — compiled-delegate property getter cache, symmetric with the existing `SetValue`.
+
+### Changed — Performance
+- **PostgreSQL data access**: `PostgreSqlOutbox<TEntity>` and `PostgreSqlRepository<TEntity>` use a per-instance `NpgsqlDataSource` instead of `new NpgsqlConnection` + `OpenAsync` per call. `PostgreSqlRepository` also routes property access through `EntityColumnMapper`'s compiled getter/setter cache, matching the outbox read path.
+- **EF Core interceptor**: `CreateChange` compiles and caches one factory delegate per entity type (previously `MakeGenericType` + `Activator.CreateInstance` + reflective `SetValue` on every changed entity, every `SaveChanges`). `_trackedEntityTypes` is now a `HashSet<Type>` (was a linear `IEnumerable<Type>` scan). Outbox writes for a single `SaveChanges` now run in parallel instead of sequentially.
+- **Initialization parallelism**: `ChangePublisher.InitializeAsync` now initializes repositories, outboxes, and publishers — and starts each entity type's `OutboxPublisherService` — in parallel via `Task.WhenAll`, matching the parallel consumer init `ChangeSubscriber.InitializeAsync` already had. One slow entity type's schema migration no longer blocks every other entity type's startup.
+- **Subscriber dispatch**: `ChangeSubscriber` no longer allocates a filtered `List<HandlerRegistration>` (`Where().ToList()`) on every message; dispatch is now a plain loop over the existing registration list.
+- **Enum parsing**: `Enum.Parse<ChangeType>` on the message/row read path replaced with a `switch` in `KafkaConsumer`, `RabbitMqConsumer`, and `PostgreSqlOutbox`.
+- **Kafka/RabbitMQ consumer buffers** are bounded instead of unbounded `Channel<T>`s. Kafka uses a fixed capacity with a blocking write applying backpressure to the poll loop; RabbitMQ reuses the existing `PrefetchCount` option (`0` keeps it unbounded, matching AMQP's "no limit" sentinel).
+- `RayTreeMeter.ChangeTag` precomputes the 3 `ChangeType` tag values instead of calling `.ToString()` per emission. `RabbitMqPublisherOptions`'s default routing-key selector likewise avoids `ToString().ToLower()` per publish.
+- `Lz4CompressorPlugin`: fixed an oversized decompress buffer (was `input.Length * 255`; now prefixes the stream with the real uncompressed length) and uses `MemoryStream.GetBuffer()` instead of `.ToArray()` to avoid an extra copy.
+- `ChangeSubscriber.ResolveType` caches resolved `Type`s per type name instead of scanning `AppDomain.CurrentDomain.GetAssemblies()` on every message.
+
+### Fixed
+- `NotificationBasedPublisher.StopAsync` now waits for in-flight `Task.Run` notification handlers before returning. Previously `Dispose()` could free `_notificationSemaphore` while a handler was still running, throwing `ObjectDisposedException` into an unobserved background task during shutdown under load.
+
+### Dependencies
+- Bumped `Npgsql.EntityFrameworkCore.PostgreSQL`, `StackExchange.Redis`, `Confluent.Kafka`, `MessagePack`, `OpenTelemetry` / `OpenTelemetry.Api`, `Microsoft.NET.Test.Sdk`, `Testcontainers.*`, `Microsoft.Extensions.*`, and `Microsoft.EntityFrameworkCore*` to their latest patch/minor versions. Added a `Microsoft.Extensions.DependencyInjection.Abstractions` reference to `RayTree.Core`.
+
+---
+
+## [0.0.20-pre-release]
+
+- Minor cleanup on `IOutbox`
+
+---
+
+## [0.0.19-pre-release]
+
+### Removed — BREAKING
+- `ConnectionRecoveryOptions` (`RayTree.Core.Resilience`) and `ChangeTrackingRecoveryKeys` (`RayTree.Hosting`) are removed, along with the `ChangeTracking:Publisher:ConnectionRecovery` / `:Subscriber:ConnectionRecovery` config binding in `AddChangeTracking`. Each recovery-owning plugin now defines its own options type with identical field names, defaults, and validation: `PostgresConnectionRecoveryOptions` (`RayTree.Plugins.PostgreSQL.Resilience`) and `KafkaConnectionRecoveryOptions` (`RayTree.Plugins.Kafka`). The `ConnectionRecovery` property on `NotificationBasedPublisherOptions`, `KafkaPublisherOptions`, and `KafkaConsumerOptions` now returns the plugin-local type.
+- All four `raytree.connection.*` metric instruments (`disconnects`, `recoveries`, `recovery.duration`, `state`) are removed, along with the `RayTreeMeter` facade methods `RecordConnectionDisconnect`, `RecordConnectionRecovery`, and `RegisterConnectionStateGauge`. **Disconnect/recovery visibility is now log-only** (Postgres/Kafka retry + recovery + exhaustion logs; RabbitMQ publisher `Warning`/`Information`). The RabbitMQ consumer no longer observes recovery at all (no logger, no metrics). Dashboards/alerts built on any `raytree.connection.*` series break silently — a removed series produces no error, just a flat-lined chart.
+
+### Changed — BREAKING
+- `RayTreeMeter` exposes **no public metric-emission API**. `RecordPublishSuccess`, `RecordPublishFailure`, `RecordPayloadSize`, `RecordBatchSize`, and `RegisterPendingGauge` are now `internal` (all callers — Core and the IVT-privileged `NotificationBasedPublisher` — already see Core internals). The public surface collapses to `MeterName`, the constructors, `DefaultPendingCacheTtl`, and `Dispose()` — construct-and-observe only. Metric observation remains public via the `"RayTree"` meter name and `RayTree.OpenTelemetry`'s `AddRayTreeMetrics`.
+- `RabbitMqPublisher` and `RabbitMqConsumer` constructors no longer take a `RayTreeMeter?` parameter; `KafkaPublisher` and `KafkaConsumer` likewise drop their `RayTreeMeter?` parameter. The RabbitMQ/Kafka builder + subscriber extensions no longer forward a meter. Most callers go through the builder extensions and are unaffected; direct constructor callers drop the argument.
+
+### Migration
+- Recovery options — rename the type at the use site; field names and JSON keys below the section parent are unchanged:
+
+  ```csharp
+  // Before
+  builder.UseKafka(o => o.ConnectionRecovery = new RayTree.Core.Resilience.ConnectionRecoveryOptions { MaxAttempts = 5 });
+  // After
+  builder.UseKafka(o => o.ConnectionRecovery = new KafkaConnectionRecoveryOptions { MaxAttempts = 5 });
+  ```
+
+  The former host-bound `ChangeTracking:*:ConnectionRecovery` sections never auto-applied (callers had to merge them by hand); set recovery in the `UseKafka` / `UsePostgreSqlOutbox` configure lambda instead, reading your own bound section if desired.
+- Observability — drop any `raytree.connection.*` series from dashboards/alerts and switch to the recovery log signal.
+
+---
+
+## [0.0.18-pre-release]
+
+### Added
+- Connection-loss recovery and observability across every connection-bearing plugin. `NotificationBasedPublisher` now reopens the LISTEN connection with exponential backoff; `KafkaPublisher` rebuilds its native producer on fatal error via the lazy `GetProducerAsync` path; `KafkaConsumer` rebuilds on the dedicated poll thread; RabbitMQ plugins delegate to `AutomaticRecoveryEnabled` and emit metrics from SDK events; `PostgreSqlOutbox` + `OutboxPublisherService` observe outbox connection faults (no rebuild — polling cadence is the retry).
+- Four shared metric instruments on the `"RayTree"` meter: `raytree.connection.disconnects`, `raytree.connection.recoveries` (with `outcome` tag), `raytree.connection.recovery.duration`, `raytree.connection.state` (observable gauge). All tagged with `component` + `endpoint`.
+- `ConnectionRecoveryOptions` (`RayTree.Core.Resilience`) — tunes per-plugin exponential backoff (`Enabled`, `InitialDelay`, `MaxDelay`, `Factor`, `JitterFraction`, `MaxAttempts`). Bound from `ChangeTracking:Publisher:ConnectionRecovery` / `:Subscriber:ConnectionRecovery` via `AddChangeTracking` into NAMED options; keys exposed as `ChangeTrackingRecoveryKeys.Publisher` / `.Subscriber`.
+- `IOutbox` gains default-implemented `IsConnectionFault(Exception)`, `ConnectionComponent`, `ConnectionEndpoint`. `PostgreSqlOutbox<TEntity>` overrides all three; other implementations inherit no-ops.
+- Public facade methods on `RayTreeMeter`: `RecordConnectionDisconnect`, `RecordConnectionRecovery`, `RegisterConnectionStateGauge`. No new `InternalsVisibleTo` entries.
+
+### Changed
+- `OutboxPublisherService` is now a thin wrapper over a generic `TypedImpl<TEntity>`. Per-batch path is zero-reflection; public surface unchanged.
+
+### Changed — BINARY-BREAKING
+- `KafkaPublisher`, `KafkaConsumer`, `RabbitMqPublisher`, `RabbitMqConsumer` constructors add optional `RayTreeMeter? meter = null`. Source-compatible; downstream NuGet consumers must recompile. Builder extensions forward the parameter.
+
+---
+
 ## [0.0.17-pre-release]
 
 ### Added
-
-#### Optional `WaitForTopic` retry for Kafka publisher and consumer (`RayTree.Plugins.Kafka`)
-
-Mirrors the existing RabbitMQ `WaitForTopology` feature for Kafka. When `WaitForTopic = true`
-is set on either `KafkaPublisherOptions` or `KafkaConsumerOptions`, `InitializeAsync` probes
-the broker via `IAdminClient.GetMetadata` and retries while the response indicates the topic
-is not yet available — empty `Topics` collection, per-topic `UnknownTopicOrPart`, per-topic
-`LeaderNotAvailable` (cluster bootstrap / leader election), or a transient transport-level
-`KafkaException` (`Local_Transport`, `Local_AllBrokersDown`, `Local_Resolve`, `Local_TimedOut`
-— the broker-not-yet-reachable startup race). Other broker errors (authorization, fatal
-librdkafka errors) propagate immediately. New options on both classes: `WaitForTopic` (bool,
-default `false`), `TopicWaitInterval` (TimeSpan, default 5 s), `TopicWaitTimeout` (TimeSpan?,
-default `null`). Both Kafka builder extensions (`UseKafka` on publisher and `UseKafka<TEntity>`
-on subscriber) now accept an optional `ILoggerFactory?` parameter so probe logs reach the host
-logging infrastructure when using the documented fluent API.
-
-The probe is implemented in a new internal `KafkaTopicProbe` helper. Per-call metadata timeout
-is a fixed ~1 s decoupled from `TopicWaitInterval` so cancellation latency and shutdown
-thread-pool occupancy are bounded regardless of how long the interval is set.
+- Optional `WaitForTopic` retry for Kafka publisher and consumer (mirrors RabbitMQ `WaitForTopology`). New options: `WaitForTopic` (default `false`), `TopicWaitInterval` (5 s), `TopicWaitTimeout` (`null`). Probes via `IAdminClient.GetMetadata`; retries on transient broker/transport conditions; propagates fatal/authorization errors. Both `UseKafka` builder extensions now accept an optional `ILoggerFactory?`.
 
 ### Changed — BINARY-BREAKING
-
-#### `KafkaPublisher` constructor adds optional `ILoggerFactory?` parameter
-
-`public KafkaPublisher(KafkaPublisherOptions options)` → `public KafkaPublisher(KafkaPublisherOptions options, ILoggerFactory? loggerFactory = null)`.
-
-This is **source-compatible** (existing `new KafkaPublisher(options)` call-sites continue to
-compile) but **binary-breaking** (adding an optional parameter to a public constructor
-changes the constructor's binary signature). Downstream applications consuming
-`RayTree.Plugins.Kafka` as a published NuGet must **recompile** against this version —
-binaries built against the older signature will hit `MissingMethodException` at runtime.
+- `KafkaPublisher` constructor adds optional `ILoggerFactory? loggerFactory = null`.
 
 ### Changed
-
-- `KafkaPublisher` now uses two `SemaphoreSlim` instances (one for the one-shot topic probe
-  gated by a `volatile bool _probeCompleted` flag, one for the very short producer-build
-  critical section) instead of the previous `lock`. Splitting the two means concurrent
-  `PublishAsync` callers do NOT serialize behind a multi-second topic-wait probe — they
-  contend only on the microsecond-long builder lock. The probe runs inside the lazy
-  `GetProducerAsync` path so it covers both `InitializeAsync` and direct `PublishAsync`.
-- `KafkaPublisher.Dispose` is now idempotent (`volatile bool _disposed` guard) and its
-  internal `SafeRelease` swallows `ObjectDisposedException` from in-flight `Release()`
-  calls during a Dispose-during-init race, so host shutdown no longer produces a noisy
-  crash log.
-- `KafkaConsumer.InitializeAsync` is now genuinely `async Task` instead of returning a
-  pre-completed `Task` so the probe can be awaited safely under any captured
-  `SynchronizationContext`. A `cancellationToken.ThrowIfCancellationRequested()` check
-  between the probe and the native `IConsumer` allocation prevents handle leaks when
-  cancellation arrives during a slow probe.
-
-### Changed — `RayTree.Core`
-
-- `ChangeSubscriber.InitializeAsync` now initializes all registered consumers in parallel
-  via `Task.WhenAll` rather than sequentially. A single consumer with a slow init (e.g.
-  Kafka `WaitForTopic` against a missing topic) no longer blocks unrelated consumers from
-  subscribing.
+- `KafkaPublisher` splits one-shot probe semaphore from the producer-build semaphore so concurrent publishers don't serialize behind a multi-second probe.
+- `KafkaPublisher.Dispose` is idempotent; `SafeRelease` swallows `ObjectDisposedException` during Dispose-during-init races.
+- `KafkaConsumer.InitializeAsync` is genuinely async; cancellation re-check between probe and native handle allocation prevents handle leaks.
+- `ChangeSubscriber.InitializeAsync` initializes all consumers in parallel via `Task.WhenAll`.
 
 ---
 
 ## [0.0.16-pre-release]
 
 ### Added
-
-#### Configuration- and lifecycle-time logging on the tracker builder (`RayTree.Core`, `RayTree.Hosting`)
-
-Before this release the builder and tracker were almost silent during configuration and
-startup: operators bringing up a new service had no visible evidence of which plugins were
-registered, which entity types were configured, or which defaults were applied.
-Misconfigurations (forgotten outbox, wrong consumer factory, mismatched serializer) only
-surfaced as runtime errors later that were hard to trace back to the build step.
-
-The change adds structured `Information` / `Debug` / `Warning` logs through the entire
-configuration and initialization path. No code change is required to opt in — the new logs
-flow automatically through the `ILoggerFactory` already supplied to `ChangeTrackingBuilder`
-(directly, or via `AddChangeTracking` from the DI container).
-
-**Builder configuration logs** — emitted from `ChangeTrackingBuilder` and from per-entity
-builders (`EntityBuilder<TEntity>`, `SharedHandlerBuilder<TEntity>`,
-`IsolatedHandlerBuilder<TEntity>`):
-
-| Level | When | Properties |
-|---|---|---|
-| `Information` | Each global `Use*` call | `{Plugin}` |
-| `Information` | `ForEntity<TEntity>` invocation | `{EntityType}` |
-| `Debug` | Default `RayTreeMeter` fallback in `BuildInternal` | — |
-| `Information` | "ChangeTracker built" summary at the end of `Build()` / `BuildAsync()` | `{EntityTypes}`, `{Plugins}`, `{HasCustomMeter}`, `{HasCustomDeduplicationStore}`, `{HasCustomLoggerFactory}` |
-| `Debug` | Per-entity plugin override (`UseOutbox`, `UsePublisher`, `UseSerializer`, `UseCompressor`, `UseRepository`, `UseConsumer`, `UseConsumerFactory`, `UseSubscriberOptions`) | `{EntityType}`, `{Override}`, `{Plugin}` |
-| `Debug` | Handler registration (`OnInsert` / `OnUpdate` / `OnDelete` / `OnChange`, both Shared and Isolated modes) | `{EntityType}`, `{Override}` (e.g. `OnInsert:audit`), `{Plugin}` |
-
-For lambda handlers, `{Plugin}` walks past compiler-generated closure types
-(`<>c__DisplayClass…`) and reports the user's outer class — so logs show
-`Plugin=MyService` instead of `Plugin=<>c__DisplayClass3_0`.
-
-**Tracker initialization lifecycle** — emitted from `EntityChangeTracker.InitializeAsync`:
-
-| Level | When | Properties |
-|---|---|---|
-| `Information` | "tracker initialization started" | — |
-| `Debug` | Publisher initialization complete | `{EntityTypeCount}` |
-| `Debug` | Consumer connections initialized | `{ConsumerCount}` |
-| `Information` | "tracker initialization completed" — success | — |
-| `Warning` | "tracker initialization aborted" — abort marker on failure; the inner publisher/subscriber/plugin's own `Error` carries the exception payload | — |
-
-The Warning on failure deliberately omits the exception to avoid double-logging — inner
-service layers already log the root cause at `Error`. Operators can grep for the abort line
-and follow it back to the inner Error immediately above in the log stream.
-
-**Tracker disposal on failed init** — `Build()` and `BuildAsync()` now wrap
-`InitializeAsync` in try/catch and call `tracker.Dispose()` before rethrowing.
-Previously a partially-initialized tracker (owned `RayTreeMeter`, publisher background
-services started inside `ChangePublisher.InitializeAsync`, dedup store, etc.) leaked when
-init threw, because the caller never received a reference.
-
-**DI startup log** — emitted from `ChangeTrackingHostedService.StartAsync`:
-
-| Level | When | Properties |
-|---|---|---|
-| `Information` | "ChangeTracking starting" — once per host instance | `{ConfigurationBound}` |
-
-A new internal `ChangeTrackingDiContext` record captures `configuration != null` at
-`AddChangeTracking` registration time and flows it to the hosted service via DI.
-Registration is idempotent (`TryAddSingleton`), so calling `AddChangeTracking` twice
-no longer appends duplicate registrations.
-
-**Per-category log filtering**
-
-Each builder owns an `ILogger<Self>` (not a shared logger), so the category attached to
-every log entry matches the type that actually emitted it. Operators can filter per category
-in their log sink — for example `RayTree.Core.Handling.SharedHandlerBuilder*` to see only
-handler-registration events, or silence `Debug` from a specific builder without affecting
-others.
-
-**Zero overhead under `NullLoggerFactory`**
-
-Every new log call is guarded by `ILogger.IsEnabled(<level>)`. Because
-`NullLogger.IsEnabled` always returns `false`, the entire log body — including the
-build-summary's `EntityTypes` array and `Plugins` string interpolation — is skipped under
-`NullLoggerFactory.Instance`. Callers who opt out of logging pay zero allocation at startup.
-
-**Example output** for a tracker with two entities:
-
-```text
-info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
-      ChangeTracking: registered global serializer JsonSerializerPlugin
-info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
-      ChangeTracking: configuring entity Order
-dbug: RayTree.Core.Tracking.EntityBuilder`1[Order][0]
-      ChangeTracking: entity override applied EntityType=Order Override=Outbox Plugin=PostgreSqlOutbox`1
-dbug: RayTree.Core.Handling.SharedHandlerBuilder`1[Order][0]
-      ChangeTracking: entity override applied EntityType=Order Override=OnInsert Plugin=MyService
-info: RayTree.Core.Tracking.ChangeTrackingBuilder[0]
-      ChangeTracker built. EntityTypes=["Order", "Customer"] Plugins=Outbox=<none> Publisher=<none> Serializer=JsonSerializerPlugin Compressor=NoOpCompressorPlugin Repository=<none> HasCustomMeter=False HasCustomDeduplicationStore=False HasCustomLoggerFactory=True
-info: RayTree.Core.Tracking.EntityChangeTracker[0]
-      ChangeTracking: tracker initialization started
-dbug: RayTree.Core.Tracking.EntityChangeTracker[0]
-      ChangeTracking: publisher initialized EntityTypeCount=2
-dbug: RayTree.Core.Tracking.EntityChangeTracker[0]
-      ChangeTracking: consumers initialized ConsumerCount=1
-info: RayTree.Core.Tracking.EntityChangeTracker[0]
-      ChangeTracking: tracker initialization completed
-info: RayTree.Hosting.ChangeTrackingHostedService[0]
-      ChangeTracking starting. ConfigurationBound=True
-```
-
-See [`docs/configuration.md`](docs/configuration.md#what-gets-logged) for the full
-log-entry reference.
-
----
-
-#### Kafka microservices example (`examples/Kafka.Microservices`)
-
-This example demonstrates the full outbox-to-Kafka pipeline with two cooperating microservices:
-- **OrderService** — inserts, updates, and deletes `Order` rows in PostgreSQL; writes every change to a PostgreSQL outbox; and publishes each outbox record to the Kafka topic `raytree.order_changes` via `KafkaPublisher`.
-- **NotificationService** — consumes from that topic via `KafkaConsumer` and logs each change to the console.
-
-Both services are fully Dockerized and start with a single `docker compose up --build` command. The example mirrors `examples/RabbitMQ.Microservices` but uses Kafka (KRaft, no Zookeeper) and PostgreSQL as the backing store.
-
-Key concepts demonstrated:
-- **Partition-key ordering** — the default `KeySelector` produces `"{EntityType}:{EntityId}"`, routing all events for the same entity to the same Kafka partition and preserving per-entity order.
-- **Consumer-group scaling** — all `NotificationService` replicas share the same `GroupId`, so Kafka automatically rebalances partitions across them. Start with `docker compose up --scale notification-service=2`.
-- **`FromEarliest` replay** — new consumer groups begin reading from offset 0, so the notification service never misses messages published before it started.
-- **Isolated handler dispatch** — `UseConsumerFactory` enables per-handler consumer groups with independent offset tracking.
-
-The example is a standalone solution (`examples/Kafka.Microservices/Kafka.Microservices.slnx`) and is **not** part of `RayTree.slnx`. See [`examples/Kafka.Microservices/README.md`](../examples/Kafka.Microservices/README.md) for the full walkthrough.
-
-#### Documentation
-
-The existing `examples/RabbitMQ.Microservices` README has been expanded with sections on at-least-once delivery, topology wait, isolated-handler dispatch, distributed deduplication, and OpenTelemetry. A new **Examples** section was added to `docs/README.md` with a comparison table of the RabbitMQ and Kafka microservices demos.
+- Structured configuration- and lifecycle-time logging through the entire builder + tracker path. `Information` for global `Use*` and `ForEntity<TEntity>`; `Debug` for per-entity overrides and handler registration (with `{Plugin}` walking past compiler-generated closure types); `Information` "ChangeTracker built" summary; `Information`/`Debug`/`Warning` tracker initialization markers; `Information` `ChangeTrackingHostedService` startup log with `{ConfigurationBound}`. Each builder owns `ILogger<Self>` for per-category filtering. All calls guarded by `IsEnabled` — zero overhead under `NullLoggerFactory`.
+- `Build()` / `BuildAsync()` now dispose the tracker if `InitializeAsync` throws (previously leaked owned `RayTreeMeter`, publisher services, dedup store).
+- `AddChangeTracking` registration is idempotent via `TryAddSingleton`.
+- Kafka microservices example (`examples/Kafka.Microservices`) — full outbox-to-Kafka pipeline with OrderService + NotificationService, Dockerized, demonstrates partition-key ordering, consumer-group scaling, `FromEarliest` replay, isolated-handler dispatch.
+- `examples/RabbitMQ.Microservices` README expanded; `docs/README.md` gains an Examples section.
 
 ---
 
 ## [0.0.15-pre-release]
 
 ### Added
-
-#### Topology wait — opt-in startup retry for externally-owned RabbitMQ topology (`RayTree.Plugins.RabbitMQ`)
-
-In microservice deployments the exchange or queue that a publisher or consumer depends on is
-often owned and declared by a separate service. If both services start simultaneously the
-consumer-side service may call `InitializeAsync` before the topology exists, causing an
-`OperationInterruptedException` with `NOT_FOUND` (404) and an immediate crash-loop.
-
-Three new options on both `RabbitMqPublisherOptions` and `RabbitMqConsumerOptions` enable an
-opt-in wait loop that probes with AMQP passive declares and retries until the topology appears:
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `WaitForTopology` | `bool` | `false` | Enable the topology wait loop. |
-| `TopologyWaitInterval` | `TimeSpan` | `5 s` | Delay between passive-declare attempts. |
-| `TopologyWaitTimeout` | `TimeSpan?` | `null` | Optional hard deadline; `null` means wait indefinitely. |
-
-**Publisher behaviour** (when `WaitForTopology = true` and `DeclareExchange = false`): probes
-the configured `ExchangeName` with `ExchangeDeclarePassiveAsync` before opening the working
-channel. Retries on `NOT_FOUND`; propagates all other errors immediately.
-
-**Consumer behaviour** (when `WaitForTopology = true`):
-- When `DeclareQueue = false`: probes `QueueName` with `QueueDeclarePassiveAsync`.
-- When `ExchangeName` is non-empty: probes the exchange with `ExchangeDeclarePassiveAsync`
-  before calling `QueueBindAsync`.
-
-Both probes use the same `TopologyWaitInterval` and `TopologyWaitTimeout`.
-
-**Non-retried errors**: only `NOT_FOUND` (404) triggers retry. `PRECONDITION_FAILED`,
-`ACCESS_REFUSED`, connection failures, and `OperationCanceledException` propagate immediately.
-
-**Fresh channel per attempt**: RabbitMQ closes the channel on every channel-level error, so
-each probe opens a new channel from the existing connection. The working channel is created only
-after all probes succeed.
-
-**Logging** (publisher only — `RabbitMqConsumer` has no logger by design):
-
-| Level | When |
-|---|---|
-| `Information` | First `NOT_FOUND` for an exchange or queue |
-| `Debug` | Subsequent misses |
-| `Information` | Recovery (topology became available) |
-| `Error` | Timeout exhaustion before rethrowing |
-
-```csharp
-// Publisher waits for an exchange owned by another service
-new RabbitMqPublisherOptions
-{
-    ExchangeName          = "entity_changes",
-    DeclareExchange       = false,          // not our exchange to declare
-    WaitForTopology       = true,
-    TopologyWaitInterval  = TimeSpan.FromSeconds(2),
-    TopologyWaitTimeout   = TimeSpan.FromMinutes(5)  // give up after 5 min
-}
-
-// Consumer waits for a queue and its binding exchange
-new RabbitMqConsumerOptions
-{
-    QueueName             = "order-events",
-    ExchangeName          = "entity_changes",
-    DeclareQueue          = false,          // queue owned externally
-    WaitForTopology       = true,
-    TopologyWaitInterval  = TimeSpan.FromSeconds(2)
-    // TopologyWaitTimeout = null → retry indefinitely until token is cancelled
-}
-```
-
-The default (`WaitForTopology = false`) is unchanged — a missing exchange or queue surfaces the
-underlying `OperationInterruptedException` on the first AMQP operation, exactly as before.
+- Topology wait for externally-owned RabbitMQ topology. New options on both `RabbitMqPublisherOptions` and `RabbitMqConsumerOptions`: `WaitForTopology` (default `false`), `TopologyWaitInterval` (5 s), `TopologyWaitTimeout` (`null`). Publisher probes the exchange when `DeclareExchange = false`; consumer probes the queue when `DeclareQueue = false` and the binding-target exchange when `ExchangeName` is non-empty. Only `NOT_FOUND` (404) triggers retry — `PRECONDITION_FAILED`, `ACCESS_REFUSED`, connection failures propagate immediately. Fresh channel per attempt.
 
 ---
 
 ## [0.0.14-pre-release]
 
 ### Added
-
-#### `RabbitMqPublisherOptions.RoutingKeySelector` — configurable AMQP routing key (`RayTree.Plugins.RabbitMQ`)
-
-The AMQP routing key used to be hardcoded as `"{RoutingKey}.{EntityType}.{changeType}"`. It is
-now configurable via a delegate on `RabbitMqPublisherOptions`:
-
-```csharp
-new RabbitMqPublisherOptions
-{
-    ExchangeName       = "entity_changes",
-    RoutingKeySelector = envelope => $"change.{envelope.EntityId.Split(':')[0]}.{envelope.EntityType}"
-}
-```
-
-The default delegate preserves the previous behaviour — no breaking change. Override the selector
-to route by tenant, aggregate root, or any envelope field, enabling different consumer queues to
-process different message subsets in parallel via standard AMQP topic-exchange bindings.
-
-#### `KafkaPublisherOptions.KeySelector` — configurable Kafka partition key (`RayTree.Plugins.Kafka`)
-
-The Kafka partition key used to be hardcoded as `"{EntityType}:{EntityId}"`. It is now
-configurable via a delegate on `KafkaPublisherOptions`:
-
-```csharp
-new KafkaPublisherOptions
-{
-    BootstrapServers = "localhost:9092",
-    Topic            = "orders",
-    KeySelector      = envelope => envelope.EntityId   // shard by entity ID only
-}
-```
-
-The default delegate preserves the previous behaviour (`EntityType:EntityId`), so existing
-deployments are unaffected. Override the selector to shard by tenant, aggregate root, or any
-value derivable from the `MessageEnvelope` — enabling consumer-group parallelism where different
-key ranges are processed independently while ordering within each key is still guaranteed.
+- `RabbitMqPublisherOptions.RoutingKeySelector` — configurable AMQP routing key (default preserves `"{RoutingKey}.{EntityType}.{changeType}"`).
+- `KafkaPublisherOptions.KeySelector` — configurable Kafka partition key (default preserves `"{EntityType}:{EntityId}"`).
 
 ---
 
 ## [0.0.13-pre-release]
 
 ### Added
-
-#### `EntityChangeTracker.StartAsync` / `StopAsync` — explicit consumer lifecycle (`RayTree.Core`)
-
-Consumer loops are no longer started or stopped by `ChangeTrackingHostedService` internals. The
-tracker exposes the full lifecycle directly:
-
-```csharp
-var tracker = EntityChangeTracker.Create()
-    .ForEntity<Order>(e => e /* publisher + subscriber config */)
-    .Build();
-
-using var cts = new CancellationTokenSource();
-await tracker.StartAsync(cts.Token);   // starts all shared and isolated consumer loops
-
-// ... app runs ...
-
-cts.Cancel();
-await tracker.StopAsync();             // awaits all loops; swallows OperationCanceledException
-tracker.Dispose();
-```
-
-In a .NET Generic Host app `ChangeTrackingHostedService` calls these automatically — no manual
-lifecycle management is needed.
-
-#### `EntityChangeTracker.RunCleanupAsync` — direct outbox cleanup (`RayTree.Core`)
-
-Iterates every registered outbox and calls `CleanupPublishedAsync`, returning the total row count.
-Use it for ad-hoc or scheduled cleanup (e.g. a maintenance endpoint):
-
-```csharp
-public class MaintenanceController(
-    EntityChangeTracker tracker,
-    IOptions<OutboxPublisherOptions> options) : ControllerBase
-{
-    [HttpPost("outbox/rotate")]
-    public async Task<IActionResult> Rotate(CancellationToken ct)
-    {
-        var deleted = await tracker.RunCleanupAsync(options.Value.CleanupRetentionPeriod, ct);
-        return Ok(new { deleted });
-    }
-}
-```
+- `EntityChangeTracker.StartAsync(CancellationToken)` / `StopAsync()` — explicit consumer lifecycle directly on the tracker. `ChangeTrackingHostedService` calls these automatically.
+- `EntityChangeTracker.RunCleanupAsync(retentionPeriod, ct)` — iterates every registered outbox and returns the total deleted-row count.
 
 ### Changed (breaking)
-
-#### `EntityChangeTracker.Publisher` and `Subscriber` are now `internal` (`RayTree.Core`)
-
-These were marked "not part of the primary API" but were public. They are now `internal`. The
-tracker's public surface (`TrackXxxAsync`, `StartAsync`, `StopAsync`, `RunCleanupAsync`, `Meter`)
-covers all legitimate caller needs.
-
-First-party plugin assemblies (`RayTree.EntityFrameworkCore`, `RayTree.Plugins.PostgreSQL`) and
-their test projects access internals via `InternalsVisibleTo` entries in `RayTree.Core.csproj`.
-
-#### `EntityChangeTracker.InitializeAsync()` is now `internal` (`RayTree.Core`)
-
-`InitializeAsync` was never intended for direct calling — `Build()` / `BuildAsync()` invoke it
-automatically. Removing it from the public surface prevents accidental double-initialization.
-
-#### `NotificationBasedPublisher` constructor parameter changed (`RayTree.Plugins.PostgreSQL`)
-
-The first constructor argument changes from `ChangePublisher` to `EntityChangeTracker`:
-
-```csharp
-// Before
-var pub = new NotificationBasedPublisher(tracker.Publisher, options, loggerFactory);
-
-// After
-var pub = new NotificationBasedPublisher(tracker, options, loggerFactory);
-```
+- `EntityChangeTracker.Publisher` and `Subscriber` are now `internal`. Plugin assemblies access via `InternalsVisibleTo`.
+- `EntityChangeTracker.InitializeAsync()` is now `internal` — `Build()` / `BuildAsync()` invoke it automatically.
+- `NotificationBasedPublisher` first ctor arg changes from `ChangePublisher` to `EntityChangeTracker`.
 
 ### Removed
-
-#### `OutboxCleanupService` removed (`RayTree.Core`)
-
-`OutboxCleanupService` was a thin wrapper that delegated to `EntityChangeTracker.RunCleanupAsync`
-and logged the result. It is removed; call the tracker method directly:
-
-```csharp
-// Before
-var service = new OutboxCleanupService(tracker, logger, retentionPeriod);
-await service.RunCleanupAsync(ct);
-
-// After
-var deleted = await tracker.RunCleanupAsync(retentionPeriod, ct);
-```
-
-`AddChangeTracking` no longer registers `OutboxCleanupService` as a DI singleton. Inject
-`EntityChangeTracker` directly wherever cleanup is needed.
+- `OutboxCleanupService` — call `tracker.RunCleanupAsync` directly. `AddChangeTracking` no longer registers it.
 
 ### Fixed
-
-#### Isolated consumer queues not initialized on `Build()` (`RayTree.Core`)
-
-`EntityChangeTracker.InitializeAsync` only called `InitializeAsync` on shared-mode consumer
-queues (`_subscriber.Queues`). Isolated-mode consumer queues (`_subscriber.IsolatedQueues`) were
-skipped, meaning isolated consumers started unconnnected. Both collections are now initialized.
+- `EntityChangeTracker.InitializeAsync` now initializes isolated-mode consumer queues (previously only shared-mode queues were initialized; isolated consumers started unconnected).
 
 ---
 
 ## [0.0.12-pre-release]
 
 ### Added
-
-#### `EntityChangeTracker.Create()` — canonical entry point (`RayTree.Core`)
-
-New public static factory method that returns `IChangeTrackingBuilder`. This is the new
-canonical way to start building a tracker:
-
-```csharp
-// Without logging (defaults to NullLoggerFactory)
-var tracker = EntityChangeTracker.Create()
-    .ForEntity<Order>(e => e /* ... */)
-    .Build();
-
-// With logging
-var tracker = EntityChangeTracker.Create(loggerFactory)
-    .ForEntity<Order>(e => e /* ... */)
-    .Build();
-```
-
-The optional `ILoggerFactory?` parameter defaults to `NullLoggerFactory.Instance` when `null`.
+- `EntityChangeTracker.Create(ILoggerFactory? = null)` — canonical entry point returning `IChangeTrackingBuilder`.
 
 ### Changed (breaking)
-
-#### `ChangeTrackingBuilder` constructor is now `internal`; class is `sealed` (`RayTree.Core`)
-
-`ChangeTrackingBuilder` can no longer be instantiated directly or subclassed. Use
-`EntityChangeTracker.Create()` instead:
-
-```csharp
-// Before
-var tracker = new ChangeTrackingBuilder()
-    .ForEntity<Order>(e => e /* ... */)
-    .Build();
-
-var tracker = new ChangeTrackingBuilder(loggerFactory)
-    .ForEntity<Order>(e => e /* ... */)
-    .Build();
-
-// After
-var tracker = EntityChangeTracker.Create()
-    .ForEntity<Order>(e => e /* ... */)
-    .Build();
-
-var tracker = EntityChangeTracker.Create(loggerFactory)
-    .ForEntity<Order>(e => e /* ... */)
-    .Build();
-```
-
-#### `EntityChangeTracker` constructor is now `internal` (`RayTree.Core`)
-
-`EntityChangeTracker` can no longer be constructed directly. Use `EntityChangeTracker.Create()`
-(or `AddChangeTracking` in the Generic Host) to obtain a fully configured instance.
+- `ChangeTrackingBuilder` constructor is `internal`; class is `sealed`. Use `EntityChangeTracker.Create()`.
+- `EntityChangeTracker` constructor is `internal`. Use `EntityChangeTracker.Create()` or `AddChangeTracking`.
 
 ### Fixed
-
-#### Duplicate `<see cref>` XML doc tag in `ChangeSubscriberBuilder.Build()` (`RayTree.Core`)
-
-Removed a duplicate `<see cref>` tag from the `Build()` parameter remarks XML documentation.
+- Duplicate `<see cref>` XML doc tag in `ChangeSubscriberBuilder.Build()`.
 
 ---
 
 ## [0.0.11-pre-release]
 
 ### Added
-
-#### Redis deduplication store (`RayTree.Plugins.Deduplication.Redis`)
-
-New package providing a Redis-backed `IDeduplicationStore` for distributed deployments where
-deduplication state must survive process restarts or be shared across multiple subscriber
-instances.
-
-- `RedisDeduplicationStore` — stores processed correlation IDs in Redis using a single atomic
-  `SET NX EX` command. Keys expire automatically via Redis TTL, so `CleanupAsync` is a no-op.
-- `RedisDeduplicationOptions` — configures key prefix (default `"default"`), retention period
-  (default 24 h), and logical database index (default `-1`).
-- `UseRedisDeduplication(IConnectionMultiplexer)` and
-  `UseRedisDeduplication(IConnectionMultiplexer, Action<RedisDeduplicationOptions>)` extension
-  methods on both `IChangeSubscriberBuilder` and `IChangeTrackingBuilder`.
-
-Key format: `raytree:dedup:{KeyPrefix}:{correlationId}`.
-
-```csharp
-var multiplexer = await ConnectionMultiplexer.ConnectAsync("localhost:6379");
-
-var tracker = new ChangeTrackingBuilder()
-    .UseRedisDeduplication(multiplexer, opt =>
-    {
-        opt.KeyPrefix       = "my-service";
-        opt.RetentionPeriod = TimeSpan.FromHours(48);
-    })
-    .ForEntity<Order>(e => e /* ... */)
-    .Build();
-```
-
-`InMemoryDeduplicationStore` remains the default for single-process and test scenarios — no
-configuration change required for existing deployments.
+- `RayTree.Plugins.Deduplication.Redis` — `RedisDeduplicationStore` backed by Redis `SET NX EX` with TTL-based expiry (`CleanupAsync` is a no-op). `RedisDeduplicationOptions` configures `KeyPrefix`, `RetentionPeriod`, logical DB index. `UseRedisDeduplication(IConnectionMultiplexer, …)` extensions on both `IChangeSubscriberBuilder` and `IChangeTrackingBuilder`. Key format: `raytree:dedup:{KeyPrefix}:{correlationId}`. `InMemoryDeduplicationStore` remains the default.
 
 ---
 
 ## [0.0.10-pre-release]
 
 ### Changed (breaking)
-
-#### `ChangeType` is required on every handler registration (`RayTree.Core`)
-
-`OnChange(changeType, handler)` now takes a non-nullable `ChangeType`. The previous wildcard
-`OnChange(changeType: null, handler)` form — which fired the handler for every change type —
-has been removed across all four registration surfaces:
-
-- `IEntitySubscriberBuilder<TEntity>.OnChange`
-- `ISharedHandlerBuilder<TEntity>.OnChange`
-- `IIsolatedHandlerBuilder<TEntity>.OnChange`
-- `ChangeSubscriber.OnChange<TEntity>` and internal `RegisterIsolatedHandler<TEntity>`
-
-`HandlerRegistration.ChangeType` is now `ChangeType` (not `ChangeType?`), and the dispatch
-matcher inside `ChangeSubscriber.ProcessMessageAsync` / `ProcessIsolatedMessageAsync` is a
-strict equality check (`h.ChangeType == envelope.ChangeType`) — no implicit fall-through.
-
-**Migration:** replace each catch-all registration with one call per change type binding the
-same delegate.
-
-```csharp
-// Before (no longer compiles):
-.OnChange<Order>(changeType: null, handler)
-
-// After:
-.OnChange<Order>(ChangeType.Insert, handler)
-.OnChange<Order>(ChangeType.Update, handler)
-.OnChange<Order>(ChangeType.Delete, handler)
-```
-
-The `IOutbox.GetUnpublishedAsync(ChangeType? changeType, …)` query filter is **unaffected** —
-its nullable `changeType` parameter is a query filter (`null` = no filter), a different
-contract from handler binding.
+- `ChangeType` is required on every handler registration — `OnChange(changeType, handler)` takes a non-nullable `ChangeType`; the wildcard `null` form is removed. Dispatch is a strict equality check. `HandlerRegistration.ChangeType` is non-nullable. Migration: register one handler per change type. (`IOutbox.GetUnpublishedAsync(ChangeType? …)` query filter is unaffected.)
+- `IEntityBuilder<TEntity>` — `OnInsert`/`OnUpdate`/`OnDelete`/`OnChange` removed; handler registration is only reachable via the post-fork builders. `UseConsumer` return type changes to `ISharedHandlerBuilder<TEntity>`. Migration: reorder so `UseSerializer`/`UseCompressor`/`UseSubscriberOptions` precede `UseConsumer`.
 
 ### Added
+- Optional at-least-once delivery. `IQueueConsumer` gains default-no-op `AcknowledgeAsync` / `NegativeAcknowledgeAsync`. RabbitMQ and Kafka opt in via `AckAfterHandler = true`; ACK/commit deferred until handler success, NACK requeues (Rabbit `BasicNack`) or seeks back (Kafka `Seek` on poll thread). Broker-private state travels via `MessageEnvelope.Metadata` (lazy-allocated). Kafka requires `MaxDegreeOfParallelism = 1` per partition when enabled.
+- Handler dispatch modes. **Shared**: `UseConsumer(IQueueConsumer)` → `ISharedHandlerBuilder<TEntity>`, single delivery, sequential handlers, dedup key `correlationId`. **Isolated**: `UseConsumerFactory(Func<string, IQueueConsumer>)` → `IIsolatedHandlerBuilder<TEntity>`, per-named-handler subscription / retry budget / dedup namespace (`$"{correlationId}:{handlerName}"`); per-handler `SubscriberOptions?` parameter on named registrations.
+- `EntityHandlerKey` record struct — typed dictionary key for `ChangeSubscriber.IsolatedQueues`.
+- `InMemoryBroadcastQueue` — fan-out queue for isolated-mode testing.
 
-#### Optional at-least-once delivery (`RayTree.Core`, `RayTree.Plugins.RabbitMQ`, `RayTree.Plugins.Kafka`)
-
-`IQueueConsumer` gains two default-no-op methods — `AcknowledgeAsync(MessageEnvelope, CancellationToken)`
-and `NegativeAcknowledgeAsync(MessageEnvelope, CancellationToken)` — that `ChangeSubscriber`
-invokes after each dispatched message: ACK on normal completion (handler success, dedup hit,
-no-handler skip, `SkipOnFailure` swallow), NACK on retry-exhaustion with `SkipOnFailure = false`.
-Existing custom `IQueueConsumer` implementations inherit the no-ops and behave unchanged
-(source-compatible, binary-compatible). Both shared-mode (`ConsumeFromConsumerAsync`) and
-isolated-mode (`ConsumeIsolatedFromConsumerAsync`) consume loops participate; the custom-reader
-overload (`ConsumeFromQueueAsync<TQueue>`) is at-most-once by design.
-
-**`MessageEnvelope.Metadata`** — lazy-allocated `IDictionary<string, object?>` for consumer-private
-broker state (delivery tags, lock tokens, receipt handles). Not part of the wire format; not
-inspected by handlers.
-
-**RabbitMQ opt-in** (`RabbitMqConsumerOptions.AckAfterHandler`, default `false`): when `true`,
-the broker ACK is deferred until handler completion. NACK requeues via `BasicNackAsync(requeue: true)`.
-Delivery tag is stashed in `MessageEnvelope.Metadata` via the internal `RabbitMqEnvelopeMetadata`
-take-on-read accessor so a double-Ack attempt is a silent no-op rather than a broker error.
-
-**Kafka opt-in** (`KafkaConsumerOptions.AckAfterHandler`, default `false`): when `true`, the
-offset commit is deferred. The subscriber posts the original `ConsumeResult` plus a
-`Commit`/`SeekBack` discriminator to an internal post-handler channel; the poll thread drains
-it at the top of each iteration (Confluent.Kafka requires `Consume`/`Commit`/`Seek` on the
-same thread). When pending work is queued, the next `Consume()` uses `TimeSpan.Zero` so commits
-don't wait a full poll cycle. NACK performs `_consumer.Seek(TopicPartitionOffset)` so the
-failed message is redelivered in the same consumer process, not just on restart. Parse-failure
-path always commits immediately to avoid poison-pilling the partition. Requires
-`SubscriberOptions.MaxDegreeOfParallelism = 1` per partition.
-
-```csharp
-// At-most-once (default — unchanged):
-new RabbitMqConsumer(new RabbitMqConsumerOptions { QueueName = "orders" });
-
-// At-least-once (opt-in):
-new RabbitMqConsumer(new RabbitMqConsumerOptions
-{
-    QueueName       = "orders",
-    AckAfterHandler = true,
-});
-```
-
-#### Handler dispatch modes — Shared and Isolated (`RayTree.Core`, `RayTree.Hosting`, `RayTree.Plugins.InMemory`)
-
-Two explicit handler-dispatch strategies are now available, selected at consumer-binding time.
-
-**`Shared` mode** (existing behaviour, now explicit and accumulating):
-
-Call `IEntityBuilder<TEntity>.UseConsumer(IQueueConsumer)` to fork into
-`ISharedHandlerBuilder<TEntity>`. Multiple calls to `OnInsert`, `OnUpdate`, `OnDelete`, or
-`OnChange` on the returned builder *accumulate* handlers; they execute sequentially in
-registration order on a single delivery of each message. Dedup key: `correlationId`.
-
-**`Isolated` mode** (new):
-
-Call `IEntityBuilder<TEntity>.UseConsumerFactory(Func<string, IQueueConsumer>)` to fork into
-`IIsolatedHandlerBuilder<TEntity>`. Each named handler receives its own broker subscription
-(factory invoked once per unique name at `Build()` time), retry budget, and dedup namespace
-(key: `$"{correlationId}:{handlerName}"`). `ChangeTrackingHostedService` starts one consume
-loop per `(entity type, handler name)` pair automatically.
-
-**Per-handler `SubscriberOptions`** (new, `IIsolatedHandlerBuilder<TEntity>`):
-
-Each named handler registration accepts an optional `SubscriberOptions? options = null`
-parameter on `OnInsert`, `OnUpdate`, `OnDelete`, and `OnChange`. The first non-null options
-supplied for a given handler name apply to that handler's consume loop (DOP, retry budget,
-skip-on-failure). Options supplied on later registrations under the same name are ignored.
-Per-handler options take precedence over entity-level and global options.
-
-```csharp
-.UseConsumerFactory(name => broadcast.Subscribe())
-.OnInsert("read-model", handler, new SubscriberOptions { MaxRetries = 5 })
-.OnInsert("notifier",   handler)   // inherits global/entity options
-```
-
-**`EntityHandlerKey`** (new, `RayTree.Core.Handling`):
-
-`public readonly record struct EntityHandlerKey(Type EntityType, string HandlerName)` — the
-typed dictionary key used by `ChangeSubscriber.IsolatedQueues`. Replaces the anonymous tuple
-`(Type, string)` that was used internally.
-
-**`InMemoryBroadcastQueue`** (new, `RayTree.Plugins.InMemory`):
-
-Fan-out in-memory queue for Isolated-mode testing and local development.
-`Subscribe()` returns a fresh `IQueueConsumer` backed by its own channel; every call to
-`PublishAsync` delivers to all subscribed channels. Disposing a subscriber removes its
-channel from the broadcast set.
-
-```csharp
-var broadcast = new InMemoryBroadcastQueue();
-
-// Pass as both the publisher target and the consumer factory:
-.UsePublisher(broadcast)
-.UseConsumerFactory(_ => broadcast.Subscribe())
-```
-
-### Breaking Changes
-
-#### `IEntityBuilder<TEntity>` — handler methods removed; `UseConsumer` return type changed
-
-The methods `OnInsert`, `OnUpdate`, `OnDelete`, and `OnChange` are **removed** from
-`IEntityBuilder<TEntity>`. Handler registration is only reachable via the post-fork builders
-returned by `UseConsumer` or `UseConsumerFactory`.
-
-The return type of `IEntityBuilder<TEntity>.UseConsumer(IQueueConsumer)` changes from
-`IEntityBuilder<TEntity>` to `ISharedHandlerBuilder<TEntity>`.
-
-**Migration:** reorder your `ForEntity` call chain so that `UseSerializer`, `UseCompressor`,
-and `UseSubscriberOptions` come *before* the `UseConsumer` call (those methods are on
-`IEntityBuilder<TEntity>`; `ISharedHandlerBuilder<TEntity>` exposes only handler-registration
-methods). Then chain handler registrations on the returned builder:
-
-```csharp
-// Before
-.ForEntity<Order>(e => e
-    .UseConsumer(consumer)
-    .UseSerializer(serializer)
-    .OnInsert(handler))
-
-// After
-.ForEntity<Order>(e => e
-    .UseSerializer(serializer)
-    .UseConsumer(consumer)
-    .OnInsert(handler))
-```
-
-#### Known limitation — Shared-mode broker ACK ordering
-
-`RabbitMqConsumer` and `KafkaConsumer` ACK / commit the broker delivery **before** the
-subscriber processes the message. In Shared mode this means broker-driven redelivery does not
-fire even when the dedup mark is reverted on handler failure. The dedup-revert retry guarantee
-is strong with `InMemoryQueue`; for Rabbit/Kafka it is best-effort only. Isolated mode is not
-affected (each named handler has its own consumer and ACK lifecycle, and the per-handler dedup
-key prevents double-processing across redeliveries). A follow-up change
-(`consumer-ack-after-handler`) will fix ACK ordering by adding an explicit ACK callback to
-`IQueueConsumer`.
+### Known limitation
+- Shared-mode broker ACK fires before subscriber processing on Rabbit/Kafka, so dedup-revert retry is best-effort on those brokers (strong on `InMemoryQueue`). Isolated mode unaffected. Fixed in 0.0.10 follow-up via `AckAfterHandler`.
 
 ---
 
 ## [0.0.9-pre-release]
 
 ### Added
-
-#### OpenTelemetry metrics (`RayTree.Core`, `RayTree.OpenTelemetry`)
-
-RayTree now ships a complete, production-ready metrics surface built on the BCL
-`System.Diagnostics.Metrics` API. All instruments are emitted through a single
-`RayTreeMeter` instance; OTel SDK wiring is provided by the new
-`RayTree.OpenTelemetry` peer assembly.
-
-**`RayTree.Core` — instrument layer**
-
-`RayTreeMeter` owns a `System.Diagnostics.Metrics.Meter("RayTree", <version>)`
-and the full set of 14 instruments:
-
-| Instrument | Kind | Unit | Source |
-|---|---|---|---|
-| `raytree.outbox.writes` | Counter | `{writes}` | `EntityChangeTracker.TrackXxxAsync` |
-| `raytree.outbox.messages.published` | Counter | `{messages}` | `OutboxPublisherService` |
-| `raytree.outbox.messages.failed` | Counter | `{messages}` | `OutboxPublisherService` |
-| `raytree.outbox.records.cleaned` | Counter | `{records}` | `OutboxPublisherService` |
-| `raytree.outbox.stale_unpublished.removed` | Counter | `{records}` | `OutboxPublisherService` |
-| `raytree.outbox.batch.size` | Histogram | `{messages}` | `OutboxPublisherService` |
-| `raytree.outbox.publish.duration` | Histogram | `s` | `OutboxPublisherService` |
-| `raytree.outbox.publish.attempts` | Histogram | `{attempts}` | `OutboxPublisherService` |
-| `raytree.outbox.lag.duration` | Histogram | `s` | `OutboxPublisherService` |
-| `raytree.outbox.payload.size` | Histogram | `By` | `OutboxPublisherService` |
-| `raytree.outbox.pending` | ObservableGauge | `{messages}` | `RayTreeMeter` |
-| `raytree.subscriber.messages.processed` | Counter | `{messages}` | `ChangeSubscriber` |
-| `raytree.subscriber.messages.deduplicated` | Counter | `{messages}` | `ChangeSubscriber` |
-| `raytree.subscriber.messages.skipped` | Counter | `{messages}` | `ChangeSubscriber` |
-| `raytree.subscriber.handler.failures` | Counter | `{handlers}` | `ChangeSubscriber` |
-| `raytree.subscriber.handler.attempts` | Histogram | `{attempts}` | `ChangeSubscriber` |
-| `raytree.subscriber.processing.duration` | Histogram | `s` | `ChangeSubscriber` |
-| `raytree.subscriber.lag.duration` | Histogram | `s` | `ChangeSubscriber` |
-
-All instruments are tagged with `entity_type`; change-specific instruments add
-`change_type`; the skipped-messages counter adds `reason`.
-
-- `raytree.outbox.pending` is an observable gauge: `RegisterPendingGauge(Func<IEnumerable<(Type, IOutbox)>>)`
-  registers the callback. Results are cached for `DefaultPendingCacheTtl = 10 s`
-  (configurable via the `RayTreeMeter(TimeSpan pendingCacheTtl)` constructor
-  overload; pass `TimeSpan.Zero` to disable caching). This bounds DB round-trips
-  to at most one query per outbox per cache window, even with sub-second OTel
-  collection intervals.
-
-- `RayTreeMeter.MeterName` is a public constant (`"RayTree"`) for use in custom
-  OTel views and filters.
-
-**Builder and DI integration**
-
-- `ChangeTrackingBuilder` creates a `RayTreeMeter` automatically when the caller
-  does not supply one.
-- `UseMeter(RayTreeMeter)` on `IChangeTrackingBuilder` accepts a caller-owned
-  meter. The tracker tracks ownership via an `ownsMeter` flag: auto-created meters
-  are disposed with the tracker; caller-supplied meters are left alone.
-- `EntityChangeTracker.Meter` exposes the meter so callers can inspect or share it.
-- `AddChangeTracking` (Generic Host) registers `RayTreeMeter` as a DI singleton and
-  feeds it back into the builder via `UseMeter`, so custom instrumentation code can
-  inject `RayTreeMeter` directly.
-
-**`RayTree.OpenTelemetry` — OTel SDK peer assembly**
-
-New assembly with zero production dependency on `RayTree.Core` beyond the meter
-name constant. `RayTree.Core` and `RayTree.Hosting` continue to depend only on the
-BCL (`System.Diagnostics.Metrics`) — applications that do not pull in
-`RayTree.OpenTelemetry` receive zero transitive OTel dependencies.
-
-```csharp
-services.AddOpenTelemetry()
-    .WithMetrics(metrics => metrics
-        .AddRayTreeMetrics()     // ← the only call needed
-        .AddPrometheusExporter());
-```
-
-- `RayTreeInstrumentation` — `public static class` exposing
-  `public const string MeterName = "RayTree"`. Use this in custom OTel views
-  instead of hard-coding the literal.
-- `MeterProviderBuilderExtensions.AddRayTreeMetrics` — thin `AddMeter(MeterName)`
-  pass-through. Does not configure exporters, views, or histogram bucket
-  boundaries; callers retain full control.
-
-#### Documentation
-
-- New `docs/opentelemetry-metrics.md`: full instrument inventory with tags and
-  units, Generic Host and standalone `MeterListener` wire-up examples, pending-gauge
-  cache behaviour, suggested histogram bucket boundaries for 8 instruments, sample
-  Prometheus queries (throughput, tail latency, backlog alert, retry shape), and
-  `UseMeter` injection example.
-- `docs/README.md`: OpenTelemetry Metrics added to the Features list.
-- `docs/configuration.md`: "Observability — OpenTelemetry Metrics" section with
-  default and custom meter usage.
+- OpenTelemetry metrics. `RayTreeMeter` owns a `System.Diagnostics.Metrics.Meter("RayTree", <version>)` and the full set of 14 instruments across outbox + subscriber paths, plus a `raytree.outbox.pending` observable gauge (cached for `DefaultPendingCacheTtl = 10 s`, configurable via ctor overload). All instruments tagged with `entity_type`; change-specific add `change_type`; skipped-messages adds `reason`. `RayTreeMeter.MeterName` is a public constant.
+- `UseMeter(RayTreeMeter)` on `IChangeTrackingBuilder`. Tracker tracks ownership via `ownsMeter`: auto-created meters are disposed; caller-supplied are left alone. `EntityChangeTracker.Meter` exposes the instance. `AddChangeTracking` registers `RayTreeMeter` as a DI singleton and feeds it via `UseMeter`.
+- `RayTree.OpenTelemetry` peer assembly — `RayTreeInstrumentation.MeterName` + `AddRayTreeMetrics` extension. `RayTree.Core` and `RayTree.Hosting` retain zero OTel dependencies.
+- Docs: `docs/opentelemetry-metrics.md` with full inventory, wire-up examples, bucket boundaries, Prometheus queries.
 
 ### Breaking Changes
-
-#### `IOutbox` gains `GetPendingCountAsync`
-
-```csharp
-Task<long> GetPendingCountAsync(Type entityType, CancellationToken ct = default);
-```
-
-Returns the count of unpublished records for the given entity type. Used by the
-`raytree.outbox.pending` observable gauge. External `IOutbox` implementations must
-add this method.
-
-#### `ChangePublisher` constructor requires `RayTreeMeter`
-
-Before: `new ChangePublisher(ILoggerFactory)`
-After: `new ChangePublisher(ILoggerFactory, RayTreeMeter)`
-
-`RayTreeMeter` is required (non-nullable). The builder layer constructs a default
-meter when the caller does not supply one; there is no internal fallback inside
-`ChangePublisher`.
-
-#### `OutboxPublisherService` constructor requires `RayTreeMeter`
-
-Before: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory)`
-After: `new OutboxPublisherService(ChangePublisher, Type, OutboxPublisherOptions, ILoggerFactory, RayTreeMeter)`
-
-#### `ChangeSubscriber` constructor requires `RayTreeMeter`
-
-Before: `new ChangeSubscriber(ILogger<ChangeSubscriber>, IDeduplicationStore?, SubscriberOptions?)`
-After: `new ChangeSubscriber(ILogger<ChangeSubscriber>, RayTreeMeter, IDeduplicationStore?, SubscriberOptions?)`
-
-### Tests
-
-- `OutboxPublisherServiceMetricsTests` — new test: `PublishWithRetry_OnExhaustion_RecordsAttemptsAndFailureDurations`
-  verifies that `raytree.outbox.publish.attempts` and `raytree.outbox.publish.duration`
-  are both recorded when all retry attempts are exhausted.
-- `ChangeSubscriberMetricsTests` — new test: `ProcessMessageAsync_HandlerAlwaysFails_RecordsAttemptsFailuresAndProcessingDurations`
-  verifies `raytree.subscriber.handler.attempts`, `raytree.subscriber.handler.failures`,
-  and `raytree.subscriber.processing.duration` on full retry exhaustion.
-- `RayTreeMeterPendingGaugeCacheTests` (3 tests) — pins the pending-gauge cache contract:
-  two observations within TTL hit the outbox once; `TimeSpan.Zero` disables the cache;
-  TTL expiry triggers a re-poll.
-- `UseMeterOwnershipTests` (2 tests) — proves that a caller-supplied meter is not
-  disposed when the tracker is disposed, and that a builder-created meter is.
-- `RayTreeMeterEndToEndTests` (3 tests, `RayTree.OpenTelemetry.Tests`) — end-to-end
-  OTel SDK pipeline tests: real instruments flow through `AddRayTreeMetrics` and a
-  `BaseExporter<Metric>`; all instrument names pass the Prometheus naming validation;
-  unit metadata (`s`, `By`) survives the pipeline.
-
-#### `RabbitMqConsumer` constructor simplified
-
-`RabbitMqConsumer` no longer accepts an `ILoggerFactory` parameter. Message-receive
-errors now silently nack and requeue without a log entry; the consumer's internal
-channel handles retries at the broker level. Builder call-sites using
-`UseRabbitMq(configure)` are unaffected — the extension method was updated in
-parallel. Direct construction is affected:
-
-Before: `new RabbitMqConsumer(options, loggerFactory)`
-After: `new RabbitMqConsumer(options)`
+- `IOutbox.GetPendingCountAsync(Type entityType, CancellationToken)` added — used by the pending gauge. External implementations must add it.
+- `ChangePublisher`, `OutboxPublisherService`, `ChangeSubscriber` constructors require non-nullable `RayTreeMeter`. No internal fallback — the builder layer constructs a default.
+- `RabbitMqConsumer` constructor no longer accepts `ILoggerFactory`. Builder call-sites unaffected.
 
 ### Removed
-
-#### `RayTree.Plugins.Serializers.MsgPack` project deleted
-
-The `RayTree.Plugins.Serializers.MsgPack` assembly was a duplicate of
-`RayTree.Plugins.Serializers.MessagePack` (different namespace, identical
-implementation). It has been removed. Use `RayTree.Plugins.Serializers.MessagePack`
-(`MessagePackSerializerPlugin` in the `RayTree.Plugins.Serializers.MessagePack`
-namespace) instead.
+- `RayTree.Plugins.Serializers.MsgPack` — duplicate of `RayTree.Plugins.Serializers.MessagePack`. Use the latter.
 
 ### Fixed
-
-- `GetPendingCountAsync_OnEmptyTable_ReturnsZero` (PostgreSQL integration test) was
-  returning 3 instead of 0 because the shared `pending_count_outbox` table was not
-  cleaned up between tests. Added `[TearDown]` with `TRUNCATE TABLE` to isolate
-  each test.
+- `GetPendingCountAsync_OnEmptyTable_ReturnsZero` — added `[TearDown]` to truncate the shared table between tests.
 
 ### Infrastructure
-
-#### Solution format migrated to `.slnx`
-
-`RayTree.sln` has been replaced by `RayTree.slnx` (the new XML-based Visual Studio
-solution format). No project files changed; only the solution container format
-updated. CI pipelines reference `RayTree.slnx`. If you have local shell scripts or
-IDE settings pointing at `RayTree.sln`, update them to `RayTree.slnx`.
-
-#### Security policy (`SECURITY.md`)
-
-A `SECURITY.md` file has been added at the repo root. It documents the supported
-version policy (latest only) and the responsible-disclosure process via GitHub
-Security Advisories.
+- Solution format migrated `.sln` → `.slnx`. Update local scripts/IDE settings.
+- `SECURITY.md` added.
 
 ### Dependencies
-
-| Package | From | To |
-|---|---|---|
-| `Microsoft.Extensions.Logging.Abstractions` | `10.0.7` | `10.0.8` |
-| `Microsoft.Extensions.DependencyInjection.Abstractions` | `10.0.7` | `10.0.8` |
-| `Microsoft.EntityFrameworkCore` | `10.0.7` | `10.0.8` |
-| `Microsoft.EntityFrameworkCore.InMemory` | `10.0.7` | `10.0.8` |
-| `Microsoft.Extensions.Hosting.Abstractions` | — | `10.0.8` (new — replaces full `Hosting`) |
-| `Microsoft.Extensions.Options.ConfigurationExtensions` | — | `10.0.8` (new — replaces `Configuration.Binder`) |
-| `OpenTelemetry` | — | `1.15.3` (new — `RayTree.OpenTelemetry` only) |
-| `OpenTelemetry.Api` | — | `1.15.3` (new — `RayTree.OpenTelemetry` only) |
-| `Microsoft.Extensions.Hosting` | `10.0.7` | removed (replaced by `Hosting.Abstractions`) |
-| `Microsoft.Extensions.Configuration.Binder` | `10.0.7` | removed (replaced by `Options.ConfigurationExtensions`) |
-| `Microsoft.EntityFrameworkCore.Relational` | `10.0.7` | removed (unused direct reference) |
-| `Microsoft.Extensions.DependencyInjection` | `10.0.7` | removed (unused direct reference) |
+- Bumped `Microsoft.Extensions.Logging.Abstractions`, `Microsoft.Extensions.DependencyInjection.Abstractions`, `Microsoft.EntityFrameworkCore`, `Microsoft.EntityFrameworkCore.InMemory` 10.0.7 → 10.0.8.
+- Added `Microsoft.Extensions.Hosting.Abstractions` (replaces full `Hosting`), `Microsoft.Extensions.Options.ConfigurationExtensions` (replaces `Configuration.Binder`), `OpenTelemetry` + `OpenTelemetry.Api` 1.15.3 (in `RayTree.OpenTelemetry` only).
+- Removed unused direct refs: `Microsoft.EntityFrameworkCore.Relational`, `Microsoft.Extensions.DependencyInjection`.
 
 ---
 
 ## [0.0.8-pre-release]
 
 ### Breaking Changes
-
-#### `UseQueue` renamed to `UsePublisher` and `UseConsumer`
-
-The `UseQueue` method was overloaded for both publisher and subscriber contexts, making intent ambiguous. It has been split into two purpose-named methods:
-
-| Before | After | Side |
-|---|---|---|
-| `IChangeTrackingBuilder.UseQueue<T>(factory)` | `UsePublisher<T>(factory)` | Publisher — global |
-| `IChangePublisherBuilder.UseQueue<T>(factory)` | `UsePublisher<T>(factory)` | Publisher — global |
-| `IEntityBuilder<TEntity>.UseQueue(IQueuePublisher)` | `UsePublisher(IQueuePublisher)` | Publisher — per-entity |
-| `IEntityPublisherBuilder<TEntity>.UseQueue(IQueuePublisher)` | `UsePublisher(IQueuePublisher)` | Publisher — per-entity |
-| `IEntitySubscriberBuilder<TEntity>.UseQueue(IQueueConsumer)` | `UseConsumer(IQueueConsumer)` | Subscriber — per-entity |
-| `IEntityBuilder<TEntity>.UseConsumer(IQueueConsumer)` → internal call | now calls `UseConsumer` on subscriber builder | Subscriber — per-entity |
-
-**Migration:** rename call-sites as shown in the table. No behaviour changes — only the method names changed.
-
-**Plugin extensions updated to match:**
-- `InMemoryBuilderExtensions` — internal `e.UseQueue(new InMemoryQueue())` calls updated to `e.UsePublisher(new InMemoryQueue())`
-- `InMemorySubscriberExtensions` — delegates to `UseConsumer` instead of `UseQueue`
-- `KafkaBuilderExtensions` — calls `UsePublisher<IQueuePublisher>(...)` instead of `UseQueue`
-- `KafkaSubscriberExtensions` — calls `UseConsumer(...)` instead of `UseQueue`
-- `RabbitMqBuilderExtensions` — calls `UsePublisher<IQueuePublisher>(...)` instead of `UseQueue`
-- `RabbitMqSubscriberExtensions` — calls `UseConsumer(...)` instead of `UseQueue`
+- `UseQueue` split into `UsePublisher` (publisher contexts) and `UseConsumer` (subscriber contexts) across `IChangeTrackingBuilder`, `IChangePublisherBuilder`, `IEntityBuilder<TEntity>`, `IEntityPublisherBuilder<TEntity>`, `IEntitySubscriberBuilder<TEntity>`. All plugin extensions updated. Behaviour unchanged.
 
 ---
 
 ## [0.0.7-pre-release]
 
 ### Added
-
-#### Automatic schema migration in `PostgreSqlOutbox<TEntity>` and `PostgreSqlRepository<TEntity>`
-
-Both classes now manage their PostgreSQL schema automatically on every `InitializeAsync` call — no `AutoMigrate` flag, always on.
-
-**Fresh table path** — when the table does not yet exist, a single `CREATE TABLE IF NOT EXISTS` statement creates all columns and indexes in one round-trip. The `IF NOT EXISTS` guard is kept as a concurrency safety net (e.g. two processes starting simultaneously).
-
-**Existing table path** — when the table already exists:
-
-- **Column diff** (`SchemaMigrator`): each desired column (entity property columns for outbox; key columns for repository) is compared against `information_schema.columns`. Missing columns are added via `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Adding a `NOT NULL` column without a default to a table that already has rows throws `InvalidOperationException` with a descriptive message (fail-fast — the developer must add a `DEFAULT` or migrate manually). Columns present in the database but not in the entity schema log a `Warning` ("consider dropping it manually"). Columns whose type differs from the expected type log a `Warning` ("type changes must be migrated manually").
-- **Index diff** (`IndexMigrator`): each desired index is compared against live `pg_index` catalog data (uniqueness, ordered column list, WHERE predicate). Indexes that do not exist are created. Indexes whose definition has changed (any of: uniqueness, column order, WHERE clause) are dropped (`DROP INDEX IF EXISTS public.{name}`) and recreated. Indexes that exist in the database but are not in the entity schema log a `Warning` ("consider dropping it manually"). WHERE clause comparison is case-insensitive and trimmed so `published = FALSE` (application) matches `published = false` (PostgreSQL catalog).
-
-New internal infrastructure supporting the above:
-
-| Class | Role |
-|---|---|
-| `SchemaInspector` | Static helper — `TableExistsAsync`, `GetColumnsAsync` (queries `information_schema.columns`), `GetIndexesAsync` (queries `pg_index` catalog, returns ordered columns via `unnest(indkey::smallint[]) WITH ORDINALITY`, WHERE via `pg_get_expr`), `ExecuteDdlAsync`, `TableHasRowsAsync` |
-| `SchemaMigrator` | Column diff logic — parameterised by a `generateAddColumn` delegate and an `isOrphanCandidate` predicate so it is reusable by both outbox and repository |
-| `IndexMigrator` | Index diff logic — `ApplyDiffAsync` with DROP+CREATE on mismatch, `Matches()` for definition comparison |
-| `PostgreSqlTypeNormalizer` | Maps `information_schema` type fields to canonical DDL strings (e.g. `character varying` + max-length → `VARCHAR(n)`, `ARRAY` + udt_name → `element_type[]`) |
-
-#### `ILoggerFactory` required constructor parameters
-
-`PostgreSqlOutbox<TEntity>` and `PostgreSqlRepository<TEntity>` now require `ILoggerFactory` as their second constructor parameter — following the same pattern as `KafkaConsumer` and `RabbitMqConsumer`. Logging is used for schema migration diagnostics (column/index added at `Information`; orphan column/index and type mismatch at `Warning`). Builder extension methods (`UsePostgreSqlOutbox`, `UsePostgreSqlRepository`) accept an optional `ILoggerFactory? loggerFactory = null` parameter that defaults to `NullLoggerFactory.Instance` when omitted, so existing builder call-sites compile without change.
+- Automatic PostgreSQL schema migration in `PostgreSqlOutbox<TEntity>` and `PostgreSqlRepository<TEntity>` — no `AutoMigrate` flag, always on. Fresh table: single `CREATE TABLE IF NOT EXISTS`. Existing table: column diff (`SchemaMigrator` — adds missing columns with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`; fail-fast on NOT-NULL without default on non-empty table; `Warning` for orphan columns / type mismatches) + index diff (`IndexMigrator` — creates missing, DROP+CREATE for changed definitions, `Warning` for orphans).
+- New internals: `SchemaInspector`, `SchemaMigrator`, `IndexMigrator`, `PostgreSqlTypeNormalizer`.
 
 ### Breaking Changes
-
-- `PostgreSqlOutbox<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.
-  Before: `new PostgreSqlOutbox<TEntity>(options)`
-  After: `new PostgreSqlOutbox<TEntity>(options, loggerFactory)`
-  Builder call-sites are unaffected (the extension method absorbs the default).
-
-- `PostgreSqlRepository<TEntity>` constructor: `ILoggerFactory` is now required as the second parameter.
-  Before: `new PostgreSqlRepository<TEntity>(options)`
-  After: `new PostgreSqlRepository<TEntity>(options, loggerFactory)`
-  Builder call-sites are unaffected.
+- `PostgreSqlOutbox<TEntity>` and `PostgreSqlRepository<TEntity>` constructors require `ILoggerFactory` as the second parameter. Builder extensions absorb the default (`NullLoggerFactory.Instance`); direct construction must add the arg.
 
 ---
 
 ## [0.0.6-pre-release]
 
 ### Fixed
-
-#### Duplicate publish prevention in `NotificationBasedPublisher`
-
-- `OutboxPublisherService` was ignoring `OutboxPublisherOptions.UseNotificationChannel`
-  and always polling at `PollingInterval` (default 5 s), racing with
-  `NotificationBasedPublisher` to publish the same record. When
-  `UseNotificationChannel = true` the service now uses `FallbackPollingInterval`
-  instead, demoting itself to a safety-net role while `NotificationBasedPublisher`
-  handles normal delivery.
-- `NotificationBasedPublisher.FallbackPollingLoopAsync` was running on every tick
-  unconditionally, publishing every change a second time in parallel with the
-  `OnNotification` fast-path. The loop now polls only on the first tick at startup
-  (to drain records written before the listener was established) and when the LISTEN
-  connection is unhealthy (`_listenerHealthy = false`).
-- `OnNotification` had a TOCTOU race: it read `change.Published`, then raced to
-  publish before calling `MarkPublishedAsync`, allowing two concurrent publishers to
-  both publish the same record. `OnNotification` and `ProcessUnpublishedChangesAsync`
-  now atomically claim records via `IOutbox.TryClaimForPublishingAsync` before
-  publishing. On publish failure the claim is reverted via `IOutbox.RevertClaimAsync`
-  so the fallback loop can retry.
-
-#### Deduplication correctness in `ChangeSubscriber`
-
-- `ChangeSubscriber` marked a message's `CorrelationId` as processed **before**
-  invoking handlers. When a handler exhausted retries and threw (`SkipOnFailure =
-  false`), the correlation ID remained in the store. With a persistent dedup store
-  (e.g. Redis), the message broker's redelivered copy would then be silently dropped
-  forever. The subscriber now calls `IDeduplicationStore.RevertProcessedAsync` before
-  rethrowing, so the redelivered message is accepted and retried.
-- `IDeduplicationStore.CleanupAsync` and `SubscriberOptions.DeduplicationRetention`
-  existed but were never wired up, causing `InMemoryDeduplicationStore` to grow
-  without bound. `ChangeSubscriber` now calls `MaybeDedupCleanupAsync` after each
-  successfully processed message, gated by the new
-  `SubscriberOptions.DeduplicationCleanupInterval` (default 1 h).
-- `IDeduplicationStore.IsProcessedAsync` was defined on the interface and implemented
-  but never called anywhere. Removed (breaking change for external implementations —
-  delete the method).
-
-#### Ordering defaults for `MaxPublishConcurrency` and `MaxDegreeOfParallelism`
-
-- `OutboxPublisherOptions.MaxPublishConcurrency`, `NotificationBasedPublisherOptions.MaxPublishConcurrency`,
-  and `SubscriberOptions.MaxDegreeOfParallelism` were all introduced with a default of
-  `Environment.ProcessorCount`. Concurrent publishing enqueues messages in non-deterministic
-  order, breaking per-partition ordering guarantees; `TrackMultiple_AllChangesDeliveredInOrder`
-  (Kafka) failed non-deterministically as a result. All three default to `1` (sequential).
-  Increase explicitly when ordering is not required.
+- Duplicate publish prevention in `NotificationBasedPublisher`: `OutboxPublisherService` now respects `UseNotificationChannel` (uses `FallbackPollingInterval` when true); fallback polling only runs on first tick or when LISTEN is unhealthy; `OnNotification` and `ProcessUnpublishedChangesAsync` atomically claim records via `IOutbox.TryClaimForPublishingAsync` (revert on failure).
+- Deduplication correctness in `ChangeSubscriber`: dedup mark is reverted via `IDeduplicationStore.RevertProcessedAsync` when a handler exhausts retries (`SkipOnFailure = false`) so the redelivered copy is retried instead of silently dropped by persistent stores. `MaybeDedupCleanupAsync` now actually wires `CleanupAsync` (gated by new `SubscriberOptions.DeduplicationCleanupInterval`, default 1 h), so `InMemoryDeduplicationStore` no longer grows unbounded. `IDeduplicationStore.IsProcessedAsync` removed (was never called).
+- `OutboxPublisherOptions.MaxPublishConcurrency`, `NotificationBasedPublisherOptions.MaxPublishConcurrency`, `SubscriberOptions.MaxDegreeOfParallelism` defaults changed `Environment.ProcessorCount` → `1` (sequential) to preserve per-partition ordering.
 
 ### Added
-
-- `IOutbox.TryClaimForPublishingAsync(long id, CancellationToken)` — atomically
-  transitions a record from `published = FALSE` to `published = TRUE` and returns
-  `true` if this caller made the transition (i.e. the record was unpublished).
-  Returns `false` when another publisher already claimed it.
-- `IOutbox.RevertClaimAsync(long id, CancellationToken)` — sets `published = FALSE`,
-  undoing a claim after a publish failure so the record remains visible to the
-  fallback polling loop.
-- `IDeduplicationStore.RevertProcessedAsync(string correlationId, CancellationToken)`
-  — removes a correlation ID from the store so a redelivered message can be retried
-  after a handler failure.
-- `SubscriberOptions.DeduplicationCleanupInterval` (default 1 h) — how often
-  `ChangeSubscriber` triggers `IDeduplicationStore.CleanupAsync` to evict entries
-  older than `DeduplicationRetention`.
-
-#### High-load throughput improvements
-
-- `OutboxPublisherOptions.MaxPublishConcurrency` (default 1 — sequential) —
-  `OutboxPublisherService.ProcessBatchAsync` now uses `Parallel.ForEachAsync` bounded
-  by this option. Default is 1 to preserve per-partition message ordering; increase
-  explicitly when ordering is not required and throughput matters more.
-- `OutboxPublisherService` skips the inter-batch sleep when the batch was full
-  (`changes.Count == BatchSize`), draining a backlog immediately rather than waiting
-  one full `PollingInterval` between each batch.
-- `SubscriberOptions.MaxDegreeOfParallelism` (default 1) — `ConsumeFromConsumerAsync`
-  and `ConsumeFromQueueAsync` now use `Parallel.ForEachAsync` bounded by this option.
-  Default is 1 (sequential) to preserve per-partition message ordering (e.g. Kafka);
-  increase explicitly when handlers are order-independent and throughput matters more.
-- `NotificationBasedPublisherOptions.MaxConcurrentNotifications` (default 16) —
-  `OnNotification` is now bounded by a `SemaphoreSlim`; notifications that arrive
-  while at capacity are dropped and will be delivered by the fallback polling loop.
-- `NotificationBasedPublisherOptions.MaxPublishConcurrency` (default 1 — sequential)
-  — `ProcessUnpublishedChangesAsync` uses `Parallel.ForEachAsync` bounded by this
-  option. Same ordering rationale as `OutboxPublisherOptions.MaxPublishConcurrency`.
-
-#### Logging improvements
-
-- `NotificationBasedPublisher`: LISTEN connection loss now logs at `Warning` only
-  on the first unhealthy tick (suppressed on subsequent ticks while still unhealthy);
-  recovery logs at `Information` so operators can confirm the fast-path is restored.
-- `NotificationBasedPublisher.OnNotification`: logs at `Debug` when
-  `TryClaimForPublishingAsync` returns `false` (record already claimed by another
-  publisher), making claim contention visible under high load.
-- `ChangeSubscriber.ProcessMessageAsync`: logs successful message dispatch at `Debug`
-  and dedup-mark revert (handler exhausted all retries, `SkipOnFailure = false`) at
-  `Warning` before rethrowing, so operators can correlate repeated handler failures
-  with redelivery.
-- `ChangeTrackingHostedService`: consumer loop start log now includes the entity type
-  name — e.g. `"Starting change tracking consumer loop for OrderEntity (1 of 3)"`.
+- `IOutbox.TryClaimForPublishingAsync(long id, …)` / `RevertClaimAsync(long id, …)`.
+- `IDeduplicationStore.RevertProcessedAsync(string correlationId, …)`.
+- `SubscriberOptions.DeduplicationCleanupInterval` (default 1 h).
+- Throughput: `Parallel.ForEachAsync`-bounded publish/consume loops; skip inter-batch sleep when batch is full; `NotificationBasedPublisherOptions.MaxConcurrentNotifications` (default 16, `SemaphoreSlim`-bounded — overflow falls to polling).
+- Logging: `NotificationBasedPublisher` LISTEN loss `Warning` only on first unhealthy tick + recovery `Information`; claim contention `Debug`. `ChangeSubscriber` successful dispatch `Debug`; dedup revert `Warning` on retry exhaustion. `ChangeTrackingHostedService` consumer loop start log includes entity type name.
 
 ### Breaking Changes
-
-- `IOutbox` gains two new methods: `TryClaimForPublishingAsync` and `RevertClaimAsync`.
-  External implementations must add both.
-- `IDeduplicationStore` loses `IsProcessedAsync` and gains `RevertProcessedAsync`.
-  External implementations must remove the former and add the latter.
+- `IOutbox` gains `TryClaimForPublishingAsync` + `RevertClaimAsync`. External implementations must add both.
+- `IDeduplicationStore` loses `IsProcessedAsync`, gains `RevertProcessedAsync`.
 
 ---
 
 ## [0.0.5-pre-release]
 
 ### Added
-
-#### Primitive array support for PostgreSQL outbox and repository
-
-- 1D arrays of primitive types are now stored as native PostgreSQL array columns.
-  `EntityColumnMapper.ToPostgresType` maps `T[]` to the corresponding `PG_TYPE[]`:
-
-  | C# type | PostgreSQL column |
-  |---|---|
-  | `int[]` | `INTEGER[]` |
-  | `long[]` | `BIGINT[]` |
-  | `short[]` / `byte[]` / `sbyte[]` | `SMALLINT[]` |
-  | `float[]` | `REAL[]` |
-  | `double[]` | `DOUBLE PRECISION[]` |
-  | `decimal[]` | `NUMERIC[]` |
-  | `bool[]` | `BOOLEAN[]` |
-  | `Guid[]` | `UUID[]` |
-  | `DateTime[]` / `DateTimeOffset[]` | `TIMESTAMPTZ[]` |
-  | `string[]` | `TEXT[]` |
-
-- Nullable-element arrays (e.g. `int?[]`) strip the nullable wrapper before mapping
-  the element type — the column type is the same as for a non-nullable element array.
-- Multi-dimensional arrays are not supported; use `[Column(TypeName = "...")]` to
-  declare the column type explicitly when needed.
-- New `EntityColumnMapper.ConvertFromDb(object value, Type targetType)` helper is
-  used by both `PostgreSqlOutbox.ReadEntityChange` and `PostgreSqlRepository.MapEntity`
-  to read values back. It checks assignability first (Npgsql returns the correct CLR
-  array type natively) and falls back to `Convert.ChangeType` for scalar numeric
-  coercions.
-
-#### Documentation
-
-- `docs/database-migration.md` C# → PostgreSQL type mapping table extended with
-  array types and array-specific rules.
+- 1D primitive-array support for PostgreSQL outbox/repository. `EntityColumnMapper.ToPostgresType` maps `int[]`/`long[]`/`short[]`/`byte[]`/`sbyte[]`/`float[]`/`double[]`/`decimal[]`/`bool[]`/`Guid[]`/`DateTime[]`/`DateTimeOffset[]`/`string[]` to the corresponding PostgreSQL array type. Nullable element wrappers stripped. Multi-dim arrays unsupported (use `[Column(TypeName = "…")]`). New shared `EntityColumnMapper.ConvertFromDb(object, Type)` helper for the read path.
 
 ### Fixed
-
-- `OutboxPublisherService.MaybeRunCleanupAsync` previously advanced `_lastCleanup`
-  before running the cleanup operations, so a transient DB failure would still delay
-  the next retry by a full `CleanupInterval`. The timestamp is now only advanced when
-  both operations complete successfully; a failure leaves the timer unchanged so the
-  next poll tick retries immediately.
-- `PostgreSqlOutbox.BatchDeleteAsync` was allocating a new `NpgsqlCommand` on every
-  batch iteration. The command is now created once outside the loop and reused across
-  all `ExecuteNonQueryAsync` calls, reducing allocation and repeated query-parse
-  overhead on large cleanup runs.
+- `OutboxPublisherService.MaybeRunCleanupAsync` now only advances `_lastCleanup` on success — a transient DB failure no longer delays the next retry by a full `CleanupInterval`.
+- `PostgreSqlOutbox.BatchDeleteAsync` reuses a single `NpgsqlCommand` across batch iterations.
 
 ---
 
 ## [0.0.4-pre-release]
 
 ### Added
-
-#### Outbox rotation integrated into the publisher loop
-
-- `OutboxPublisherService` now runs `MaybeRunCleanupAsync` after every poll batch.
-  Rotation fires eagerly on the first tick (so stale rows from before a restart are
-  cleaned up immediately), then respects `OutboxPublisherOptions.CleanupInterval`
-  for subsequent runs.
-- Cleanup errors are isolated in their own `try/catch`; a transient DB failure logs
-  an error but does not abort the publish loop.
-- No separate hosted service or external scheduler is needed — rotation is tied to
-  the existing publisher lifetime.
-
-#### Stale unpublished record cleanup
-
-- New `IOutbox.CleanupStaleUnpublishedAsync(TimeSpan staleThreshold, CancellationToken)`
-  method. When records have been in the outbox without being published for longer
-  than `staleThreshold`, they are deleted. A `Warning` log is emitted whenever any
-  are found — treat this as an operator signal for queue health issues.
-- Implemented in `InMemoryOutbox` and `PostgreSqlOutbox<TEntity>`.
-- Opt-in via `OutboxPublisherOptions.StaleUnpublishedThreshold` (default `null` —
-  disabled).
-
-#### New `OutboxPublisherOptions` rotation properties
-
-| Property | Default | Description |
-|---|---|---|
-| `CleanupRetentionPeriod` | 7 days | Minimum age of a published row before it is deleted. |
-| `CleanupInterval` | 1 hour | How often rotation runs; first tick is always immediate. |
-| `StaleUnpublishedThreshold` | `null` | When set, unpublished rows older than this are also removed. |
-
-#### PostgreSQL batched cleanup
-
-- `PostgreSqlOutbox.CleanupPublishedAsync` and `CleanupStaleUnpublishedAsync` now
-  delete in batches using `DELETE … WHERE id IN (SELECT id … ORDER BY id LIMIT
-  @BatchSize)` loops. This avoids large single-statement locks and WAL spikes on
-  busy tables.
-- `PostgreSqlOutboxOptions.CleanupBatchSize` (default `1000`) controls the rows
-  deleted per statement.
-
-#### New PostgreSQL partial index
-
-- `idx_*_outbox_cleanup` — `(timestamp) WHERE published = TRUE` — added to the
-  schema so `CleanupPublishedAsync` uses an index scan instead of a sequential scan.
-  Created via `CREATE INDEX IF NOT EXISTS`, so existing tables pick it up on next
-  startup.
-
-#### Documentation
-
-- New **Outbox rotation** section in `docs/README.md` covering configuration,
-  `appsettings.json` binding, batch size tuning, log levels, and manual rotation
-  via `OutboxCleanupService`.
+- Outbox rotation integrated into `OutboxPublisherService` — runs `MaybeRunCleanupAsync` after every poll batch (eager first tick, then gated by `CleanupInterval`). Errors isolated; do not abort the publish loop.
+- `IOutbox.CleanupStaleUnpublishedAsync(TimeSpan, …)` — deletes unpublished records older than the threshold and logs `Warning` on any hit (operator signal). Opt-in via `OutboxPublisherOptions.StaleUnpublishedThreshold` (default `null`).
+- `OutboxPublisherOptions`: `CleanupRetentionPeriod` (7 days), `CleanupInterval` (1 h), `StaleUnpublishedThreshold` (null).
+- PostgreSQL: batched cleanup via `DELETE … WHERE id IN (SELECT id … LIMIT @BatchSize)`; `PostgreSqlOutboxOptions.CleanupBatchSize` (default 1000); new partial index `idx_*_outbox_cleanup` on `(timestamp) WHERE published = TRUE`.
 
 ### Breaking Changes
-
-- `IOutbox` gains a new method `CleanupStaleUnpublishedAsync(TimeSpan staleThreshold, CancellationToken)`.
-  Any external implementation of `IOutbox` must add this method. The built-in implementations
-  (`InMemoryOutbox`, `PostgreSqlOutbox<TEntity>`) are updated automatically.
+- `IOutbox.CleanupStaleUnpublishedAsync` added — external implementations must add it.
 
 ### Fixed
-
-- `ServiceCollectionExtensions` was passing `options.PollingInterval * 10` (50 s by
-  default) as the retention period for `OutboxCleanupService`. It now correctly uses
-  `options.CleanupRetentionPeriod` (default 7 days).
-- PostgreSQL integration tests no longer race with the background `OutboxPublisherService`
-  poll loop. The outbox is created directly in `SetUp` without starting a publisher,
-  eliminating a non-deterministic failure where the poller marked records as
-  published between two `WriteAsync` calls in the same test.
+- `ServiceCollectionExtensions` was passing `PollingInterval * 10` (~50 s) as retention; now uses `CleanupRetentionPeriod` (7 days).
+- PostgreSQL integration tests no longer race with the background publisher poll loop (outbox created directly in `SetUp`).
 
 ### Dependencies
-
-| Package | From | To |
-|---|---|---|
-| `Microsoft.EntityFrameworkCore` | `8.0.26` | `10.0.7` |
-| `Microsoft.EntityFrameworkCore.InMemory` | `8.0.26` | `10.0.7` |
-| `Microsoft.EntityFrameworkCore.Relational` | `8.0.11` | `10.0.7` |
-| `Microsoft.Extensions.DependencyInjection` | `8.0.1` | `10.0.7` |
-| `Microsoft.Extensions.Hosting` | `8.0.1` | `10.0.7` |
-| `Microsoft.Extensions.Configuration.Binder` | `8.0.2` | `10.0.7` |
-| `Npgsql.EntityFrameworkCore.PostgreSQL` | `8.0.11` | `10.0.1` |
-| `Microsoft.Extensions.Options` | `8.0.2` | removed (unused) |
-| `System.IO.Pipelines` | `8.0.0` | removed (unused) |
-| `StackExchange.Redis` | `2.8.16` | removed (no implementation) |
+- Bumped EF Core, EF Core InMemory + Relational, DI, Hosting, Configuration.Binder, Npgsql 8.x → 10.0.x.
+- Removed unused `Microsoft.Extensions.Options`, `System.IO.Pipelines`, `StackExchange.Redis`.
 
 ---
 
 ## [0.0.3-pre-release]
 
 ### Added
-
-#### `[Key]` primary key support (`RayTree.Plugins.PostgreSQL`, `RayTree.Plugins.InMemory`)
-
-- `EntityColumnMapper.GetKeyProperties(Type)` resolves the ordered list of key
-  properties for an entity type. Looks for `[Key]`-annotated properties first;
-  multiple `[Key]` properties form a composite key ordered by `[Column(Order = n)]`
-  then by declaration order. Falls back to the `Id` convention property when no
-  `[Key]` is present. Throws `InvalidOperationException` at construction time
-  (fail-fast) when neither exists.
-- `PostgreSqlRepository<TEntity>` uses key properties to build typed `INSERT`,
-  `WHERE` (for `UpdateAsync` / `DeleteAsync` / `GetByIdAsync`), and the source-table
-  `UNIQUE` index. SQL is constructed once at construction time and reused for every
-  call.
-- `SourceTableDdlGenerator.CreateDefault` accepts `IReadOnlyList<SourceTableColumn>
-  keyColumns`; key columns are appended after the infrastructure columns
-  (`id`, `created_at`, `updated_at`, `version`) and a `UNIQUE` index is added
-  covering them.
-- `InMemoryRepository<TEntity>` gained full `[Key]` / composite-key / `Id`
-  convention resolution, mirroring `EntityColumnMapper.GetKeyProperties`. Composite
-  keys are serialised with a `\0` null-character separator to prevent ambiguous
-  collisions between values that contain common delimiter characters.
-
-#### DataAnnotations attribute support for PostgreSQL schema generation
-
-- `[NotMapped]` — property excluded from the outbox schema entirely.
-- `[Column("name")]` — overrides the column name suffix; the `state_` prefix is
-  always kept to prevent collisions with fixed outbox metadata columns.
-- `[Column(TypeName = "...")]` — sets the PostgreSQL type verbatim (e.g. `JSONB`,
-  `NUMERIC(18,4)`).
-- `[Required]` — emits `NOT NULL` on reference-type and nullable value-type
-  properties.
-- `[MaxLength(n)]` / `[StringLength(n)]` — emits `VARCHAR(n)` instead of `TEXT`
-  for string properties (ignored when `TypeName` is already set).
-- `[Table("name")]` — used as the base name when deriving default outbox and source
-  table names. `EntityColumnMapper.GetTableName(Type)` encapsulates this logic;
-  both `PostgreSqlOutbox` and `PostgreSqlRepository` use it for their defaults.
-
-#### `IRepository<TEntity>` breaking change
-
-- `GetByIdAsync(object id, ...)` → `GetByIdAsync(object[] keyValues, ...)`.
-  Accepts one value per key property in the same order as declared. Both
-  `PostgreSqlRepository` and `InMemoryRepository` validate the count at call time
-  and throw `ArgumentException` if it does not match.
+- `[Key]` primary key support. `EntityColumnMapper.GetKeyProperties(Type)` resolves single + composite keys (composite ordered by `[Column(Order)]` then declaration); falls back to `Id` convention; throws at construction (fail-fast) when neither exists. Used by `PostgreSqlRepository<TEntity>` for INSERT/WHERE and source-table UNIQUE index, and by `InMemoryRepository<TEntity>` (composite keys serialised with `\0` separator).
+- DataAnnotations attribute support for PostgreSQL schema: `[NotMapped]`, `[Column("name")]`, `[Column(TypeName = "…")]`, `[Required]`, `[MaxLength(n)]` / `[StringLength(n)]`, `[Table("name")]`. New `EntityColumnMapper.GetTableName(Type)` used by both outbox + repository defaults.
 
 ### Changed
-
-- `PostgreSqlRepository<TEntity>` constructor now builds a complete
-  `columnName → PropertyInfo` cache from `EntityColumnMapper.GetColumns` at startup.
-  `MapEntity` is a pure dictionary lookup with no per-row reflection calls.
-- `PostgreSqlOutbox<TEntity>` default table name derived via
-  `EntityColumnMapper.GetTableName` + `"_outbox"` instead of a hand-rolled
-  snake-case helper.
-- Target framework upgraded from `net8.0` to `net10.0`.
+- `IRepository<TEntity>.GetByIdAsync(object id, …)` → `GetByIdAsync(object[] keyValues, …)`. Both implementations validate the count.
+- `PostgreSqlRepository<TEntity>` builds a `columnName → PropertyInfo` cache at construction; `MapEntity` is pure dictionary lookup.
+- Target framework `net8.0` → `net10.0`.
 
 ### Fixed
-
-- `InMemoryRepository` composite key separator changed from `|` to `\0`
-  (null character), preventing key collisions when entity property values contain
-  the pipe character.
-
-### Tests
-
-- `GetKeyPropertiesTests` — 9 unit tests covering single `[Key]`, `Id` fallback,
-  composite key with `[Column(Order)]`, composite key without `[Column(Order)]`
-  (declaration-order fallback), no-key throws, constructor fail-fast, and wrong
-  key count.
-- `InMemoryRepositoryTests` — wrong key count throws `ArgumentException`.
-- `InMemoryRepositoryCompositeKeyTests` — null-char separator correctness: keys
-  `("a|b", "c")` and `("a", "b|c")` remain distinct.
-- `DefaultSourceTableNameIntegrationTests` — integration test verifying that
-  omitting `TableName` in `PostgreSqlRepositoryOptions` creates a table named after
-  the entity type.
-- `PostgresContainerFactory` extracted as a shared helper used by all PostgreSQL
-  integration tests.
-
-### Dependencies
-
-| Package | From | To |
-|---|---|---|
-| NUnit | — | updated |
-| MessagePack | — | updated |
-| Npgsql | — | updated |
-| Kafka client | — | updated |
-| Entity Framework Core | — | updated |
-| RabbitMQ.Client | — | updated |
-| Testcontainers.PostgreSql | — | updated |
-| Testcontainers.RabbitMq | — | updated |
+- `InMemoryRepository` composite-key separator `|` → `\0` (null char) to prevent collisions when values contain `|`.
 
 ---
 
 ## [0.0.2] — 2026-05-09
 
 ### Added
-
-- Structured logging via `Microsoft.Extensions.Logging` throughout. Pass an
-  `ILoggerFactory` to `ChangeTrackingBuilder` or let `AddChangeTracking` wire it
-  from DI automatically. Defaults to `NullLoggerFactory` so existing call-sites
-  continue to compile without change.
-- `ILoggerFactory` parameter on `ChangeTrackingBuilder`, `KafkaConsumer`,
-  `RabbitMqConsumer`, and `ChangeTrackingHostedService` constructors.
+- Structured logging via `Microsoft.Extensions.Logging` throughout. `ILoggerFactory` parameter on `ChangeTrackingBuilder`, `KafkaConsumer`, `RabbitMqConsumer`, `ChangeTrackingHostedService`. Defaults to `NullLoggerFactory`.
 
 ---
 
 ## [0.0.1] — initial release
 
-- Initial implementation of entity change tracking with outbox pattern, in-memory
-  and PostgreSQL plugins, Kafka and RabbitMQ queue plugins, JSON / MessagePack /
-  Protobuf serialisers, Gzip / Brotli / LZ4 compressors, EF Core interceptor,
-  and ASP.NET Core hosting integration.
+- Initial implementation: entity change tracking with outbox pattern, in-memory + PostgreSQL plugins, Kafka + RabbitMQ queue plugins, JSON / MessagePack / Protobuf serialisers, Gzip / Brotli / LZ4 compressors, EF Core interceptor, ASP.NET Core hosting integration.

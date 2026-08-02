@@ -11,107 +11,149 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
 {
     private readonly KafkaPublisherOptions _options;
     private readonly ILogger<KafkaPublisher> _logger;
-    private IProducer<string, byte[]>? _producer;
+    private readonly SemaphoreSlim _buildLock = new(initialCount: 1, maxCount: 1);
 
-    // Tracks whether the topic-wait probe has completed successfully so we run it at most once,
-    // even when InitializeAsync is bypassed and multiple PublishAsync calls race the lazy init.
-    // Volatile read pattern: the probe runs under _probeSemaphore; once _probeCompleted is true,
-    // subsequent callers skip the semaphore entirely.
-    private volatile bool _probeCompleted;
-    private readonly SemaphoreSlim _probeSemaphore = new(initialCount: 1, maxCount: 1);
+    // volatile so the librdkafka error callback (foreign thread, no lock) sees the latest
+    // reference rather than a JIT-cached read. Assignments under _buildLock provide a
+    // release barrier.
+    private volatile IProducer<string, byte[]>? _producer;
 
-    // Separate semaphore for the (very short) producer-build critical section. Splitting the
-    // probe and the build means steady-state PublishAsync callers contend only on the fast
-    // builder lock — they do NOT serialize behind a multi-second topic-wait probe.
-    private readonly SemaphoreSlim _buildSemaphore = new(initialCount: 1, maxCount: 1);
+    // 0 means "healthy". Any other value is the UTC ticks of the first fatal error in the
+    // current fault cycle — used as both the "rebuild requested" signal and the start of
+    // the recovery-duration measurement. Interlocked-managed so the librdkafka error
+    // callback (foreign thread) can flip it without any lock.
+    private long _faultTicks;
 
     private volatile bool _disposed;
 
-    public KafkaPublisher(KafkaPublisherOptions options, ILoggerFactory? loggerFactory = null)
+    public KafkaPublisher(
+        KafkaPublisherOptions options,
+        ILoggerFactory?       loggerFactory = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
-        _logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<KafkaPublisher>();
+        _logger  = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<KafkaPublisher>();
+
+        _options.ConnectionRecovery.Validate();
     }
 
-    public async Task InitializeAsync(CancellationToken cancellationToken = default)
-    {
-        await GetProducerAsync(cancellationToken).ConfigureAwait(false);
-    }
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+        => GetProducerAsync(cancellationToken);
 
+    /// <summary>
+    /// Returns a ready producer, lazily building (or rebuilding) under <see cref="_buildLock"/>
+    /// when none exists or the most recent fatal error flagged a rebuild. The probe is re-run
+    /// inside the lock on every build — initial and post-fatal — matching the
+    /// kafka-topic-wait reprobe contract without an extra cache flag.
+    /// </summary>
     private async Task<IProducer<string, byte[]>> GetProducerAsync(CancellationToken cancellationToken)
     {
-        if (_producer != null) return _producer;
+        // Steady-state fast path: producer exists, no fault flagged. No lock acquired.
+        var current = _producer;
+        if (current is not null && Interlocked.Read(ref _faultTicks) == 0) return current;
 
-        // Step 1: ensure the probe has completed (separate critical section). Concurrent
-        // first-time callers serialize on _probeSemaphore for the probe duration. Once
-        // _probeCompleted flips to true it short-circuits this entirely on every subsequent
-        // call — steady-state callers never enter the probe semaphore.
-        if (_options.WaitForTopic && !_probeCompleted)
-        {
-            await _probeSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                if (!_probeCompleted)
-                {
-                    await KafkaTopicProbe.WaitForTopicAsync(
-                        _options.BootstrapServers,
-                        _options.Topic,
-                        _options.TopicWaitInterval,
-                        _options.TopicWaitTimeout,
-                        _logger,
-                        cancellationToken).ConfigureAwait(false);
-                    _probeCompleted = true;
-                }
-            }
-            finally
-            {
-                SafeRelease(_probeSemaphore);
-            }
-        }
-
-        // Step 2: build the producer under a separate short-lived lock. The cold-start delay
-        // seen by concurrent callers is bounded to the synchronous ProducerBuilder.Build call
-        // (microseconds), not the probe duration.
-        await _buildSemaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await _buildLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_producer != null) return _producer;
+            // Re-check under the lock — a concurrent caller may have rebuilt while we waited.
+            current = _producer;
+            if (current is not null && Interlocked.Read(ref _faultTicks) == 0) return current;
 
-            var config = new ProducerConfig { BootstrapServers = _options.BootstrapServers };
-
-            if (_options.Acks != null)
+            // Dispose any prior producer on a normal call thread (not the librdkafka callback
+            // thread the error handler runs on). This is the documented-safe disposal point.
+            if (_producer is { } stale)
             {
-                config.Acks = _options.Acks switch
-                {
-                    "all" => Confluent.Kafka.Acks.All,
-                    "1"   => Confluent.Kafka.Acks.Leader,
-                    "0"   => Confluent.Kafka.Acks.None,
-                    _     => Confluent.Kafka.Acks.All
-                };
+                _producer = null;
+                try { stale.Dispose(); } catch { /* may already be torn down */ }
             }
 
-            if (_options.MessageMaxBytes.HasValue)
-                config.MessageMaxBytes = _options.MessageMaxBytes.Value;
+            if (_options.WaitForTopic)
+            {
+                await KafkaTopicProbe.WaitForTopicAsync(
+                    _options.BootstrapServers,
+                    _options.Topic,
+                    _options.TopicWaitInterval,
+                    _options.TopicWaitTimeout,
+                    _logger,
+                    cancellationToken).ConfigureAwait(false);
+            }
 
-            _producer = new ProducerBuilder<string, byte[]>(config).Build();
+            _producer = new ProducerBuilder<string, byte[]>(BuildConfig())
+                .SetErrorHandler(OnError)
+                .Build();
+
+            // Log recovery if this build closed a fault cycle. Interlocked.Exchange clears
+            // the flag and reads the original timestamp in one operation, so a concurrent
+            // error handler can't lose the next disconnect event.
+            var faultTicks = Interlocked.Exchange(ref _faultTicks, 0);
+            if (faultTicks != 0)
+            {
+                // Clamp at 0 to defend against NTP-driven backward clock jumps between the
+                // fault stamp and rebuild.
+                var duration = Math.Max(0,
+                    (DateTime.UtcNow - new DateTime(faultTicks, DateTimeKind.Utc)).TotalSeconds);
+                _logger.LogInformation(
+                    "Kafka producer rebuilt for {BootstrapServers} after {Duration:F2}s",
+                    _options.BootstrapServers, duration);
+            }
+
             return _producer;
         }
         finally
         {
-            SafeRelease(_buildSemaphore);
+            try { _buildLock.Release(); }
+            catch (ObjectDisposedException) { /* publisher disposed mid-init; expected at shutdown */ }
         }
     }
 
-    /// <summary>
-    /// Release a semaphore while tolerating a concurrent <see cref="Dispose"/>. Without
-    /// this, a Dispose-during-Init race would throw <see cref="ObjectDisposedException"/>
-    /// out of the caller's finally block during host shutdown — noise that masks the real
-    /// cancellation/shutdown signal.
-    /// </summary>
-    private static void SafeRelease(SemaphoreSlim semaphore)
+    private ProducerConfig BuildConfig()
     {
-        try { semaphore.Release(); }
-        catch (ObjectDisposedException) { /* publisher was disposed mid-init; expected during shutdown */ }
+        var c = new ProducerConfig { BootstrapServers = _options.BootstrapServers };
+        if (_options.Acks is not null)
+        {
+            c.Acks = _options.Acks switch
+            {
+                "all" => Confluent.Kafka.Acks.All,
+                "1"   => Confluent.Kafka.Acks.Leader,
+                "0"   => Confluent.Kafka.Acks.None,
+                _     => Confluent.Kafka.Acks.All
+            };
+        }
+        if (_options.MessageMaxBytes.HasValue) c.MessageMaxBytes = _options.MessageMaxBytes.Value;
+        return c;
+    }
+
+    /// <summary>
+    /// librdkafka error callback. Runs on a foreign thread; does NO locking and NO disposal —
+    /// only atomic flag + log. The real rebuild work happens on the next
+    /// <see cref="GetProducerAsync"/> call where a normal call thread holds <see cref="_buildLock"/>.
+    /// </summary>
+    private void OnError(IProducer<string, byte[]> producer, Error error)
+    {
+        if (_disposed) return;
+
+        if (!error.IsFatal)
+        {
+            _logger.LogWarning("Kafka producer non-fatal error: {Reason} (code={Code})",
+                error.Reason, error.Code);
+            return;
+        }
+
+        if (!_options.ConnectionRecovery.Enabled)
+        {
+            _logger.LogError(
+                "Kafka producer fatal error: {Reason} (code={Code}); recovery disabled, producer left dead",
+                error.Reason, error.Code);
+            return;
+        }
+
+        // First fatal in this cycle: stamp the timestamp and log the disconnect.
+        // Subsequent fatals during the same cycle (before rebuild) are no-ops.
+        if (Interlocked.CompareExchange(ref _faultTicks, DateTime.UtcNow.Ticks, 0) == 0)
+        {
+            _logger.LogWarning(
+                "Kafka producer fatal error: {Reason} (code={Code}); will rebuild on next publish",
+                error.Reason, error.Code);
+        }
     }
 
     public async Task PublishAsync(MessageEnvelope envelope, CancellationToken cancellationToken = default)
@@ -142,7 +184,6 @@ public class KafkaPublisher : IQueuePublisher, IDisposable
         _disposed = true;
 
         _producer?.Dispose();
-        _probeSemaphore.Dispose();
-        _buildSemaphore.Dispose();
+        _buildLock.Dispose();
     }
 }

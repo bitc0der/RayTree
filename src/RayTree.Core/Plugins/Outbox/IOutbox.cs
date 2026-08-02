@@ -1,5 +1,4 @@
 using RayTree.Core.Models;
-using RayTree.Core.Tracking;
 
 namespace RayTree.Core.Plugins.Outbox;
 
@@ -15,14 +14,19 @@ public interface IOutbox
         CancellationToken cancellationToken = default)
         where TEntity : class;
 
-    Task<IReadOnlyList<EntityChange<TEntity>>> GetUnpublishedAsync<TEntity>(
-        ChangeType? changeType = null,
-        DateTime? since = null,
-        int batchSize = 100,
-        CancellationToken cancellationToken = default)
-        where TEntity : class;
-
     Task MarkPublishedAsync(long id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Marks multiple records published in one call. Default implementation falls back to
+    /// one <see cref="MarkPublishedAsync"/> call per id; implementations backed by a real
+    /// database should override this with a single batched statement (e.g. <c>WHERE id = ANY(@ids)</c>)
+    /// so a publish batch costs one round-trip instead of one per message.
+    /// </summary>
+    async Task MarkPublishedBatchAsync(IReadOnlyCollection<long> ids, CancellationToken cancellationToken = default)
+    {
+        foreach (var id in ids)
+            await MarkPublishedAsync(id, cancellationToken);
+    }
 
     /// <summary>
     /// Atomically transitions the record from unpublished to published.
@@ -50,4 +54,30 @@ public interface IOutbox
 
     Task<EntityChange<TEntity>?> GetByIdAsync<TEntity>(long id, CancellationToken cancellationToken = default)
         where TEntity : class;
+
+    /// <summary>
+    /// Classifies an exception thrown by this outbox as a connection-level fault. Consumers
+    /// (e.g. <c>OutboxPublisherService</c>'s polling loop) use this to demote per-batch
+    /// <c>Error</c> logs to <c>Warning</c> and to emit connection-recovery metrics keyed
+    /// on <see cref="ConnectionComponent"/> / <see cref="ConnectionEndpoint"/>.
+    /// <para>
+    /// Default implementation returns <c>false</c> — outboxes that have no observable
+    /// external connection (e.g. <c>InMemoryOutbox</c>) inherit the no-op default.
+    /// </para>
+    /// </summary>
+    bool IsConnectionFault(Exception ex) => false;
+
+    /// <summary>
+    /// The <c>component</c> tag value applied to connection-recovery metrics for this
+    /// outbox (e.g. <c>"postgres.outbox"</c>). Returns <c>null</c> when this outbox has
+    /// no observable external connection.
+    /// </summary>
+    string? ConnectionComponent => null;
+
+    /// <summary>
+    /// The <c>endpoint</c> tag value applied to connection-recovery metrics (e.g. the
+    /// host:port of the underlying database). Returns <c>null</c> when this outbox has
+    /// no observable external connection.
+    /// </summary>
+    string? ConnectionEndpoint => null;
 }

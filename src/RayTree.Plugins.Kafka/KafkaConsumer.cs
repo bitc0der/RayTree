@@ -11,6 +11,9 @@ namespace RayTree.Plugins.Kafka;
 
 public class KafkaConsumer : IQueueConsumer, IDisposable
 {
+    // Bounds the per-ConsumeAsync buffer between the poll thread and the subscriber.
+    private const int ChannelCapacity = 1000;
+
     /// <summary>
     /// Discriminator for the post-handler action the poll thread must perform on a
     /// <see cref="ConsumeResult{TKey, TValue}"/> handed back by the subscriber.
@@ -47,11 +50,15 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
     /// </summary>
     public bool IsAssigned => _assigned;
 
-    public KafkaConsumer(KafkaConsumerOptions options, ILoggerFactory loggerFactory)
+    public KafkaConsumer(
+        KafkaConsumerOptions options,
+        ILoggerFactory       loggerFactory)
     {
         _options = options       ?? throw new ArgumentNullException(nameof(options));
         _logger  = (loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory)))
                        .CreateLogger<KafkaConsumer>();
+
+        _options.ConnectionRecovery.Validate();
     }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -87,6 +94,25 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
         _consumer.Subscribe(_options.Topic);
     }
 
+    /// <summary>
+    /// Builds a fresh consumer with the existing configuration and subscribes to the topic.
+    /// Used by both <see cref="InitializeAsync"/> and <see cref="RebuildConsumer"/> so the
+    /// configuration shape stays identical between initial setup and post-fatal rebuild.
+    /// </summary>
+    private IConsumer<string, byte[]> BuildConsumer()
+    {
+        var config = new ConsumerConfig
+        {
+            BootstrapServers = _options.BootstrapServers,
+            GroupId          = _options.GroupId,
+            AutoOffsetReset  = _options.FromEarliest ? AutoOffsetReset.Earliest : AutoOffsetReset.Latest,
+            EnableAutoCommit = false
+        };
+        var c = new ConsumerBuilder<string, byte[]>(config).Build();
+        c.Subscribe(_options.Topic);
+        return c;
+    }
+
     public async IAsyncEnumerable<MessageEnvelope> ConsumeAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -101,8 +127,16 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token);
         var linkedToken = linkedCts.Token;
 
-        var channel = Channel.CreateUnbounded<MessageEnvelope>(
-            new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+        // Bounded so a subscriber that falls behind applies backpressure to the poll loop
+        // (via the blocking WriteAsync below) instead of letting this buffer grow without
+        // bound while Kafka keeps handing over messages faster than they're processed.
+        var channel = Channel.CreateBounded<MessageEnvelope>(
+            new BoundedChannelOptions(ChannelCapacity)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode     = BoundedChannelFullMode.Wait
+            });
 
         // When the post-handler queue is non-empty, drop the poll timeout to zero so we
         // process pending Commits/Seeks immediately instead of waiting up to PollTimeoutMs.
@@ -135,11 +169,30 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                     catch (ObjectDisposedException)    { break; }
                     catch (KafkaException ex) when (ex.Error.IsFatal)
                     {
-                        // Fatal broker/network errors cannot be recovered; surface them to
-                        // all ConsumeAsync callers via the channel completion exception.
-                        _logger.LogError(ex, "Fatal Kafka error on topic {Topic}", _options.Topic);
-                        channel.Writer.TryComplete(ex);
-                        return;
+                        // Fatal broker error: dispose the dead consumer and rebuild on this
+                        // same poll thread. Pending deferred-ack actions reference the dying
+                        // consumer and must be dropped — the broker will redeliver via the
+                        // standard at-least-once contract once the new consumer joins.
+                        _logger.LogWarning(ex,
+                            "Kafka consumer fatal error on topic {Topic}, rebuilding", _options.Topic);
+
+                        if (!_options.ConnectionRecovery.Enabled)
+                        {
+                            _logger.LogError(ex,
+                                "Kafka consumer recovery disabled; surfacing fatal error to consumers");
+                            channel.Writer.TryComplete(ex);
+                            return;
+                        }
+
+                        // Drop stale post-handler actions before rebuild.
+                        while (_postHandlerChannel.Reader.TryRead(out _)) { }
+
+                        if (!RebuildConsumer(linkedToken))
+                        {
+                            channel.Writer.TryComplete(ex);
+                            return;
+                        }
+                        continue;
                     }
                     catch (Exception ex)
                     {
@@ -170,7 +223,15 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
                         // At-most-once (legacy default): commit before handing off.
                         _consumer!.Commit(result);
                     }
-                    channel.Writer.TryWrite(envelope);
+                    // Blocking (not TryWrite): with a bounded channel, TryWrite silently drops
+                    // the message when full instead of applying backpressure. Sync-over-async
+                    // is safe here — same justification as the rebuild/probe calls below, this
+                    // poll thread has no SynchronizationContext to deadlock against.
+                    try
+                    {
+                        channel.Writer.WriteAsync(envelope, linkedToken).AsTask().GetAwaiter().GetResult();
+                    }
+                    catch (OperationCanceledException) { break; }
                 }
 
                 // Final drain — flush any commits / seeks pending at shutdown so we don't
@@ -185,6 +246,96 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
 
         await foreach (var item in channel.Reader.ReadAllAsync(cancellationToken))
             yield return item;
+    }
+
+    /// <summary>
+    /// Runs synchronously on the poll thread after a fatal-error dispose. Disposes the
+    /// dying consumer, then runs an exponential-backoff loop bounded by
+    /// <c>_options.ConnectionRecovery</c> that re-runs the topic-wait probe (when enabled)
+    /// and builds a fresh <c>IConsumer</c>. Returns <see langword="true"/> on success and
+    /// <see langword="false"/> when retries are exhausted or cancellation fires — the caller
+    /// SHALL surface the failure to <c>ConsumeAsync</c> consumers via channel completion.
+    /// </summary>
+    private bool RebuildConsumer(CancellationToken ct)
+    {
+        try { _consumer?.Close(); _consumer?.Dispose(); } catch { /* may already be torn down */ }
+        _consumer = null;
+        _assigned = false;
+
+        var recovery = _options.ConnectionRecovery;
+        var startedAt = DateTime.UtcNow;
+        var attempt = 0;
+
+        while (true)
+        {
+            if (ct.IsCancellationRequested) return false;
+            attempt++;
+
+            try
+            {
+                // Re-run topic-wait probe on rebuild so a broker restart that races with
+                // topic recreation is handled — matches the kafka-topic-wait reprobe contract.
+                if (_options.WaitForTopic)
+                {
+                    // Sync-over-async exception to AGENTS.md: this runs on the dedicated
+                    // Kafka poll thread which has no SynchronizationContext. librdkafka
+                    // requires Consume/Commit/Seek/Subscribe all on one thread, so we can't
+                    // hop to await continuations. Deadlock is impossible here — the task
+                    // completes independently on Npgsql / admin-client threads.
+                    KafkaTopicProbe.WaitForTopicAsync(
+                        _options.BootstrapServers,
+                        _options.Topic,
+                        _options.TopicWaitInterval,
+                        _options.TopicWaitTimeout,
+                        _logger,
+                        ct).GetAwaiter().GetResult();
+                }
+
+                _consumer = BuildConsumer();
+
+                // Clamp at zero — backward NTP clock jump between disconnect and recovery.
+                var duration = Math.Max(0, (DateTime.UtcNow - startedAt).TotalSeconds);
+                _logger.LogInformation(
+                    "Kafka consumer rebuilt for topic {Topic} after {AttemptCount} attempt(s) in {Duration:F2}s",
+                    _options.Topic, attempt, duration);
+                return true;
+            }
+            catch (OperationCanceledException) { return false; }
+            catch (Exception ex)
+            {
+                if (recovery.MaxAttempts is int max && attempt >= max)
+                {
+                    _logger.LogError(ex,
+                        "Kafka consumer rebuild exhausted on topic {Topic} after {AttemptCount} attempts",
+                        _options.Topic, attempt);
+                    return false;
+                }
+
+                var delay = ComputeBackoffDelay(recovery, attempt);
+                _logger.LogInformation(ex,
+                    "Consumer rebuild attempt {AttemptNumber} failed for {Topic}; retrying in {Delay:F2}s",
+                    attempt, _options.Topic, delay.TotalSeconds);
+                // Sync-over-async: same justification as the probe call above — we own
+                // this thread (poll thread), no SynchronizationContext, no deadlock risk.
+                try { Task.Delay(delay, ct).GetAwaiter().GetResult(); }
+                catch (OperationCanceledException) { return false; }
+            }
+        }
+    }
+
+    // Exponential-backoff delay with symmetric jitter. INTENTIONALLY duplicated in
+    // RayTree.Plugins.PostgreSQL/Outbox/Notification/NotificationBasedPublisher.cs — see
+    // the design.md decision "No shared retry helper in Core" for why extracting this
+    // would require InternalsVisibleTo to plugin assemblies (architectural smell).
+    // Keep the two copies in sync by convention; any change here should be mirrored there.
+    private static TimeSpan ComputeBackoffDelay(KafkaConnectionRecoveryOptions opts, int attemptNum)
+    {
+        var baseTicks = opts.InitialDelay.Ticks * Math.Pow(opts.Factor, attemptNum - 1);
+        var cappedTicks = Math.Min(baseTicks, opts.MaxDelay.Ticks);
+        if (opts.JitterFraction <= 0) return TimeSpan.FromTicks((long)cappedTicks);
+
+        var jitterMultiplier = 1.0 + (Random.Shared.NextDouble() * 2 - 1) * opts.JitterFraction;
+        return TimeSpan.FromTicks((long)(cappedTicks * jitterMultiplier));
     }
 
     /// <summary>
@@ -277,7 +428,7 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
         {
             EntityType    = GetHeader(message.Headers, "entity_type"),
             EntityId      = GetHeader(message.Headers, "entity_id"),
-            ChangeType    = Enum.Parse<ChangeType>(GetHeader(message.Headers, "change_type")),
+            ChangeType    = ParseChangeType(GetHeader(message.Headers, "change_type")),
             CorrelationId = TryParseGuid(GetHeaderBytes(message.Headers, "correlation_id")),
             Version       = int.TryParse(GetHeader(message.Headers, "version"), out var v) ? v : 0,
             Timestamp     = DateTime.TryParse(GetHeader(message.Headers, "timestamp"), out var ts)
@@ -285,6 +436,15 @@ public class KafkaConsumer : IQueueConsumer, IDisposable
             Payload       = message.Value
         };
     }
+
+    // Enum.Parse is reflection-based; a switch avoids that on every message.
+    private static ChangeType ParseChangeType(string value) => value switch
+    {
+        nameof(ChangeType.Insert) => ChangeType.Insert,
+        nameof(ChangeType.Update) => ChangeType.Update,
+        nameof(ChangeType.Delete) => ChangeType.Delete,
+        _ => Enum.Parse<ChangeType>(value)
+    };
 
     private static string GetHeader(Headers headers, string key)
     {

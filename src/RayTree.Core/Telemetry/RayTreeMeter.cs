@@ -116,7 +116,7 @@ public sealed class RayTreeMeter : IDisposable
     /// callback is invoked once per OTel collection tick; each tuple yields one measurement
     /// tagged with <c>entity_type</c>.
     /// </summary>
-    public void RegisterPendingGauge(Func<IEnumerable<(Type entityType, IOutbox outbox)>> source)
+    internal void RegisterPendingGauge(Func<IEnumerable<(Type entityType, IOutbox outbox)>> source)
     {
         ArgumentNullException.ThrowIfNull(source);
         lock (_gaugeGate)
@@ -177,10 +177,11 @@ public sealed class RayTreeMeter : IDisposable
     }
 
     // -------------------------------------------------------------------------
-    // Public emission facade — for first-party plugin assemblies that publish
-    // to the outbox but live outside RayTree.Core (e.g. NotificationBasedPublisher
-    // in RayTree.Plugins.PostgreSQL). Raw instrument properties stay internal;
-    // callers interact with named, semantically meaningful methods.
+    // Internal emission facade — for RayTree.Core and first-party plugin
+    // assemblies that publish to the outbox but live outside RayTree.Core
+    // (e.g. NotificationBasedPublisher in RayTree.Plugins.PostgreSQL, which sees
+    // Core internals via InternalsVisibleTo). Metric emission is a Core-internal
+    // concern; observation is the public contract (RayTree.OpenTelemetry).
     // -------------------------------------------------------------------------
 
     /// <summary>
@@ -192,7 +193,7 @@ public sealed class RayTreeMeter : IDisposable
     /// <param name="lagSeconds">Time since the outbox record was written, in seconds.
     /// Clamped to zero if negative (clock skew).</param>
     /// <param name="attempts">Total attempts made — 1 for a first-try success.</param>
-    public void RecordPublishSuccess(
+    internal void RecordPublishSuccess(
         Type entityType, ChangeType changeType,
         double durationSeconds, double lagSeconds,
         int attempts = 1)
@@ -209,7 +210,7 @@ public sealed class RayTreeMeter : IDisposable
     /// Records the duration of a failed publish attempt. The caller is responsible for
     /// reverting the outbox claim so the record can be retried.
     /// </summary>
-    public void RecordPublishFailure(Type entityType, ChangeType changeType, double durationSeconds)
+    internal void RecordPublishFailure(Type entityType, ChangeType changeType, double durationSeconds)
     {
         OutboxPublishDuration.Record(durationSeconds, EntityTag(entityType), ChangeTag(changeType));
     }
@@ -218,7 +219,7 @@ public sealed class RayTreeMeter : IDisposable
     /// Records the compressed payload byte size for one <c>MessageEnvelope</c>.
     /// Call after compression, before handing the envelope to the queue publisher.
     /// </summary>
-    public void RecordPayloadSize(Type entityType, ChangeType changeType, int bytes)
+    internal void RecordPayloadSize(Type entityType, ChangeType changeType, int bytes)
     {
         OutboxPayloadSize.Record(bytes, EntityTag(entityType), ChangeTag(changeType));
     }
@@ -226,7 +227,7 @@ public sealed class RayTreeMeter : IDisposable
     /// <summary>
     /// Records the number of unpublished records retrieved in one outbox poll batch.
     /// </summary>
-    public void RecordBatchSize(Type entityType, int count)
+    internal void RecordBatchSize(Type entityType, int count)
     {
         OutboxBatchSize.Record(count, EntityTag(entityType));
     }
@@ -241,8 +242,19 @@ public sealed class RayTreeMeter : IDisposable
     internal static KeyValuePair<string, object?> EntityTag(string entityTypeName)
         => new("entity_type", SimpleTypeName(entityTypeName));
 
-    internal static KeyValuePair<string, object?> ChangeTag(ChangeType changeType)
-        => new("change_type", changeType.ToString());
+    // ChangeType.ToString() is not free (enum name lookup); precompute the 3 known values
+    // once instead of paying that cost on every publish/subscribe metric emission.
+    private static readonly KeyValuePair<string, object?> InsertChangeTag = new("change_type", nameof(ChangeType.Insert));
+    private static readonly KeyValuePair<string, object?> UpdateChangeTag = new("change_type", nameof(ChangeType.Update));
+    private static readonly KeyValuePair<string, object?> DeleteChangeTag = new("change_type", nameof(ChangeType.Delete));
+
+    internal static KeyValuePair<string, object?> ChangeTag(ChangeType changeType) => changeType switch
+    {
+        ChangeType.Insert => InsertChangeTag,
+        ChangeType.Update => UpdateChangeTag,
+        ChangeType.Delete => DeleteChangeTag,
+        _ => new("change_type", changeType.ToString())
+    };
 
     internal static KeyValuePair<string, object?> ReasonTag(string reason)
         => new("reason", reason);
