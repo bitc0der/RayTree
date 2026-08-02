@@ -62,7 +62,7 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
   Resolves the runtime type via reflection on every (de)serialize call. A contractless resolver without Typeless would be faster since the type is already known from `EntityChange<TEntity>`.
   Fix: evaluate switching off `Typeless` given the generic `TEntity` is already statically known at the call site.
 
-- [ ] **12. RabbitMQ default routing key allocates `ChangeType.ToString().ToLower()` per publish**
+- [x] **12. RabbitMQ default routing key allocates `ChangeType.ToString().ToLower()` per publish**
   [src/RayTree.Plugins.RabbitMQ/RabbitMqPublisherOptions.cs:69](src/RayTree.Plugins.RabbitMQ/RabbitMqPublisherOptions.cs#L69)
   Two allocations per publish; `ToLower()` is also culture-sensitive with no `StringComparison`/invariant overload.
   Fix: precomputed tag switch (same pattern as `RayTreeMeter.ChangeTag`), and use `ToLowerInvariant()`.
