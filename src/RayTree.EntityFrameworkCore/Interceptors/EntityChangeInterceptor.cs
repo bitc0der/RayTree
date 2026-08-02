@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -15,6 +17,12 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
 
     private static readonly MethodInfo WriteTypedMethod = typeof(EntityChangeInterceptor)
         .GetMethod(nameof(WriteTypedAsyncCore), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    // CreateChange used to do MakeGenericType + Activator.CreateInstance + reflective
+    // property SetValue on every changed entity, every SaveChanges call. Compiling a
+    // factory delegate once per entity type (via Expression.Lambda, cached here) turns
+    // that into a cheap delegate invocation on the hot path.
+    private static readonly ConcurrentDictionary<Type, Func<object, EntityChange>> ChangeFactories = new();
 
     public EntityChangeInterceptor(EntityChangeTracker tracker, IEnumerable<Type> trackedEntityTypes)
     {
@@ -101,14 +109,31 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
 
     private static EntityChange CreateChange(EntityEntry entry, Type entityType, ChangeType changeType)
     {
-        var genericChangeType = typeof(EntityChange<>).MakeGenericType(entityType);
-        var change = (EntityChange)Activator.CreateInstance(genericChangeType)!;
+        var factory = ChangeFactories.GetOrAdd(entityType, CompileChangeFactory);
+        var change = factory(entry.Entity);
         change.EntityType = entityType.AssemblyQualifiedName ?? entityType.FullName ?? entityType.Name;
         change.EntityId = entry.Property("Id").CurrentValue?.ToString() ?? Guid.NewGuid().ToString();
         change.ChangeType = changeType;
         change.Timestamp = DateTime.UtcNow;
-        genericChangeType.GetProperty("State")!.SetValue(change, entry.Entity);
         return change;
+    }
+
+    // Builds `entity => (EntityChange)new EntityChange<TEntity> { State = (TEntity)entity }`
+    // once per entity type, compiled to IL instead of interpreted via MakeGenericType/SetValue.
+    private static Func<object, EntityChange> CompileChangeFactory(Type entityType)
+    {
+        var genericChangeType = typeof(EntityChange<>).MakeGenericType(entityType);
+        var stateProperty = genericChangeType.GetProperty(nameof(EntityChange<object>.State))!;
+
+        var entityParam = Expression.Parameter(typeof(object), "entity");
+        var changeVar = Expression.Variable(genericChangeType, "change");
+        var body = Expression.Block(
+            [changeVar],
+            Expression.Assign(changeVar, Expression.New(genericChangeType)),
+            Expression.Call(changeVar, stateProperty.SetMethod!, Expression.Convert(entityParam, entityType)),
+            Expression.Convert(changeVar, typeof(EntityChange)));
+
+        return Expression.Lambda<Func<object, EntityChange>>(body, entityParam).Compile();
     }
 
     private async Task WriteOutboxAsync(DbContext? dbContext, CancellationToken cancellationToken)
