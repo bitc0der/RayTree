@@ -17,6 +17,18 @@ public interface IOutbox
     Task MarkPublishedAsync(long id, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Marks multiple records published in one call. Default implementation falls back to
+    /// one <see cref="MarkPublishedAsync"/> call per id; implementations backed by a real
+    /// database should override this with a single batched statement (e.g. <c>WHERE id = ANY(@ids)</c>)
+    /// so a publish batch costs one round-trip instead of one per message.
+    /// </summary>
+    async Task MarkPublishedBatchAsync(IReadOnlyCollection<long> ids, CancellationToken cancellationToken = default)
+    {
+        foreach (var id in ids)
+            await MarkPublishedAsync(id, cancellationToken);
+    }
+
+    /// <summary>
     /// Atomically transitions the record from unpublished to published.
     /// Returns <c>true</c> if this caller claimed the record; <c>false</c> if it was
     /// already published (i.e., another publisher got there first).

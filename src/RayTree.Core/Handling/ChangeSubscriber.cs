@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Reflection;
 using Microsoft.Extensions.Logging;
@@ -656,18 +657,27 @@ public class ChangeSubscriber : IDisposable
     // Helpers
     // -------------------------------------------------------------------------
 
+    // Resolving a bare type name (no assembly-qualified name) requires scanning every loaded
+    // assembly; caching it per-typeName turns a per-message linear scan into a per-typeName one-off.
+    private static readonly ConcurrentDictionary<string, Type?> _resolvedTypeCache = new();
+
     private static Type? ResolveType(string typeName)
     {
-        var t = Type.GetType(typeName);
-        if (t != null) return t;
+        if (_resolvedTypeCache.TryGetValue(typeName, out var cached))
+            return cached;
 
-        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        var t = Type.GetType(typeName);
+        if (t is null)
         {
-            t = assembly.GetType(typeName);
-            if (t != null) return t;
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                t = assembly.GetType(typeName);
+                if (t != null) break;
+            }
         }
 
-        return null;
+        _resolvedTypeCache[typeName] = t;
+        return t;
     }
 
     public void Dispose()

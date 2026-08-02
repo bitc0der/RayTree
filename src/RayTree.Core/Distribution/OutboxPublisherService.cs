@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using RayTree.Core.Models;
@@ -168,24 +169,40 @@ public class OutboxPublisherService : IDisposable
             var changes = await outbox.GetUnpublishedAsync<TEntity>(_options.BatchSize, cancellationToken);
             _meter.OutboxBatchSize.Record(changes.Count, _entityTag);
 
-            await Parallel.ForEachAsync(changes,
-                new ParallelOptions
-                {
-                    MaxDegreeOfParallelism = _options.MaxPublishConcurrency,
-                    CancellationToken      = cancellationToken
-                },
-                async (change, token) =>
-                    await PublishWithRetryAsync(change, outbox, queue, serializer, compressor, token));
+            // Publishes still happen one message at a time (that's the broker round-trip),
+            // but the "mark published" DB write is collected and flushed once per batch
+            // instead of once per message — turns N round-trips into 1.
+            var publishedIds = new ConcurrentBag<long>();
+            try
+            {
+                await Parallel.ForEachAsync(changes,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = _options.MaxPublishConcurrency,
+                        CancellationToken      = cancellationToken
+                    },
+                    async (change, token) =>
+                        await PublishWithRetryAsync(change, queue, serializer, compressor, publishedIds, token));
+            }
+            finally
+            {
+                // Best-effort, unconditional: flush whatever succeeded even if some messages in
+                // this batch ultimately failed all retries (which makes ProcessBatchAsync throw),
+                // or the loop was cancelled — otherwise successfully-published messages would be
+                // republished from scratch on the next tick.
+                if (!publishedIds.IsEmpty)
+                    await outbox.MarkPublishedBatchAsync(publishedIds, CancellationToken.None);
+            }
 
             return changes.Count == _options.BatchSize;
         }
 
         private async Task PublishWithRetryAsync(
             EntityChange<TEntity> change,
-            IOutbox outbox,
             IQueuePublisher queue,
             IChangeSerializer serializer,
             IChangeCompressor compressor,
+            ConcurrentBag<long> publishedIds,
             CancellationToken ct)
         {
             var changeTag = RayTreeMeter.ChangeTag(change.ChangeType);
@@ -200,7 +217,7 @@ public class OutboxPublisherService : IDisposable
                     sw.Stop();
                     _meter.OutboxPublishDuration.Record(sw.Elapsed.TotalSeconds, _entityTag, changeTag);
 
-                    await outbox.MarkPublishedAsync(change.Id, ct);
+                    publishedIds.Add(change.Id);
 
                     _meter.OutboxPublished.Add(1, _entityTag, changeTag);
                     _meter.OutboxPublishAttempts.Record(attempts, _entityTag);

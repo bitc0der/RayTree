@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.RegularExpressions;
 
@@ -91,6 +93,25 @@ public static class EntityColumnMapper
 
     public static object ConvertFromDb(object value, Type targetType)
         => targetType.IsAssignableFrom(value.GetType()) ? value : Convert.ChangeType(value, targetType);
+
+    // PropertyInfo.SetValue is live reflection on every call; compiling one delegate per
+    // property up front and caching it turns per-row, per-column reflection into a cheap
+    // delegate invocation once a property has been seen.
+    private static readonly ConcurrentDictionary<PropertyInfo, Action<object, object?>> _setterCache = new();
+
+    public static void SetValue(PropertyInfo property, object target, object? value)
+        => _setterCache.GetOrAdd(property, CompileSetter)(target, value);
+
+    private static Action<object, object?> CompileSetter(PropertyInfo property)
+    {
+        var targetParam = Expression.Parameter(typeof(object), "target");
+        var valueParam = Expression.Parameter(typeof(object), "value");
+        var call = Expression.Call(
+            Expression.Convert(targetParam, property.DeclaringType!),
+            property.SetMethod!,
+            Expression.Convert(valueParam, property.PropertyType));
+        return Expression.Lambda<Action<object, object?>>(call, targetParam, valueParam).Compile();
+    }
 
     private static string ResolveColumnName(PropertyInfo prop, ColumnAttribute? columnAttr)
     {
