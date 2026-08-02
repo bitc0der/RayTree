@@ -147,6 +147,10 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
         if (changes.Count == 0)
             return;
 
+        // Write all changed entities' outbox rows in parallel instead of one DB round
+        // trip at a time — a SaveChanges touching N entities (of one or several types)
+        // no longer pays N sequential round trips.
+        var writes = new List<Task>(changes.Count);
         foreach (var change in changes)
         {
             var entityType = Type.GetType(change.EntityType);
@@ -154,9 +158,10 @@ public class EntityChangeInterceptor : SaveChangesInterceptor
                 continue;
 
             var outbox = _tracker.GetOutbox(entityType);
-
-            await WriteTypedAsync(outbox, change, entityType, cancellationToken);
+            writes.Add(WriteTypedAsync(outbox, change, entityType, cancellationToken));
         }
+
+        await Task.WhenAll(writes);
 
         ChangeContext.Clear(dbContext);
     }

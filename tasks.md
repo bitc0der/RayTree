@@ -30,7 +30,7 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
   Field is `IEnumerable<Type>`; `.Contains()` linearly scans it for every `ChangeTracker.Entries()` row on every `SaveChanges`.
   Fix: `HashSet<Type>`.
 
-- [ ] **6. Sequential outbox writes when `SaveChanges` touches multiple entity types**
+- [x] **6. Sequential outbox writes when `SaveChanges` touches multiple entity types**
   [src/RayTree.EntityFrameworkCore/Interceptors/EntityChangeInterceptor.cs:123-132](src/RayTree.EntityFrameworkCore/Interceptors/EntityChangeInterceptor.cs#L123-L132)
   `foreach` with `await WriteTypedAsync` one at a time — a `SaveChanges` touching 20 entities across several types does 20 sequential DB round trips (compounds with #3).
   Fix: write in parallel (`Task.WhenAll`), at minimum across distinct entity types.
