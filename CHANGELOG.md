@@ -6,6 +6,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.0.21-pre-release]
+
+### Changed — BREAKING (wire format)
+- `RayTree.Plugins.Serializers.MessagePack` switches from `MessagePackSerializer.Typeless` to `ContractlessStandardResolver`. Typeless embedded and reflectively resolved a runtime type name on every call; `TEntity` is already known statically at both call sites. Messages already serialized with Typeless (sitting unpublished in an outbox, or in-flight in a broker) will not deserialize with this resolver — drain or flush before upgrading a live system that uses this serializer.
+
+### Added
+- `IOutbox.MarkPublishedBatchAsync(IReadOnlyCollection<long>, …)` — default-implemented as a per-id loop for existing implementations; `PostgreSqlOutbox<TEntity>` overrides it with a single `UPDATE … WHERE id = ANY(@Ids)`. `OutboxPublisherService` now flushes one batched mark-published call per poll batch instead of one call per message.
+- `EntityColumnMapper.GetValue(PropertyInfo, object)` — compiled-delegate property getter cache, symmetric with the existing `SetValue`.
+
+### Changed — Performance
+- **PostgreSQL data access**: `PostgreSqlOutbox<TEntity>` and `PostgreSqlRepository<TEntity>` use a per-instance `NpgsqlDataSource` instead of `new NpgsqlConnection` + `OpenAsync` per call. `PostgreSqlRepository` also routes property access through `EntityColumnMapper`'s compiled getter/setter cache, matching the outbox read path.
+- **EF Core interceptor**: `CreateChange` compiles and caches one factory delegate per entity type (previously `MakeGenericType` + `Activator.CreateInstance` + reflective `SetValue` on every changed entity, every `SaveChanges`). `_trackedEntityTypes` is now a `HashSet<Type>` (was a linear `IEnumerable<Type>` scan). Outbox writes for a single `SaveChanges` now run in parallel instead of sequentially.
+- **Initialization parallelism**: `ChangePublisher.InitializeAsync` now initializes repositories, outboxes, and publishers — and starts each entity type's `OutboxPublisherService` — in parallel via `Task.WhenAll`, matching the parallel consumer init `ChangeSubscriber.InitializeAsync` already had. One slow entity type's schema migration no longer blocks every other entity type's startup.
+- **Subscriber dispatch**: `ChangeSubscriber` no longer allocates a filtered `List<HandlerRegistration>` (`Where().ToList()`) on every message; dispatch is now a plain loop over the existing registration list.
+- **Enum parsing**: `Enum.Parse<ChangeType>` on the message/row read path replaced with a `switch` in `KafkaConsumer`, `RabbitMqConsumer`, and `PostgreSqlOutbox`.
+- **Kafka/RabbitMQ consumer buffers** are bounded instead of unbounded `Channel<T>`s. Kafka uses a fixed capacity with a blocking write applying backpressure to the poll loop; RabbitMQ reuses the existing `PrefetchCount` option (`0` keeps it unbounded, matching AMQP's "no limit" sentinel).
+- `RayTreeMeter.ChangeTag` precomputes the 3 `ChangeType` tag values instead of calling `.ToString()` per emission. `RabbitMqPublisherOptions`'s default routing-key selector likewise avoids `ToString().ToLower()` per publish.
+- `Lz4CompressorPlugin`: fixed an oversized decompress buffer (was `input.Length * 255`; now prefixes the stream with the real uncompressed length) and uses `MemoryStream.GetBuffer()` instead of `.ToArray()` to avoid an extra copy.
+- `ChangeSubscriber.ResolveType` caches resolved `Type`s per type name instead of scanning `AppDomain.CurrentDomain.GetAssemblies()` on every message.
+
+### Fixed
+- `NotificationBasedPublisher.StopAsync` now waits for in-flight `Task.Run` notification handlers before returning. Previously `Dispose()` could free `_notificationSemaphore` while a handler was still running, throwing `ObjectDisposedException` into an unobserved background task during shutdown under load.
+
+### Dependencies
+- Bumped `Npgsql.EntityFrameworkCore.PostgreSQL`, `StackExchange.Redis`, `Confluent.Kafka`, `MessagePack`, `OpenTelemetry` / `OpenTelemetry.Api`, `Microsoft.NET.Test.Sdk`, `Testcontainers.*`, `Microsoft.Extensions.*`, and `Microsoft.EntityFrameworkCore*` to their latest patch/minor versions. Added a `Microsoft.Extensions.DependencyInjection.Abstractions` reference to `RayTree.Core`.
+
+---
+
 ## [0.0.20-pre-release]
 
 - Minor cleanup on `IOutbox`
