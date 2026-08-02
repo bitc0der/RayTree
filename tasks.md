@@ -57,7 +57,7 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
   Unlike Gzip/Brotli (stream directly), LZ4 fully buffers `source` into a `MemoryStream` + `ToArray()` first. K4os supports a streaming `LZ4Stream` API. (The earlier fix addressed the oversized decompress buffer only, not this double-buffering.)
   Fix: use `LZ4Stream` to stream directly against the caller's streams.
 
-- [ ] **11. MessagePack serializer uses `Typeless` mode**
+- [x] **11. MessagePack serializer uses `Typeless` mode**
   [src/RayTree.Plugins.Serializers.MessagePack/MessagePackSerializerPlugin.cs:17,25](src/RayTree.Plugins.Serializers.MessagePack/MessagePackSerializerPlugin.cs#L17)
   Resolves the runtime type via reflection on every (de)serialize call. A contractless resolver without Typeless would be faster since the type is already known from `EntityChange<TEntity>`.
   Fix: evaluate switching off `Typeless` given the generic `TEntity` is already statically known at the call site.
