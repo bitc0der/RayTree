@@ -71,23 +71,23 @@ public sealed class ChangePublisher : IDisposable
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        foreach (var repo in _repositories.Values)
-            await repo.InitializeAsync(cancellationToken);
+        // Each phase is parallelized across entity types — a single slow init (e.g. a
+        // locking ALTER TABLE for one entity type's Postgres outbox) no longer blocks
+        // every other entity type. Mirrors the same fix already applied to
+        // ChangeSubscriber.InitializeAsync (see its parallel consumer init).
+        await Task.WhenAll(_repositories.Values.Select(repo => repo.InitializeAsync(cancellationToken)));
+        await Task.WhenAll(_outboxes.Values.Select(outbox => outbox.InitializeAsync(cancellationToken)));
+        await Task.WhenAll(_publishers.Values.Select(publisher => publisher.InitializeAsync(cancellationToken)));
 
-        foreach (var outbox in _outboxes.Values)
-            await outbox.InitializeAsync(cancellationToken);
-
-        foreach (var publisher in _publishers.Values)
-            await publisher.InitializeAsync(cancellationToken);
-
-        foreach (var entityType in _publishers.Keys)
+        var services = _publishers.Keys.Select(entityType =>
         {
             if (_logger.IsEnabled(LogLevel.Debug))
                 _logger.LogDebug("Registering outbox publisher service for {EntityType}", entityType.Name);
-            var service = new OutboxPublisherService(this, entityType, Options, _loggerFactory, _meter);
-            _publisherServices.Add(service);
-            await service.StartAsync(cancellationToken);
-        }
+            return new OutboxPublisherService(this, entityType, Options, _loggerFactory, _meter);
+        }).ToList();
+
+        _publisherServices.AddRange(services);
+        await Task.WhenAll(services.Select(service => service.StartAsync(cancellationToken)));
     }
 
     public void Dispose()

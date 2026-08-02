@@ -20,7 +20,7 @@ Ranked by criticality. Each task: implement → run relevant tests → commit �
 
 ## High
 
-- [ ] **4. Asymmetric initialization: `ChangePublisher` sequential vs `ChangeSubscriber` parallel**
+- [x] **4. Asymmetric initialization: `ChangePublisher` sequential vs `ChangeSubscriber` parallel**
   [src/RayTree.Core/Distribution/ChangePublisher.cs:72-91](src/RayTree.Core/Distribution/ChangePublisher.cs#L72-L91)
   `ChangePublisher.InitializeAsync` initializes repositories → outboxes → publishers with a sequential `foreach + await`, and each entity type's `OutboxPublisherService.StartAsync` is also started one at a time. `ChangeSubscriber.InitializeAsync` is documented (CLAUDE.md) as deliberately parallelized via `Task.WhenAll` so one slow consumer doesn't block the others. The publisher side has the identical problem un-fixed: one slow Postgres schema migration for one entity type (e.g. a locking `ALTER TABLE`) delays startup for every other entity type.
   Fix: apply the same `Task.WhenAll` pattern already used on the subscriber side.
